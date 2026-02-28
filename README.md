@@ -50,3 +50,4 @@ make DISK_EXTRA_FILES= d64
 
 ## Notes
 - This project is intentionally small; extend by adding segments and asset placement rules in `cfg/myc64.cfg`.
+- HTML asset editor: `tools/asset-editor/` (open `index.html`), with format details in `tools/asset-editor/README.md`.

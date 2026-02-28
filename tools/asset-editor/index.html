@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C64 Asset Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>C64 Asset Editor</h1>
+    <p>Character set, 2x2 tiles, tile properties, and map editing for cc65/C64 projects.</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel control-panel">
+      <h2>Mode</h2>
+      <div class="mode-buttons">
+        <button id="mode-char" class="mode-btn active">Character</button>
+        <button id="mode-tile" class="mode-btn">Tile</button>
+        <button id="mode-map" class="mode-btn">Map</button>
+      </div>
+
+      <h2>Files</h2>
+      <div class="button-grid">
+        <button id="export-chars">Export Charset</button>
+        <button id="import-chars">Import Charset</button>
+        <button id="export-tiles">Export Tiles</button>
+        <button id="import-tiles">Import Tiles</button>
+        <button id="export-map">Export Map</button>
+        <button id="import-map">Import Map</button>
+      </div>
+      <label class="inline-field">Active charset bank
+        <select id="charset-active-bank">
+          <option value="0">Bank 0 (upper/default)</option>
+          <option value="1">Bank 1 (lower/alternate)</option>
+        </select>
+      </label>
+      <label class="inline-field">Import target bank (single-bank files)
+        <select id="charset-import-bank">
+          <option value="0">Bank 0</option>
+          <option value="1">Bank 1</option>
+        </select>
+      </label>
+      <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
+      <input id="tiles-file" type="file" accept=".ctil,.bin" hidden>
+      <input id="map-file" type="file" accept=".map,.cmap,.bin" hidden>
+
+      <h2>Selected</h2>
+      <div class="stat-row"><span>Charset Bank</span><strong id="selected-bank">0</strong></div>
+      <div class="stat-row"><span>Char</span><strong id="selected-char">0</strong></div>
+      <div class="stat-row"><span>Tile</span><strong id="selected-tile">0</strong></div>
+
+      <h2>Tile Properties</h2>
+      <div class="checkbox-list" id="tile-props-boxes">
+        <label><input type="checkbox" data-bit="0"> Blocks passage</label>
+        <label><input type="checkbox" data-bit="1"> Blocks view</label>
+        <label><input type="checkbox" data-bit="2"> Solid land</label>
+        <label><input type="checkbox" data-bit="3"> Water</label>
+        <label><input type="checkbox" data-bit="4"> Triggers action</label>
+      </div>
+      <p class="hint">Bits 5-7 are reserved.</p>
+
+      <h2>Status</h2>
+      <p id="status" class="status">Ready.</p>
+    </section>
+
+    <section class="panel workspace">
+      <section id="char-mode" class="mode-panel">
+        <h2>Character Editor (256 chars per bank, 8x8)</h2>
+        <div class="row">
+          <canvas id="char-canvas" width="256" height="256"></canvas>
+          <div class="inline-controls">
+            <label>Preview color
+              <select id="char-preview-color"></select>
+            </label>
+            <button id="char-clear">Clear Char</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tile-mode" class="mode-panel hidden">
+        <h2>Tile Editor (16x16 from 2x2 chars)</h2>
+        <div class="row">
+          <canvas id="tile-canvas" width="256" height="256"></canvas>
+          <div class="tile-def-grid" id="tile-def-grid"></div>
+        </div>
+        <h3>Tile Test Canvas</h3>
+        <div class="inline-controls">
+          <label>Width <input id="test-width" type="number" min="1" max="64" value="16"></label>
+          <label>Height <input id="test-height" type="number" min="1" max="64" value="12"></label>
+          <button id="resize-test">Resize Test Canvas</button>
+        </div>
+        <canvas id="test-canvas" width="512" height="384"></canvas>
+      </section>
+
+      <section id="map-mode" class="mode-panel hidden">
+        <h2>Map Editor</h2>
+        <div class="inline-controls">
+          <label>Width <input id="map-width" type="number" min="1" max="255" value="16"></label>
+          <label>Height <input id="map-height" type="number" min="1" max="255" value="16"></label>
+          <label>Map ID <input id="map-id" type="number" min="0" max="255" value="0"></label>
+          <label>Reserved <input id="map-reserved" type="number" min="0" max="255" value="0"></label>
+          <button id="resize-map">Apply Size</button>
+        </div>
+        <canvas id="map-canvas" width="512" height="512"></canvas>
+      </section>
+    </section>
+
+    <section class="panel palette-panel">
+      <h2>Character Set</h2>
+      <canvas id="char-picker" width="384" height="384"></canvas>
+      <h2>Tile Set</h2>
+      <canvas id="tile-picker" width="512" height="512"></canvas>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

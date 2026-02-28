@@ -99,6 +99,7 @@
     test: ui.testCanvas.getContext("2d"),
     map: ui.mapCanvas.getContext("2d")
   };
+  const tileAtlases = new Map();
 
   function setStatus(msg, isError) {
     ui.status.textContent = msg;
@@ -166,6 +167,61 @@
       const color = C64_COLORS[t.colors[q] & 0x0f];
       drawChar(targetCtx, state.activeCharsetBank, charIndex, dx + px * scale, dy + py * scale, scale, color, "#000");
     }
+  }
+
+  function getTileAtlas(scale) {
+    let atlas = tileAtlases.get(scale);
+    const tileSize = 16 * scale;
+    const width = 16 * tileSize;
+    const height = 16 * tileSize;
+    if (!atlas || atlas.canvas.width !== width || atlas.canvas.height !== height) {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      atlas = {
+        canvas,
+        ctx: canvas.getContext("2d"),
+        dirty: true,
+        scale
+      };
+      tileAtlases.set(scale, atlas);
+    }
+    return atlas;
+  }
+
+  function invalidateTileAtlases() {
+    tileAtlases.forEach((atlas) => {
+      atlas.dirty = true;
+    });
+  }
+
+  function rebuildTileAtlas(scale) {
+    const atlas = getTileAtlas(scale);
+    const tileSize = 16 * scale;
+    atlas.ctx.clearRect(0, 0, atlas.canvas.width, atlas.canvas.height);
+    for (let i = 0; i < TILE_COUNT; i += 1) {
+      const x = (i % 16) * tileSize;
+      const y = Math.floor(i / 16) * tileSize;
+      drawTile(atlas.ctx, i, x, y, scale);
+    }
+    atlas.dirty = false;
+    return atlas;
+  }
+
+  function blitTile(targetCtx, tileIndex, dx, dy, scale) {
+    let atlas = getTileAtlas(scale);
+    if (atlas.dirty) {
+      atlas = rebuildTileAtlas(scale);
+    }
+    const ti = clampTileIndex(tileIndex);
+    const tileSize = 16 * scale;
+    const sx = (ti % 16) * tileSize;
+    const sy = Math.floor(ti / 16) * tileSize;
+    targetCtx.drawImage(atlas.canvas, sx, sy, tileSize, tileSize, dx, dy, tileSize, tileSize);
+  }
+
+  function shouldDrawGrid(width, height) {
+    return width * height <= 4096;
   }
 
   function renderCharCanvas() {
@@ -238,9 +294,22 @@
     for (let i = 0; i < TILE_COUNT; i += 1) {
       const x = (i % cols) * cell;
       const y = Math.floor(i / cols) * cell;
-      drawTile(ctx.tilePicker, i, x, y, 2);
+      blitTile(ctx.tilePicker, i, x, y, 2);
       ctx.tilePicker.strokeStyle = i === state.selectedTile ? "#ffb347" : "#2b4a61";
       ctx.tilePicker.strokeRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+    }
+  }
+
+  function drawMapCell(tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) return;
+    const scale = 2;
+    const px = tx * 16 * scale;
+    const py = ty * 16 * scale;
+    const tile = state.map.data[ty * state.map.width + tx];
+    blitTile(ctx.map, tile, px, py, scale);
+    if (shouldDrawGrid(state.map.width, state.map.height)) {
+      ctx.map.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.map.strokeRect(px + 0.5, py + 0.5, 16 * scale, 16 * scale);
     }
   }
 
@@ -252,10 +321,13 @@
     for (let y = 0; y < state.map.height; y += 1) {
       for (let x = 0; x < state.map.width; x += 1) {
         const tile = state.map.data[y * state.map.width + x];
-        drawTile(ctx.map, tile, x * 16 * scale, y * 16 * scale, scale);
+        blitTile(ctx.map, tile, x * 16 * scale, y * 16 * scale, scale);
       }
     }
 
+    if (!shouldDrawGrid(state.map.width, state.map.height)) {
+      return;
+    }
     ctx.map.strokeStyle = "rgba(255,255,255,0.12)";
     for (let x = 0; x <= state.map.width; x += 1) {
       const px = x * 16 * scale + 0.5;
@@ -281,7 +353,7 @@
     for (let y = 0; y < state.test.height; y += 1) {
       for (let x = 0; x < state.test.width; x += 1) {
         const tile = state.test.data[y * state.test.width + x];
-        drawTile(ctx.test, tile, x * 16 * scale, y * 16 * scale, scale);
+        blitTile(ctx.test, tile, x * 16 * scale, y * 16 * scale, scale);
       }
     }
 
@@ -321,6 +393,7 @@
       charInput.addEventListener("change", () => {
         tile.chars[i] = clampCharIndex(Number(charInput.value));
         charInput.value = String(tile.chars[i]);
+        invalidateTileAtlases();
         renderAll();
       });
       charLabel.appendChild(charInput);
@@ -337,6 +410,7 @@
       colorSelect.value = String(tile.colors[i]);
       colorSelect.addEventListener("change", () => {
         tile.colors[i] = clampByte(Number(colorSelect.value)) & 0x0f;
+        invalidateTileAtlases();
         renderAll();
       });
 
@@ -377,8 +451,12 @@
     renderTilePicker();
     renderTileDefinitions();
     renderTileProperties();
-    renderTestCanvas();
-    renderMapCanvas();
+    if (state.mode === "tile") {
+      renderTestCanvas();
+    }
+    if (state.mode === "map") {
+      renderMapCanvas();
+    }
   }
 
   function canvasPos(canvas, event) {
@@ -393,12 +471,17 @@
     const px = Math.floor(x / 32);
     const py = Math.floor(y / 32);
     setCharPixel(state.selectedChar, px, py, state.drawValue);
+    invalidateTileAtlases();
     renderCharCanvas();
     renderCharPicker();
     renderTileCanvas();
     renderTilePicker();
-    renderTestCanvas();
-    renderMapCanvas();
+    if (state.mode === "tile") {
+      renderTestCanvas();
+    }
+    if (state.mode === "map") {
+      renderMapCanvas();
+    }
   }
 
   function applyTileDraw(event) {
@@ -416,12 +499,17 @@
     const tile = state.tiles[state.selectedTile];
     const targetChar = tile.chars[q];
     setCharPixel(targetChar, lx, ly, state.drawValue);
+    invalidateTileAtlases();
     renderCharCanvas();
     renderCharPicker();
     renderTileCanvas();
     renderTilePicker();
-    renderTestCanvas();
-    renderMapCanvas();
+    if (state.mode === "tile") {
+      renderTestCanvas();
+    }
+    if (state.mode === "map") {
+      renderMapCanvas();
+    }
   }
 
   function applyTilePaintOnCanvas(canvasKey, event) {
@@ -437,9 +525,13 @@
 
     data[ty * width + tx] = state.drawValue ? state.selectedTile : 0;
     if (canvasKey === "map") {
-      renderMapCanvas();
+      drawMapCell(tx, ty);
     } else {
-      renderTestCanvas();
+      blitTile(ctx.test, data[ty * width + tx], tx * 32, ty * 32, 2);
+      if (shouldDrawGrid(width, height)) {
+        ctx.test.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.test.strokeRect(tx * 32 + 0.5, ty * 32 + 0.5, 32, 32);
+      }
     }
   }
 
@@ -532,6 +624,7 @@
           }
         }
         setStatus(`Imported CCHR v1 into bank ${targetBank} (${copyCount} chars).`);
+        invalidateTileAtlases();
         renderAll();
         return;
       }
@@ -550,6 +643,7 @@
           state.charset.set(data.subarray(srcBase, srcBase + CHAR_COUNT * CHAR_BYTES), dstBase);
         }
         setStatus(`Imported CCHR v2 (${copyBanks} bank(s)).`);
+        invalidateTileAtlases();
         renderAll();
         return;
       }
@@ -563,6 +657,7 @@
       const dstBase = targetBank * CHAR_COUNT * CHAR_BYTES;
       state.charset.set(data, dstBase);
       setStatus(`Imported raw ROM charset into bank ${targetBank} (256 chars).`);
+      invalidateTileAtlases();
       renderAll();
       return;
     }
@@ -574,6 +669,7 @@
         CHAR_COUNT * CHAR_BYTES
       );
       setStatus("Imported raw dual-bank ROM charset (banks 0 and 1).");
+      invalidateTileAtlases();
       renderAll();
       return;
     }
@@ -655,6 +751,7 @@
     }
 
     setStatus(`Imported tiles (${copyCount} tiles from file).`);
+    invalidateTileAtlases();
     renderAll();
   }
 
@@ -711,7 +808,7 @@
     Object.entries(ui.modeButtons).forEach(([mode, btn]) => {
       btn.addEventListener("click", () => {
         state.mode = mode;
-        renderMode();
+        renderAll();
       });
     });
 
@@ -730,12 +827,14 @@
     ui.charsetActiveBank.value = String(state.activeCharsetBank);
     ui.charsetActiveBank.addEventListener("change", () => {
       state.activeCharsetBank = clampCharsetBank(Number(ui.charsetActiveBank.value));
+      invalidateTileAtlases();
       renderAll();
     });
 
     ui.charClear.addEventListener("click", () => {
       const base = charsetOffset(state.activeCharsetBank, state.selectedChar, 0);
       state.charset.fill(0, base, base + CHAR_BYTES);
+      invalidateTileAtlases();
       renderAll();
     });
 
@@ -826,6 +925,7 @@
       }
       event.preventDefault();
       state.activeCharsetBank = state.activeCharsetBank === 0 ? 1 : 0;
+      invalidateTileAtlases();
       renderAll();
       setStatus(`Active charset bank: ${state.activeCharsetBank}.`);
     });

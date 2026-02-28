@@ -24,6 +24,7 @@ Open `index.html` directly in a browser.
 - Map mode:
   - Edit map dimensions, map ID, and reserved byte.
   - Paint tiles onto the map grid.
+  - Large maps render inside a scrollable viewport.
 
 ## Binary formats
 
@@ -87,3 +88,4 @@ Payload:
 - Tile editing can modify characters shared by multiple tiles.
 - Right-click is used for erasing/painting tile `0` on canvases.
 - Press `Tab` (when not focused in an input/select/button) to toggle active charset bank.
+- Map/test rendering uses cached tile atlases for faster redraws on large maps.

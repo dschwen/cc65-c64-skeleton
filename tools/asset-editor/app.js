@@ -3,6 +3,8 @@
   const CHARSET_BANKS = 2;
   const TILE_COUNT = 256;
   const CHAR_BYTES = 8;
+  const STORAGE_KEY = "c64-asset-editor-state-v1";
+  const STORAGE_VERSION = 1;
 
   const C64_COLORS = [
     "#000000", "#ffffff", "#813338", "#75cec8",
@@ -23,6 +25,7 @@
     selectedChar: 0,
     selectedTile: 0,
     charPreviewColor: 1,
+    charClipboard: null,
     drawing: false,
     drawValue: 1,
     map: {
@@ -60,6 +63,8 @@
     charCanvas: document.getElementById("char-canvas"),
     charPicker: document.getElementById("char-picker"),
     charPreviewColor: document.getElementById("char-preview-color"),
+    charCopy: document.getElementById("char-copy"),
+    charPaste: document.getElementById("char-paste"),
     charClear: document.getElementById("char-clear"),
 
     tileCanvas: document.getElementById("tile-canvas"),
@@ -100,11 +105,131 @@
     map: ui.mapCanvas.getContext("2d")
   };
   const tileAtlases = new Map();
+  let persistTimer = null;
 
   function setStatus(msg, isError) {
     ui.status.textContent = msg;
     ui.status.style.color = isError ? "#ffd0c9" : "#f8f5ef";
     ui.status.style.borderColor = isError ? "#ff6f61" : "#3f637e";
+  }
+
+  function persistNow() {
+    try {
+      const snapshot = {
+        version: STORAGE_VERSION,
+        mode: state.mode,
+        activeCharsetBank: state.activeCharsetBank,
+        selectedChar: state.selectedChar,
+        selectedTile: state.selectedTile,
+        charPreviewColor: state.charPreviewColor,
+        charset: Array.from(state.charset),
+        tiles: state.tiles.map((t) => ({
+          chars: t.chars.slice(0, 4),
+          colors: t.colors.slice(0, 4)
+        })),
+        tileProps: Array.from(state.tileProps),
+        map: {
+          width: state.map.width,
+          height: state.map.height,
+          id: state.map.id,
+          reserved: state.map.reserved,
+          data: Array.from(state.map.data)
+        },
+        test: {
+          width: state.test.width,
+          height: state.test.height,
+          data: Array.from(state.test.data)
+        }
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch (err) {
+      setStatus(`Failed to save editor state: ${String(err)}`, true);
+    }
+  }
+
+  function schedulePersist() {
+    if (persistTimer !== null) return;
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null;
+      persistNow();
+    }, 200);
+  }
+
+  function loadPersistedState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.version !== STORAGE_VERSION) return false;
+
+      if (Array.isArray(parsed.charset) && parsed.charset.length === state.charset.length) {
+        state.charset.set(parsed.charset.map(clampByte));
+      } else {
+        return false;
+      }
+
+      if (Array.isArray(parsed.tiles) && parsed.tiles.length === TILE_COUNT) {
+        for (let i = 0; i < TILE_COUNT; i += 1) {
+          const src = parsed.tiles[i] || {};
+          const chars = Array.isArray(src.chars) ? src.chars : [0, 0, 0, 0];
+          const colors = Array.isArray(src.colors) ? src.colors : [1, 1, 1, 1];
+          state.tiles[i].chars = [
+            clampCharIndex(chars[0] ?? 0),
+            clampCharIndex(chars[1] ?? 0),
+            clampCharIndex(chars[2] ?? 0),
+            clampCharIndex(chars[3] ?? 0)
+          ];
+          state.tiles[i].colors = [
+            clampByte(colors[0] ?? 1) & 0x0f,
+            clampByte(colors[1] ?? 1) & 0x0f,
+            clampByte(colors[2] ?? 1) & 0x0f,
+            clampByte(colors[3] ?? 1) & 0x0f
+          ];
+        }
+      } else {
+        return false;
+      }
+
+      if (Array.isArray(parsed.tileProps) && parsed.tileProps.length === TILE_COUNT) {
+        state.tileProps.set(parsed.tileProps.map(clampByte));
+      } else {
+        return false;
+      }
+
+      if (parsed.map && Array.isArray(parsed.map.data)) {
+        const w = Math.max(1, Math.min(255, parsed.map.width | 0));
+        const h = Math.max(1, Math.min(255, parsed.map.height | 0));
+        if (parsed.map.data.length === w * h) {
+          state.map.width = w;
+          state.map.height = h;
+          state.map.id = clampByte(parsed.map.id);
+          state.map.reserved = clampByte(parsed.map.reserved);
+          state.map.data = Uint8Array.from(parsed.map.data.map(clampByte));
+        }
+      }
+
+      if (parsed.test && Array.isArray(parsed.test.data)) {
+        const w = Math.max(1, Math.min(64, parsed.test.width | 0));
+        const h = Math.max(1, Math.min(64, parsed.test.height | 0));
+        if (parsed.test.data.length === w * h) {
+          state.test.width = w;
+          state.test.height = h;
+          state.test.data = Uint8Array.from(parsed.test.data.map(clampByte));
+        }
+      }
+
+      if (parsed.mode === "char" || parsed.mode === "tile" || parsed.mode === "map") {
+        state.mode = parsed.mode;
+      }
+      state.activeCharsetBank = clampCharsetBank(parsed.activeCharsetBank ?? 0);
+      state.selectedChar = clampCharIndex(parsed.selectedChar ?? 0);
+      state.selectedTile = clampTileIndex(parsed.selectedTile ?? 0);
+      state.charPreviewColor = clampByte(parsed.charPreviewColor ?? 1) & 0x0f;
+      return true;
+    } catch (err) {
+      setStatus(`Failed to load saved state: ${String(err)}`, true);
+      return false;
+    }
   }
 
   function clampByte(n) {
@@ -395,6 +520,7 @@
         charInput.value = String(tile.chars[i]);
         invalidateTileAtlases();
         renderAll();
+        schedulePersist();
       });
       charLabel.appendChild(charInput);
 
@@ -412,6 +538,7 @@
         tile.colors[i] = clampByte(Number(colorSelect.value)) & 0x0f;
         invalidateTileAtlases();
         renderAll();
+        schedulePersist();
       });
 
       row.appendChild(charLabel);
@@ -457,6 +584,39 @@
     if (state.mode === "map") {
       renderMapCanvas();
     }
+    ui.charPaste.disabled = !state.charClipboard;
+  }
+
+  function syncUiFromState() {
+    ui.charPreviewColor.value = String(state.charPreviewColor);
+    ui.mapWidth.value = String(state.map.width);
+    ui.mapHeight.value = String(state.map.height);
+    ui.mapId.value = String(state.map.id);
+    ui.mapReserved.value = String(state.map.reserved);
+    ui.testWidth.value = String(state.test.width);
+    ui.testHeight.value = String(state.test.height);
+  }
+
+  function copyCurrentChar() {
+    const base = charsetOffset(state.activeCharsetBank, state.selectedChar, 0);
+    state.charClipboard = Array.from(state.charset.subarray(base, base + CHAR_BYTES));
+    setStatus(`Copied char ${state.selectedChar} from bank ${state.activeCharsetBank}.`);
+    renderAll();
+  }
+
+  function pasteCurrentChar() {
+    if (!state.charClipboard || state.charClipboard.length !== CHAR_BYTES) {
+      setStatus("Character clipboard is empty.", true);
+      return;
+    }
+    const base = charsetOffset(state.activeCharsetBank, state.selectedChar, 0);
+    for (let i = 0; i < CHAR_BYTES; i += 1) {
+      state.charset[base + i] = clampByte(state.charClipboard[i]);
+    }
+    invalidateTileAtlases();
+    renderAll();
+    schedulePersist();
+    setStatus(`Pasted into char ${state.selectedChar} on bank ${state.activeCharsetBank}.`);
   }
 
   function canvasPos(canvas, event) {
@@ -482,6 +642,7 @@
     if (state.mode === "map") {
       renderMapCanvas();
     }
+    schedulePersist();
   }
 
   function applyTileDraw(event) {
@@ -510,6 +671,7 @@
     if (state.mode === "map") {
       renderMapCanvas();
     }
+    schedulePersist();
   }
 
   function applyTilePaintOnCanvas(canvasKey, event) {
@@ -533,6 +695,7 @@
         ctx.test.strokeRect(tx * 32 + 0.5, ty * 32 + 0.5, 32, 32);
       }
     }
+    schedulePersist();
   }
 
   function resizeMap(newW, newH) {
@@ -626,6 +789,7 @@
         setStatus(`Imported CCHR v1 into bank ${targetBank} (${copyCount} chars).`);
         invalidateTileAtlases();
         renderAll();
+        schedulePersist();
         return;
       }
 
@@ -645,6 +809,7 @@
         setStatus(`Imported CCHR v2 (${copyBanks} bank(s)).`);
         invalidateTileAtlases();
         renderAll();
+        schedulePersist();
         return;
       }
 
@@ -659,6 +824,7 @@
       setStatus(`Imported raw ROM charset into bank ${targetBank} (256 chars).`);
       invalidateTileAtlases();
       renderAll();
+      schedulePersist();
       return;
     }
 
@@ -671,6 +837,7 @@
       setStatus("Imported raw dual-bank ROM charset (banks 0 and 1).");
       invalidateTileAtlases();
       renderAll();
+      schedulePersist();
       return;
     }
 
@@ -753,6 +920,7 @@
     setStatus(`Imported tiles (${copyCount} tiles from file).`);
     invalidateTileAtlases();
     renderAll();
+    schedulePersist();
   }
 
   function exportMap() {
@@ -802,6 +970,7 @@
 
     setStatus(`Imported map (${w}x${h}, id=${id}).`);
     renderMapCanvas();
+    schedulePersist();
   }
 
   function bindEvents() {
@@ -809,6 +978,7 @@
       btn.addEventListener("click", () => {
         state.mode = mode;
         renderAll();
+        schedulePersist();
       });
     });
 
@@ -822,6 +992,28 @@
     ui.charPreviewColor.addEventListener("change", () => {
       state.charPreviewColor = clampByte(Number(ui.charPreviewColor.value)) & 0x0f;
       renderCharCanvas();
+      schedulePersist();
+    });
+
+    const onPrimaryButton = (event) => event.button === undefined || event.button === 0;
+    ui.charCopy.addEventListener("click", (event) => {
+      if (!onPrimaryButton(event)) return;
+      copyCurrentChar();
+    });
+    ui.charCopy.addEventListener("pointerdown", (event) => {
+      if (!onPrimaryButton(event)) return;
+      event.preventDefault();
+      copyCurrentChar();
+    });
+
+    ui.charPaste.addEventListener("click", (event) => {
+      if (!onPrimaryButton(event)) return;
+      pasteCurrentChar();
+    });
+    ui.charPaste.addEventListener("pointerdown", (event) => {
+      if (!onPrimaryButton(event)) return;
+      event.preventDefault();
+      pasteCurrentChar();
     });
 
     ui.charsetActiveBank.value = String(state.activeCharsetBank);
@@ -829,6 +1021,7 @@
       state.activeCharsetBank = clampCharsetBank(Number(ui.charsetActiveBank.value));
       invalidateTileAtlases();
       renderAll();
+      schedulePersist();
     });
 
     ui.charClear.addEventListener("click", () => {
@@ -836,6 +1029,7 @@
       state.charset.fill(0, base, base + CHAR_BYTES);
       invalidateTileAtlases();
       renderAll();
+      schedulePersist();
     });
 
     ui.charPicker.addEventListener("click", (event) => {
@@ -849,6 +1043,7 @@
         renderSelection();
         renderCharCanvas();
         renderCharPicker();
+        schedulePersist();
       }
     });
 
@@ -865,6 +1060,7 @@
         renderTilePicker();
         renderTileDefinitions();
         renderTileProperties();
+        schedulePersist();
       }
     });
 
@@ -913,14 +1109,28 @@
     });
 
     window.addEventListener("keydown", (event) => {
-      if (event.key !== "Tab") return;
       const target = event.target;
-      if (
+      const onInput =
         target instanceof HTMLInputElement ||
         target instanceof HTMLSelectElement ||
         target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLButtonElement
-      ) {
+        target instanceof HTMLButtonElement;
+
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !onInput) {
+        if (event.key === "c" || event.key === "C") {
+          event.preventDefault();
+          copyCurrentChar();
+          return;
+        }
+        if (event.key === "v" || event.key === "V") {
+          event.preventDefault();
+          pasteCurrentChar();
+          return;
+        }
+      }
+
+      if (event.key !== "Tab") return;
+      if (onInput) {
         return;
       }
       event.preventDefault();
@@ -928,6 +1138,7 @@
       invalidateTileAtlases();
       renderAll();
       setStatus(`Active charset bank: ${state.activeCharsetBank}.`);
+      schedulePersist();
     });
 
     ui.propsBoxes.forEach((box) => {
@@ -940,6 +1151,7 @@
           props &= ~(1 << bit);
         }
         state.tileProps[state.selectedTile] = props;
+        schedulePersist();
       });
     });
 
@@ -950,21 +1162,25 @@
       ui.mapId.value = String(state.map.id);
       ui.mapReserved.value = String(state.map.reserved);
       setStatus(`Map resized to ${state.map.width}x${state.map.height}.`);
+      schedulePersist();
     });
 
     ui.mapId.addEventListener("change", () => {
       state.map.id = clampByte(Number(ui.mapId.value));
       ui.mapId.value = String(state.map.id);
+      schedulePersist();
     });
 
     ui.mapReserved.addEventListener("change", () => {
       state.map.reserved = clampByte(Number(ui.mapReserved.value));
       ui.mapReserved.value = String(state.map.reserved);
+      schedulePersist();
     });
 
     ui.resizeTest.addEventListener("click", () => {
       resizeTest(Number(ui.testWidth.value), Number(ui.testHeight.value));
       setStatus(`Test canvas resized to ${state.test.width}x${state.test.height}.`);
+      schedulePersist();
     });
 
     ui.exportChars.addEventListener("click", exportCharset);
@@ -1011,7 +1227,21 @@
     }
   }
 
+  window.addEventListener("beforeunload", () => {
+    if (persistTimer !== null) {
+      window.clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    persistNow();
+  });
+
   bindEvents();
-  initializeDefaults();
+  if (!loadPersistedState()) {
+    initializeDefaults();
+  } else {
+    setStatus("Restored previous editor state.");
+  }
+  syncUiFromState();
+  invalidateTileAtlases();
   renderAll();
 })();

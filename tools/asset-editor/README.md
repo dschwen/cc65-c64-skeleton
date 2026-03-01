@@ -88,4 +88,8 @@ Payload:
 - Tile editing can modify characters shared by multiple tiles.
 - Right-click is used for erasing/painting tile `0` on canvases.
 - Press `Tab` (when not focused in an input/select/button) to toggle active charset bank.
+- Character copy/paste:
+  - `Copy Char` / `Paste Char` buttons in character mode
+  - `Ctrl/Cmd+C` and `Ctrl/Cmd+V` (outside form fields)
 - Map/test rendering uses cached tile atlases for faster redraws on large maps.
+- Editor state persists across reloads using browser `localStorage`.

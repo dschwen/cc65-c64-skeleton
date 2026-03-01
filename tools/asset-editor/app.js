@@ -25,6 +25,9 @@
     selectedChar: 0,
     selectedTile: 0,
     charPreviewColor: 1,
+    trialText: "HELLO C64",
+    trialMapping: "petscii-screen",
+    trialColor: 1,
     charClipboard: null,
     drawing: false,
     drawValue: 1,
@@ -63,9 +66,17 @@
     charCanvas: document.getElementById("char-canvas"),
     charPicker: document.getElementById("char-picker"),
     charPreviewColor: document.getElementById("char-preview-color"),
+    charRollUp: document.getElementById("char-roll-up"),
+    charRollDown: document.getElementById("char-roll-down"),
+    charRollLeft: document.getElementById("char-roll-left"),
+    charRollRight: document.getElementById("char-roll-right"),
     charCopy: document.getElementById("char-copy"),
     charPaste: document.getElementById("char-paste"),
     charClear: document.getElementById("char-clear"),
+    trialText: document.getElementById("trial-text"),
+    trialMapping: document.getElementById("trial-mapping"),
+    trialColor: document.getElementById("trial-color"),
+    trialCanvas: document.getElementById("trial-canvas"),
 
     tileCanvas: document.getElementById("tile-canvas"),
     tilePicker: document.getElementById("tile-picker"),
@@ -101,6 +112,7 @@
     charPicker: ui.charPicker.getContext("2d"),
     tile: ui.tileCanvas.getContext("2d"),
     tilePicker: ui.tilePicker.getContext("2d"),
+    trial: ui.trialCanvas.getContext("2d"),
     test: ui.testCanvas.getContext("2d"),
     map: ui.mapCanvas.getContext("2d")
   };
@@ -122,6 +134,9 @@
         selectedChar: state.selectedChar,
         selectedTile: state.selectedTile,
         charPreviewColor: state.charPreviewColor,
+        trialText: state.trialText,
+        trialMapping: state.trialMapping,
+        trialColor: state.trialColor,
         charset: Array.from(state.charset),
         tiles: state.tiles.map((t) => ({
           chars: t.chars.slice(0, 4),
@@ -225,6 +240,12 @@
       state.selectedChar = clampCharIndex(parsed.selectedChar ?? 0);
       state.selectedTile = clampTileIndex(parsed.selectedTile ?? 0);
       state.charPreviewColor = clampByte(parsed.charPreviewColor ?? 1) & 0x0f;
+      state.trialText = typeof parsed.trialText === "string" ? parsed.trialText : "HELLO C64";
+      state.trialMapping =
+        parsed.trialMapping === "direct" || parsed.trialMapping === "petscii-screen"
+          ? parsed.trialMapping
+          : "petscii-screen";
+      state.trialColor = clampByte(parsed.trialColor ?? 1) & 0x0f;
       return true;
     } catch (err) {
       setStatus(`Failed to load saved state: ${String(err)}`, true);
@@ -347,6 +368,100 @@
 
   function shouldDrawGrid(width, height) {
     return width * height <= 4096;
+  }
+
+  function rollCurrentChar(dx, dy) {
+    const base = charsetOffset(state.activeCharsetBank, state.selectedChar, 0);
+    const rows = new Uint8Array(CHAR_BYTES);
+    for (let i = 0; i < CHAR_BYTES; i += 1) {
+      rows[i] = state.charset[base + i];
+    }
+
+    if (dy !== 0) {
+      const shifted = new Uint8Array(CHAR_BYTES);
+      for (let y = 0; y < CHAR_BYTES; y += 1) {
+        const src = (y - dy + CHAR_BYTES) % CHAR_BYTES;
+        shifted[y] = rows[src];
+      }
+      for (let y = 0; y < CHAR_BYTES; y += 1) {
+        rows[y] = shifted[y];
+      }
+    }
+
+    if (dx !== 0) {
+      for (let y = 0; y < CHAR_BYTES; y += 1) {
+        const row = rows[y];
+        rows[y] = dx < 0
+          ? (((row << 1) & 0xff) | (row >> 7))
+          : ((row >> 1) | ((row & 1) << 7));
+      }
+    }
+
+    for (let i = 0; i < CHAR_BYTES; i += 1) {
+      state.charset[base + i] = rows[i];
+    }
+    invalidateTileAtlases();
+    renderAll();
+    schedulePersist();
+  }
+
+  function asciiToPetscii(code) {
+    // Mapping tuned for charset indexing convention:
+    // lowercase a-z -> PETSCII 0x41-0x5A (screen codes 1-26),
+    // uppercase A-Z -> PETSCII 0xC1-0xDA (screen codes 65-90).
+    if (code >= 0x61 && code <= 0x7a) return code - 0x20;
+    if (code >= 0x41 && code <= 0x5a) return code + 0x80;
+    return code & 0xff;
+  }
+
+  function petsciiToScreen(code) {
+    const c = code & 0xff;
+    if (c === 0x0d || c === 0x0a) return -1;
+    // In this block PETSCII matches screen code directly:
+    // space (32), punctuation, digits (48-57), etc.
+    if (c >= 0x20 && c <= 0x3f) return c;
+    // 0x41..0x5A letters become 1..26.
+    if (c >= 0x40 && c <= 0x5f) return c - 0x40;
+    if (c >= 0x60 && c <= 0x7f) return c - 0x20;
+    if (c >= 0xa0 && c <= 0xbf) return c - 0x80;
+    // 0xC1..0xDA letters become 65..90.
+    if (c >= 0xc0 && c <= 0xfe) return c - 0x80;
+    return c;
+  }
+
+  function trialCharToIndex(ch) {
+    const code = ch.charCodeAt(0) & 0xff;
+    if (state.trialMapping === "direct") {
+      if (code === 0x0d || code === 0x0a) return -1;
+      return code;
+    }
+    const petscii = asciiToPetscii(code);
+    return petsciiToScreen(petscii);
+  }
+
+  function renderTrialCanvas() {
+    const scale = 2;
+    const cellW = 8 * scale;
+    const cellH = 8 * scale;
+    const lines = state.trialText.split(/\r?\n/);
+    const longest = lines.reduce((m, line) => Math.max(m, line.length), 1);
+    const cols = Math.max(1, longest);
+    const rows = Math.max(1, lines.length);
+    ui.trialCanvas.width = cols * cellW;
+    ui.trialCanvas.height = rows * cellH;
+
+    ctx.trial.fillStyle = "#000";
+    ctx.trial.fillRect(0, 0, ui.trialCanvas.width, ui.trialCanvas.height);
+
+    const fg = C64_COLORS[state.trialColor & 0x0f];
+    for (let y = 0; y < lines.length; y += 1) {
+      const line = lines[y];
+      for (let x = 0; x < line.length; x += 1) {
+        const idx = trialCharToIndex(line[x]);
+        if (idx < 0) continue;
+        drawChar(ctx.trial, state.activeCharsetBank, idx, x * cellW, y * cellH, scale, fg, "#000");
+      }
+    }
   }
 
   function renderCharCanvas() {
@@ -578,6 +693,7 @@
     renderTilePicker();
     renderTileDefinitions();
     renderTileProperties();
+    renderTrialCanvas();
     if (state.mode === "tile") {
       renderTestCanvas();
     }
@@ -589,6 +705,9 @@
 
   function syncUiFromState() {
     ui.charPreviewColor.value = String(state.charPreviewColor);
+    ui.trialText.value = state.trialText;
+    ui.trialMapping.value = state.trialMapping;
+    ui.trialColor.value = String(state.trialColor);
     ui.mapWidth.value = String(state.map.width);
     ui.mapHeight.value = String(state.map.height);
     ui.mapId.value = String(state.map.id);
@@ -987,6 +1106,11 @@
       opt.value = String(c);
       opt.textContent = `${c}`;
       ui.charPreviewColor.appendChild(opt);
+
+      const trialOpt = document.createElement("option");
+      trialOpt.value = String(c);
+      trialOpt.textContent = `${c}`;
+      ui.trialColor.appendChild(trialOpt);
     }
     ui.charPreviewColor.value = String(state.charPreviewColor);
     ui.charPreviewColor.addEventListener("change", () => {
@@ -1014,6 +1138,39 @@
       if (!onPrimaryButton(event)) return;
       event.preventDefault();
       pasteCurrentChar();
+    });
+
+    ui.charRollUp.addEventListener("click", () => {
+      rollCurrentChar(0, -1);
+      setStatus(`Rolled char ${state.selectedChar} up.`);
+    });
+    ui.charRollDown.addEventListener("click", () => {
+      rollCurrentChar(0, 1);
+      setStatus(`Rolled char ${state.selectedChar} down.`);
+    });
+    ui.charRollLeft.addEventListener("click", () => {
+      rollCurrentChar(-1, 0);
+      setStatus(`Rolled char ${state.selectedChar} left.`);
+    });
+    ui.charRollRight.addEventListener("click", () => {
+      rollCurrentChar(1, 0);
+      setStatus(`Rolled char ${state.selectedChar} right.`);
+    });
+
+    ui.trialText.addEventListener("input", () => {
+      state.trialText = ui.trialText.value;
+      renderTrialCanvas();
+      schedulePersist();
+    });
+    ui.trialMapping.addEventListener("change", () => {
+      state.trialMapping = ui.trialMapping.value === "direct" ? "direct" : "petscii-screen";
+      renderTrialCanvas();
+      schedulePersist();
+    });
+    ui.trialColor.addEventListener("change", () => {
+      state.trialColor = clampByte(Number(ui.trialColor.value)) & 0x0f;
+      renderTrialCanvas();
+      schedulePersist();
     });
 
     ui.charsetActiveBank.value = String(state.activeCharsetBank);
@@ -1115,6 +1272,19 @@
         target instanceof HTMLSelectElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLButtonElement;
+
+      if (!onInput && state.mode === "tile" && ["1", "2", "3", "4"].includes(event.key)) {
+        event.preventDefault();
+        const quadrant = Number(event.key) - 1;
+        state.tiles[state.selectedTile].chars[quadrant] = state.selectedChar;
+        invalidateTileAtlases();
+        renderAll();
+        schedulePersist();
+        setStatus(
+          `Tile ${state.selectedTile}: set quadrant ${quadrant + 1} to char ${state.selectedChar}.`
+        );
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !onInput) {
         if (event.key === "c" || event.key === "C") {

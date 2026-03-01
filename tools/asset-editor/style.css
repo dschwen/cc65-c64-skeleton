@@ -163,6 +163,11 @@ button:hover {
   color: var(--muted);
 }
 
+.inline-label {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .inline-field {
   display: flex;
   flex-direction: column;
@@ -230,6 +235,21 @@ button:hover {
 }
 
 .map-viewport canvas {
+  border: 0;
+  border-radius: 0;
+}
+
+.trial-viewport {
+  margin-top: 0.4rem;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #050d14;
+  padding: 0.3rem;
+}
+
+.trial-viewport canvas {
   border: 0;
   border-radius: 0;
 }

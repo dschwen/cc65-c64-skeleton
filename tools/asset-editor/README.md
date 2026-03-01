@@ -14,6 +14,13 @@ Open `index.html` directly in a browser.
   - Edit one 8x8 character at a time.
   - Toggle active charset bank (bank 0 or bank 1) for editing/preview.
   - Left mouse draws set pixels, right mouse clears pixels.
+  - Roll selected character by 1 pixel with wrap-around (`Up`, `Down`, `Left`, `Right`).
+  - Trial text preview can render typed text using:
+    - `ASCII -> PETSCII -> screen code` conversion
+    - direct byte-to-character-index mapping
+  - In `ASCII -> PETSCII -> screen code` mode:
+    - lowercase `a-z` map to character indices `1-26`
+    - uppercase `A-Z` map to character indices `65-90`
   - Import supports both `CCHR` files and raw charset ROM binaries:
     - `2048` bytes (`256 * 8`): one charset bank (import target bank selectable)
     - `4096` bytes (`2 * 256 * 8`): two charset banks (loads both banks)
@@ -91,5 +98,8 @@ Payload:
 - Character copy/paste:
   - `Copy Char` / `Paste Char` buttons in character mode
   - `Ctrl/Cmd+C` and `Ctrl/Cmd+V` (outside form fields)
+- Tile-mode quick assign:
+  - `1`, `2`, `3`, `4` assign selected character to tile quadrants
+  - order: top-left, top-right, bottom-left, bottom-right
 - Map/test rendering uses cached tile atlases for faster redraws on large maps.
 - Editor state persists across reloads using browser `localStorage`.

@@ -7,11 +7,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="app-header">
-    <h1>C64 Asset Editor</h1>
-    <p>Character set, 2x2 tiles, tile properties, and map editing for cc65/C64 projects.</p>
-  </header>
-
   <main class="layout">
     <section class="panel control-panel">
       <h2>Mode</h2>
@@ -78,6 +73,31 @@
             <button id="char-paste">Paste Char</button>
             <button id="char-clear">Clear Char</button>
           </div>
+          <div class="inline-controls">
+            <span class="inline-label">Roll 1px (wrap)</span>
+            <button id="char-roll-up" title="Roll Up">Up</button>
+            <button id="char-roll-down" title="Roll Down">Down</button>
+            <button id="char-roll-left" title="Roll Left">Left</button>
+            <button id="char-roll-right" title="Roll Right">Right</button>
+          </div>
+        </div>
+        <h3>Trial Text</h3>
+        <div class="inline-controls">
+          <label>Text
+            <input id="trial-text" type="text" value="HELLO C64">
+          </label>
+          <label>Mapping
+            <select id="trial-mapping">
+              <option value="petscii-screen">ASCII -> PETSCII -> screen code</option>
+              <option value="direct">Direct byte value</option>
+            </select>
+          </label>
+          <label>Preview color
+            <select id="trial-color"></select>
+          </label>
+        </div>
+        <div class="trial-viewport">
+          <canvas id="trial-canvas" width="512" height="128"></canvas>
         </div>
       </section>
 

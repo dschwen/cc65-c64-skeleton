@@ -6,7 +6,23 @@ Browser-based editor for:
 - per-tile properties (1 byte per tile)
 - map editing with compact 4-byte header format
 
-Open `index.html` directly in a browser.
+Open `index.html` directly in a browser for local-only editing.
+
+Run the Python server when you want to open/save files directly from the repository `assets/` directory:
+
+```bash
+make asset-editor
+```
+
+Or run it directly:
+
+```bash
+python3 tools/asset-editor/server.py --host 127.0.0.1 --port 8000
+```
+
+Then open `http://127.0.0.1:8000/`.
+
+The server has no third-party dependencies and only exposes file operations under `assets/`.
 
 ## Editing modes
 
@@ -26,7 +42,8 @@ Open `index.html` directly in a browser.
     - `4096` bytes (`2 * 256 * 8`): two charset banks (loads both banks)
 - Tile mode:
   - Each tile has four character indices and four color values (0-15), one color per quadrant.
-  - Draw directly on the 16x16 tile canvas; edits are applied to underlying 8x8 character data.
+  - Left-click a quadrant on the 16x16 tile canvas to set it to the currently selected character.
+  - Hold `Shift` while drawing on the 16x16 tile canvas to edit underlying 8x8 character pixel data.
   - Includes a tile test canvas for painting selected tiles.
 - Map mode:
   - Edit map dimensions, map ID, and reserved byte.
@@ -95,11 +112,20 @@ Payload:
 - Tile editing can modify characters shared by multiple tiles.
 - Right-click is used for erasing/painting tile `0` on canvases.
 - Press `Tab` (when not focused in an input/select/button) to toggle active charset bank.
+- Use the `Show map/test grid` checkbox to toggle tile grid overlays for the map and test canvases.
+- Use the `Help` button for an in-editor keyboard shortcut reference.
 - Character copy/paste:
   - `Copy Char` / `Paste Char` buttons in character mode
-  - `Ctrl/Cmd+C` and `Ctrl/Cmd+V` (outside form fields)
+  - `Ctrl/Cmd+C` and `Ctrl/Cmd+V` in character mode (outside form fields)
+- Tile copy/paste:
+  - `Ctrl/Cmd+C` and `Ctrl/Cmd+V` in tile mode copy/paste the selected tile definition and property byte
 - Tile-mode quick assign:
   - `1`, `2`, `3`, `4` assign selected character to tile quadrants
   - order: top-left, top-right, bottom-left, bottom-right
+  - Left-clicking a quadrant on the tile canvas performs the same assignment for that quadrant
+  - Hold `Shift` to draw pixels instead of assigning the selected character
 - Map/test rendering uses cached tile atlases for faster redraws on large maps.
 - Editor state persists across reloads using browser `localStorage`.
+- Server-backed asset open/save is available only when served via `server.py`.
+- The left-side mode tabs use separate asset dropdowns and save paths for charset, tile, and map files.
+- Saving refuses to overwrite an existing asset if the server identifies it as another type or as ambiguous data.

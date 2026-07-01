@@ -29,6 +29,8 @@
     trialMapping: "petscii-screen",
     trialColor: 1,
     charClipboard: null,
+    tileClipboard: null,
+    showGrid: true,
     drawing: false,
     drawValue: 1,
     map: {
@@ -56,11 +58,22 @@
       tile: document.getElementById("tile-mode"),
       map: document.getElementById("map-mode")
     },
+    sidePanels: {
+      char: document.getElementById("side-char"),
+      tile: document.getElementById("side-tile"),
+      map: document.getElementById("side-map")
+    },
     charsetActiveBank: document.getElementById("charset-active-bank"),
     charsetImportBank: document.getElementById("charset-import-bank"),
     selectedBank: document.getElementById("selected-bank"),
     selectedChar: document.getElementById("selected-char"),
+    selectedCharTile: document.getElementById("selected-char-tile"),
     selectedTile: document.getElementById("selected-tile"),
+    selectedTileMap: document.getElementById("selected-tile-map"),
+    showGrid: document.getElementById("show-grid"),
+    helpOpen: document.getElementById("help-open"),
+    helpDialog: document.getElementById("help-dialog"),
+    helpClose: document.getElementById("help-close"),
     status: document.getElementById("status"),
 
     charCanvas: document.getElementById("char-canvas"),
@@ -104,7 +117,31 @@
     importMap: document.getElementById("import-map"),
     charsFile: document.getElementById("chars-file"),
     tilesFile: document.getElementById("tiles-file"),
-    mapFile: document.getElementById("map-file")
+    mapFile: document.getElementById("map-file"),
+    assetServerStatus: document.getElementById("asset-server-status"),
+    assetFileLists: {
+      charset: document.getElementById("asset-file-list-charset"),
+      tiles: document.getElementById("asset-file-list-tiles"),
+      map: document.getElementById("asset-file-list-map")
+    },
+    assetRefreshButtons: {
+      charset: document.getElementById("asset-refresh-charset"),
+      tiles: document.getElementById("asset-refresh-tiles"),
+      map: document.getElementById("asset-refresh-map")
+    },
+    assetOpenButtons: {
+      charset: document.getElementById("asset-open-charset"),
+      tiles: document.getElementById("asset-open-tiles"),
+      map: document.getElementById("asset-open-map")
+    },
+    assetSavePaths: {
+      charset: document.getElementById("asset-save-path-charset"),
+      tiles: document.getElementById("asset-save-path-tiles"),
+      map: document.getElementById("asset-save-path-map")
+    },
+    assetSaveChars: document.getElementById("asset-save-chars"),
+    assetSaveTiles: document.getElementById("asset-save-tiles"),
+    assetSaveMap: document.getElementById("asset-save-map")
   };
 
   const ctx = {
@@ -118,11 +155,25 @@
   };
   const tileAtlases = new Map();
   let persistTimer = null;
+  let statusTimer = null;
+  let assetFiles = [];
 
   function setStatus(msg, isError) {
+    if (statusTimer !== null) {
+      window.clearTimeout(statusTimer);
+      statusTimer = null;
+    }
     ui.status.textContent = msg;
     ui.status.style.color = isError ? "#ffd0c9" : "#f8f5ef";
     ui.status.style.borderColor = isError ? "#ff6f61" : "#3f637e";
+    ui.status.classList.toggle("hidden", !msg);
+    if (msg) {
+      statusTimer = window.setTimeout(() => {
+        ui.status.textContent = "";
+        ui.status.classList.add("hidden");
+        statusTimer = null;
+      }, 3500);
+    }
   }
 
   function persistNow() {
@@ -137,6 +188,7 @@
         trialText: state.trialText,
         trialMapping: state.trialMapping,
         trialColor: state.trialColor,
+        showGrid: state.showGrid,
         charset: Array.from(state.charset),
         tiles: state.tiles.map((t) => ({
           chars: t.chars.slice(0, 4),
@@ -246,6 +298,7 @@
           ? parsed.trialMapping
           : "petscii-screen";
       state.trialColor = clampByte(parsed.trialColor ?? 1) & 0x0f;
+      state.showGrid = parsed.showGrid !== false;
       return true;
     } catch (err) {
       setStatus(`Failed to load saved state: ${String(err)}`, true);
@@ -366,8 +419,32 @@
     targetCtx.drawImage(atlas.canvas, sx, sy, tileSize, tileSize, dx, dy, tileSize, tileSize);
   }
 
-  function shouldDrawGrid(width, height) {
-    return width * height <= 4096;
+  function shouldDrawGrid() {
+    return state.showGrid;
+  }
+
+  function drawGridLine(ctxTarget, x1, y1, x2, y2, color) {
+    ctxTarget.strokeStyle = color;
+    ctxTarget.beginPath();
+    ctxTarget.moveTo(x1, y1);
+    ctxTarget.lineTo(x2, y2);
+    ctxTarget.stroke();
+  }
+
+  function drawMapCellGrid(tx, ty) {
+    if (!shouldDrawGrid(state.map.width, state.map.height)) return;
+    const scale = 2;
+    const cell = 16 * scale;
+    const left = tx * cell + 0.5;
+    const top = ty * cell + 0.5;
+    const right = (tx + 1) * cell + 0.5;
+    const bottom = (ty + 1) * cell + 0.5;
+    const color = "#303942";
+
+    drawGridLine(ctx.map, left, top, right, top, color);
+    drawGridLine(ctx.map, left, bottom, right, bottom, color);
+    drawGridLine(ctx.map, left, top, left, bottom, color);
+    drawGridLine(ctx.map, right, top, right, bottom, color);
   }
 
   function rollCurrentChar(dx, dy) {
@@ -547,10 +624,7 @@
     const py = ty * 16 * scale;
     const tile = state.map.data[ty * state.map.width + tx];
     blitTile(ctx.map, tile, px, py, scale);
-    if (shouldDrawGrid(state.map.width, state.map.height)) {
-      ctx.map.strokeStyle = "rgba(255,255,255,0.12)";
-      ctx.map.strokeRect(px + 0.5, py + 0.5, 16 * scale, 16 * scale);
-    }
+    drawMapCellGrid(tx, ty);
   }
 
   function renderMapCanvas() {
@@ -568,7 +642,7 @@
     if (!shouldDrawGrid(state.map.width, state.map.height)) {
       return;
     }
-    ctx.map.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.map.strokeStyle = "#303942";
     for (let x = 0; x <= state.map.width; x += 1) {
       const px = x * 16 * scale + 0.5;
       ctx.map.beginPath();
@@ -597,7 +671,10 @@
       }
     }
 
-    ctx.test.strokeStyle = "rgba(255,255,255,0.1)";
+    if (!shouldDrawGrid(state.test.width, state.test.height)) {
+      return;
+    }
+    ctx.test.strokeStyle = "#303942";
     for (let x = 0; x <= state.test.width; x += 1) {
       const px = x * 16 * scale + 0.5;
       ctx.test.beginPath();
@@ -673,6 +750,7 @@
   function renderMode() {
     ["char", "tile", "map"].forEach((m) => {
       ui.modePanels[m].classList.toggle("hidden", m !== state.mode);
+      ui.sidePanels[m].classList.toggle("hidden", m !== state.mode);
       ui.modeButtons[m].classList.toggle("active", m === state.mode);
     });
   }
@@ -681,7 +759,9 @@
     ui.selectedBank.textContent = String(state.activeCharsetBank);
     ui.charsetActiveBank.value = String(state.activeCharsetBank);
     ui.selectedChar.textContent = String(state.selectedChar);
+    ui.selectedCharTile.textContent = String(state.selectedChar);
     ui.selectedTile.textContent = String(state.selectedTile);
+    ui.selectedTileMap.textContent = String(state.selectedTile);
   }
 
   function renderAll() {
@@ -714,6 +794,7 @@
     ui.mapReserved.value = String(state.map.reserved);
     ui.testWidth.value = String(state.test.width);
     ui.testHeight.value = String(state.test.height);
+    ui.showGrid.checked = state.showGrid;
   }
 
   function copyCurrentChar() {
@@ -738,11 +819,49 @@
     setStatus(`Pasted into char ${state.selectedChar} on bank ${state.activeCharsetBank}.`);
   }
 
+  function copyCurrentTile() {
+    const tile = state.tiles[state.selectedTile];
+    state.tileClipboard = {
+      chars: tile.chars.slice(0, 4),
+      colors: tile.colors.slice(0, 4),
+      props: state.tileProps[state.selectedTile]
+    };
+    setStatus(`Copied tile ${state.selectedTile}.`);
+  }
+
+  function pasteCurrentTile() {
+    if (!state.tileClipboard) {
+      setStatus("Tile clipboard is empty.", true);
+      return;
+    }
+    state.tiles[state.selectedTile].chars = state.tileClipboard.chars.map(clampCharIndex);
+    state.tiles[state.selectedTile].colors = state.tileClipboard.colors.map((c) => clampByte(c) & 0x0f);
+    state.tileProps[state.selectedTile] = clampByte(state.tileClipboard.props);
+    invalidateTileAtlases();
+    renderAll();
+    schedulePersist();
+    setStatus(`Pasted into tile ${state.selectedTile}.`);
+  }
+
   function canvasPos(canvas, event) {
     const rect = canvas.getBoundingClientRect();
     const x = Math.floor((event.clientX - rect.left) * canvas.width / rect.width);
     const y = Math.floor((event.clientY - rect.top) * canvas.height / rect.height);
     return { x, y };
+  }
+
+  function tileCanvasCell(event) {
+    const { x, y } = canvasPos(ui.tileCanvas, event);
+    const px = Math.floor(x / 16);
+    const py = Math.floor(y / 16);
+    if (px < 0 || px > 15 || py < 0 || py > 15) return null;
+    const qx = px >= 8 ? 1 : 0;
+    const qy = py >= 8 ? 1 : 0;
+    return {
+      quadrant: qx + qy * 2,
+      localX: px % 8,
+      localY: py % 8
+    };
   }
 
   function applyCharDraw(event) {
@@ -765,20 +884,13 @@
   }
 
   function applyTileDraw(event) {
-    const { x, y } = canvasPos(ui.tileCanvas, event);
-    const px = Math.floor(x / 16);
-    const py = Math.floor(y / 16);
-    if (px < 0 || px > 15 || py < 0 || py > 15) return;
-
-    const qx = px >= 8 ? 1 : 0;
-    const qy = py >= 8 ? 1 : 0;
-    const q = qx + qy * 2;
-    const lx = px % 8;
-    const ly = py % 8;
+    if (!event.shiftKey) return;
+    const cell = tileCanvasCell(event);
+    if (!cell) return;
 
     const tile = state.tiles[state.selectedTile];
-    const targetChar = tile.chars[q];
-    setCharPixel(targetChar, lx, ly, state.drawValue);
+    const targetChar = tile.chars[cell.quadrant];
+    setCharPixel(targetChar, cell.localX, cell.localY, state.drawValue);
     invalidateTileAtlases();
     renderCharCanvas();
     renderCharPicker();
@@ -791,6 +903,32 @@
       renderMapCanvas();
     }
     schedulePersist();
+  }
+
+  function assignSelectedCharToTileQuadrant(quadrant) {
+    const q = Math.max(0, Math.min(3, quadrant | 0));
+    state.tiles[state.selectedTile].chars[q] = state.selectedChar;
+    invalidateTileAtlases();
+    renderAll();
+    schedulePersist();
+    setStatus(`Tile ${state.selectedTile}: set quadrant ${q + 1} to char ${state.selectedChar}.`);
+  }
+
+  function openHelpDialog() {
+    if (ui.helpDialog.open) return;
+    if (typeof ui.helpDialog.showModal === "function") {
+      ui.helpDialog.showModal();
+      return;
+    }
+    ui.helpDialog.setAttribute("open", "open");
+  }
+
+  function closeHelpDialog() {
+    if (typeof ui.helpDialog.close === "function") {
+      ui.helpDialog.close();
+      return;
+    }
+    ui.helpDialog.removeAttribute("open");
   }
 
   function applyTilePaintOnCanvas(canvasKey, event) {
@@ -810,7 +948,7 @@
     } else {
       blitTile(ctx.test, data[ty * width + tx], tx * 32, ty * 32, 2);
       if (shouldDrawGrid(width, height)) {
-        ctx.test.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.test.strokeStyle = "#303942";
         ctx.test.strokeRect(tx * 32 + 0.5, ty * 32 + 0.5, 32, 32);
       }
     }
@@ -855,16 +993,7 @@
     renderTestCanvas();
   }
 
-  function downloadBinary(name, bytes) {
-    const blob = new Blob([bytes], { type: "application/octet-stream" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  function exportCharset() {
+  function buildCharsetBytes() {
     const out = new Uint8Array(8 + CHARSET_BANKS * CHAR_COUNT * CHAR_BYTES);
     out[0] = 0x43; // C
     out[1] = 0x43; // C
@@ -875,7 +1004,54 @@
     out[6] = 0;
     out[7] = 0;
     out.set(state.charset, 8);
-    downloadBinary("charset.cchr", out);
+    return out;
+  }
+
+  function buildTilesBytes() {
+    const out = new Uint8Array(8 + TILE_COUNT * 8 + TILE_COUNT);
+    out[0] = 0x43; // C
+    out[1] = 0x54; // T
+    out[2] = 0x49; // I
+    out[3] = 0x4c; // L
+    out[4] = 1;
+    out[5] = 0;
+    out[6] = TILE_COUNT & 0xff;
+    out[7] = (TILE_COUNT >> 8) & 0xff;
+
+    let p = 8;
+    for (let i = 0; i < TILE_COUNT; i += 1) {
+      const t = state.tiles[i];
+      for (let q = 0; q < 4; q += 1) {
+        out[p++] = clampCharIndex(t.chars[q]);
+        out[p++] = t.colors[q] & 0x0f;
+      }
+    }
+    out.set(state.tileProps, p);
+    return out;
+  }
+
+  function buildMapBytes() {
+    const size = state.map.width * state.map.height;
+    const out = new Uint8Array(4 + size);
+    out[0] = state.map.width & 0xff;
+    out[1] = state.map.height & 0xff;
+    out[2] = state.map.id & 0xff;
+    out[3] = state.map.reserved & 0xff;
+    out.set(state.map.data, 4);
+    return out;
+  }
+
+  function downloadBinary(name, bytes) {
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function exportCharset() {
+    downloadBinary("charset.cchr", buildCharsetBytes());
     setStatus("Exported charset.cchr");
   }
 
@@ -964,27 +1140,7 @@
   }
 
   function exportTiles() {
-    const out = new Uint8Array(8 + TILE_COUNT * 8 + TILE_COUNT);
-    out[0] = 0x43; // C
-    out[1] = 0x54; // T
-    out[2] = 0x49; // I
-    out[3] = 0x4c; // L
-    out[4] = 1;
-    out[5] = 0;
-    out[6] = TILE_COUNT & 0xff;
-    out[7] = (TILE_COUNT >> 8) & 0xff;
-
-    let p = 8;
-    for (let i = 0; i < TILE_COUNT; i += 1) {
-      const t = state.tiles[i];
-      for (let q = 0; q < 4; q += 1) {
-        out[p++] = clampCharIndex(t.chars[q]);
-        out[p++] = t.colors[q] & 0x0f;
-      }
-    }
-    out.set(state.tileProps, p);
-
-    downloadBinary("tiles.ctil", out);
+    downloadBinary("tiles.ctil", buildTilesBytes());
     setStatus("Exported tiles.ctil");
   }
 
@@ -1043,14 +1199,7 @@
   }
 
   function exportMap() {
-    const size = state.map.width * state.map.height;
-    const out = new Uint8Array(4 + size);
-    out[0] = state.map.width & 0xff;
-    out[1] = state.map.height & 0xff;
-    out[2] = state.map.id & 0xff;
-    out[3] = state.map.reserved & 0xff;
-    out.set(state.map.data, 4);
-    downloadBinary("map.bin", out);
+    downloadBinary("map.bin", buildMapBytes());
     setStatus("Exported map.bin");
   }
 
@@ -1092,6 +1241,204 @@
     schedulePersist();
   }
 
+  function normalizeAssetPath(path) {
+    return path.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  }
+
+  function assetApiUrl(path) {
+    return `/api/assets/${normalizeAssetPath(path).split("/").map(encodeURIComponent).join("/")}`;
+  }
+
+  function setAssetServerAvailable(available, message) {
+    ui.assetServerStatus.textContent = message;
+    [
+      ...Object.values(ui.assetFileLists),
+      ...Object.values(ui.assetOpenButtons),
+      ...Object.values(ui.assetSavePaths),
+      ui.assetSaveChars,
+      ui.assetSaveTiles,
+      ui.assetSaveMap
+    ].forEach((el) => {
+      el.disabled = !available;
+    });
+  }
+
+  function detectAssetKinds(path, bytes) {
+    const kinds = new Set();
+    const lower = path.toLowerCase();
+    if (bytes.length >= 4) {
+      const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+      if (magic === "CCHR") kinds.add("charset");
+      if (magic === "CTIL") kinds.add("tiles");
+    }
+    if (bytes.length === 256 * CHAR_BYTES || bytes.length === 512 * CHAR_BYTES) kinds.add("charset");
+    if (bytes.length >= 4 && bytes[0] > 0 && bytes[1] > 0 && bytes[0] * bytes[1] === bytes.length - 4) {
+      kinds.add("map");
+    }
+    if (kinds.size > 0) return Array.from(kinds);
+    if (lower.endsWith(".cchr") || lower.endsWith(".rom") || lower.endsWith(".chr")) kinds.add("charset");
+    if (lower.endsWith(".ctil") || lower.endsWith(".til") || lower.endsWith(".tiles")) kinds.add("tiles");
+    if (lower.endsWith(".map") || lower.endsWith(".cmap")) kinds.add("map");
+    return Array.from(kinds);
+  }
+
+  function importAssetBytes(path, buffer, kind) {
+    if (kind === "charset") {
+      importCharset(buffer);
+      return true;
+    }
+    if (kind === "tiles") {
+      importTiles(buffer);
+      return true;
+    }
+    if (kind === "map") {
+      importMap(buffer);
+      return true;
+    }
+    setStatus(`Unknown asset type for ${path}.`, true);
+    return false;
+  }
+
+  function assetKindLabel(kind) {
+    if (kind === "charset") return "charset";
+    if (kind === "tiles") return "tile";
+    return "map";
+  }
+
+  function assetExtensionLooksCompatible(kind, path) {
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".bin")) return kind === "charset" || kind === "map";
+    if (kind === "charset") return /\.(cchr|rom|chr)$/.test(lower);
+    if (kind === "tiles") return /\.(ctil|til|tiles)$/.test(lower);
+    if (kind === "map") return /\.(map|cmap)$/.test(lower);
+    return false;
+  }
+
+  function canSaveAssetAs(kind, path) {
+    const existing = assetFiles.find((file) => file.path === path);
+    if (existing && Array.isArray(existing.kinds) && existing.kinds.length > 0) {
+      if (existing.kinds.length !== 1 || existing.kinds[0] !== kind) {
+        setStatus(`Refusing to overwrite ${path}: existing file is ${existing.kinds.join("/")} data.`, true);
+        return false;
+      }
+    }
+    if (!assetExtensionLooksCompatible(kind, path)) {
+      setStatus(`Refusing to save ${assetKindLabel(kind)} data with incompatible filename: ${path}.`, true);
+      return false;
+    }
+    return true;
+  }
+
+  function renderAssetFileLists() {
+    ["charset", "tiles", "map"].forEach((kind) => {
+      const select = ui.assetFileLists[kind];
+      const current = select.value;
+      const files = assetFiles.filter((file) => Array.isArray(file.kinds) && file.kinds.includes(kind));
+      select.innerHTML = "";
+      if (files.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = `(no ${assetKindLabel(kind)} assets)`;
+        select.appendChild(opt);
+        return;
+      }
+
+      files.forEach((file) => {
+        const opt = document.createElement("option");
+        opt.value = file.path;
+        opt.textContent = `${file.path} (${file.size} bytes)`;
+        select.appendChild(opt);
+      });
+      if (files.some((file) => file.path === current)) {
+        select.value = current;
+      }
+    });
+  }
+
+  async function refreshAssetFiles() {
+    if (window.location.protocol === "file:") {
+      setAssetServerAvailable(false, "Run: python3 tools/asset-editor/server.py");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/assets");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const files = Array.isArray(payload.files) ? payload.files : [];
+      assetFiles = files.map((file) => ({
+        ...file,
+        kinds: Array.isArray(file.kinds) ? file.kinds : []
+      }));
+      renderAssetFileLists();
+      setAssetServerAvailable(true, `Connected to assets/ (${files.length} files).`);
+    } catch (err) {
+      setAssetServerAvailable(false, `Asset server unavailable: ${String(err)}`);
+    }
+  }
+
+  async function openAssetFromServer(kind) {
+    const path = normalizeAssetPath(ui.assetFileLists[kind].value);
+    if (!path) {
+      setStatus(`Select a ${assetKindLabel(kind)} asset first.`, true);
+      return;
+    }
+    try {
+      const response = await fetch(assetApiUrl(path));
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const buffer = await response.arrayBuffer();
+      const detectedKinds = detectAssetKinds(path, new Uint8Array(buffer));
+      if (detectedKinds.length > 0 && !detectedKinds.includes(kind)) {
+        setStatus(`Refusing to open ${path} as ${assetKindLabel(kind)} data; detected ${detectedKinds.join("/")}.`, true);
+        return;
+      }
+      if (importAssetBytes(path, buffer, kind)) {
+        ui.assetSavePaths[kind].value = path;
+        setStatus(`Opened assets/${path}.`);
+      }
+    } catch (err) {
+      setStatus(`Failed to open assets/${path}: ${String(err)}`, true);
+    }
+  }
+
+  async function saveAssetToServer(kind) {
+    const path = normalizeAssetPath(ui.assetSavePaths[kind].value);
+    if (!path) {
+      setStatus("Enter a save path under assets/.", true);
+      return;
+    }
+    if (!canSaveAssetAs(kind, path)) {
+      return;
+    }
+
+    const bytes = kind === "charset"
+      ? buildCharsetBytes()
+      : kind === "tiles"
+        ? buildTilesBytes()
+        : buildMapBytes();
+
+    try {
+      const response = await fetch(assetApiUrl(path), {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: bytes
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      await refreshAssetFiles();
+      ui.assetSavePaths[kind].value = path;
+      setStatus(`Saved ${bytes.length} bytes to assets/${path}.`);
+    } catch (err) {
+      setStatus(`Failed to save assets/${path}: ${String(err)}`, true);
+    }
+  }
+
   function bindEvents() {
     Object.entries(ui.modeButtons).forEach(([mode, btn]) => {
       btn.addEventListener("click", () => {
@@ -1099,6 +1446,25 @@
         renderAll();
         schedulePersist();
       });
+    });
+
+    ui.showGrid.addEventListener("change", () => {
+      state.showGrid = ui.showGrid.checked;
+      if (state.mode === "tile") {
+        renderTestCanvas();
+      }
+      if (state.mode === "map") {
+        renderMapCanvas();
+      }
+      schedulePersist();
+    });
+
+    ui.helpOpen.addEventListener("click", openHelpDialog);
+    ui.helpClose.addEventListener("click", closeHelpDialog);
+    ui.helpDialog.addEventListener("click", (event) => {
+      if (event.target === ui.helpDialog) {
+        closeHelpDialog();
+      }
     });
 
     for (let c = 0; c < 16; c += 1) {
@@ -1235,12 +1601,27 @@
     });
 
     ui.tileCanvas.addEventListener("mousedown", (event) => {
-      state.drawing = true;
-      state.drawValue = event.button === 2 ? 0 : 1;
-      applyTileDraw(event);
+      if (event.shiftKey) {
+        state.drawing = true;
+        state.drawValue = event.button === 2 ? 0 : 1;
+        applyTileDraw(event);
+        return;
+      }
+
+      state.drawing = false;
+      if (event.button !== 0) return;
+      const cell = tileCanvasCell(event);
+      if (cell) {
+        assignSelectedCharToTileQuadrant(cell.quadrant);
+      }
     });
     ui.tileCanvas.addEventListener("mousemove", (event) => {
-      if (state.drawing) applyTileDraw(event);
+      if (!state.drawing) return;
+      if (!event.shiftKey) {
+        state.drawing = false;
+        return;
+      }
+      applyTileDraw(event);
     });
 
     ui.mapCanvas.addEventListener("mousedown", (event) => {
@@ -1276,25 +1657,27 @@
       if (!onInput && state.mode === "tile" && ["1", "2", "3", "4"].includes(event.key)) {
         event.preventDefault();
         const quadrant = Number(event.key) - 1;
-        state.tiles[state.selectedTile].chars[quadrant] = state.selectedChar;
-        invalidateTileAtlases();
-        renderAll();
-        schedulePersist();
-        setStatus(
-          `Tile ${state.selectedTile}: set quadrant ${quadrant + 1} to char ${state.selectedChar}.`
-        );
+        assignSelectedCharToTileQuadrant(quadrant);
         return;
       }
 
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !onInput) {
         if (event.key === "c" || event.key === "C") {
           event.preventDefault();
-          copyCurrentChar();
+          if (state.mode === "tile") {
+            copyCurrentTile();
+          } else if (state.mode === "char") {
+            copyCurrentChar();
+          }
           return;
         }
         if (event.key === "v" || event.key === "V") {
           event.preventDefault();
-          pasteCurrentChar();
+          if (state.mode === "tile") {
+            pasteCurrentTile();
+          } else if (state.mode === "char") {
+            pasteCurrentChar();
+          }
           return;
         }
       }
@@ -1359,6 +1742,22 @@
     ui.importTiles.addEventListener("click", () => ui.tilesFile.click());
     ui.exportMap.addEventListener("click", exportMap);
     ui.importMap.addEventListener("click", () => ui.mapFile.click());
+    Object.values(ui.assetRefreshButtons).forEach((btn) => {
+      btn.addEventListener("click", refreshAssetFiles);
+    });
+    ui.assetOpenButtons.charset.addEventListener("click", () => openAssetFromServer("charset"));
+    ui.assetOpenButtons.tiles.addEventListener("click", () => openAssetFromServer("tiles"));
+    ui.assetOpenButtons.map.addEventListener("click", () => openAssetFromServer("map"));
+    ui.assetSaveChars.addEventListener("click", () => saveAssetToServer("charset"));
+    ui.assetSaveTiles.addEventListener("click", () => saveAssetToServer("tiles"));
+    ui.assetSaveMap.addEventListener("click", () => saveAssetToServer("map"));
+    ["charset", "tiles", "map"].forEach((kind) => {
+      ui.assetFileLists[kind].addEventListener("change", () => {
+        if (ui.assetFileLists[kind].value) {
+          ui.assetSavePaths[kind].value = ui.assetFileLists[kind].value;
+        }
+      });
+    });
 
     ui.charsFile.addEventListener("change", async () => {
       const file = ui.charsFile.files[0];
@@ -1414,4 +1813,6 @@
   syncUiFromState();
   invalidateTileAtlases();
   renderAll();
+  setAssetServerAvailable(false, "Checking asset server...");
+  refreshAssetFiles();
 })();

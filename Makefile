@@ -15,6 +15,8 @@ PRG_NAME  ?= GAME
 RES_DIR ?= res
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*)
 DISK_EXTRA_DEPS := $(wildcard $(DISK_EXTRA_FILES))
+ASSET_EDITOR_HOST ?= 127.0.0.1
+ASSET_EDITOR_PORT ?= 8000
 
 CFLAGS := -t $(TARGET) -Oirs --cpu 6502
 LDFLAGS := -C $(CFG)
@@ -27,7 +29,7 @@ OUT_MAP := $(OUTDIR)/game.map
 OUT_LBL := $(OUTDIR)/game.lbl
 OUT_D64 := $(OUTDIR)/game.d64
 
-.PHONY: all clean d64 run run-d64
+.PHONY: all clean d64 run run-d64 asset-editor
 
 all: $(OUT_PRG)
 
@@ -54,6 +56,9 @@ run: $(OUT_PRG)
 
 run-d64: $(OUT_D64)
 	$(VICE) -8 $(OUT_D64)
+
+asset-editor:
+	python3 tools/asset-editor/server.py --host $(ASSET_EDITOR_HOST) --port $(ASSET_EDITOR_PORT)
 
 clean:
 	rm -rf $(OUTDIR)

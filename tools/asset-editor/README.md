@@ -42,8 +42,8 @@ The server has no third-party dependencies and only exposes file operations unde
     - `4096` bytes (`2 * 256 * 8`): two charset banks (loads both banks)
 - Tile mode:
   - Each tile has four character indices and four color values (0-15), one color per quadrant.
-  - Left-click a quadrant on the 16x16 tile canvas to set it to the currently selected character.
-  - Hold `Shift` while drawing on the 16x16 tile canvas to edit underlying 8x8 character pixel data.
+  - Draw directly on the 16x16 tile canvas to edit underlying 8x8 character pixel data.
+  - Hold `Shift` and click a quadrant on the 16x16 tile canvas to set it to the currently selected character.
   - Includes a tile test canvas for painting selected tiles.
 - Map mode:
   - Edit map dimensions, map ID, and reserved byte.
@@ -122,8 +122,8 @@ Payload:
 - Tile-mode quick assign:
   - `1`, `2`, `3`, `4` assign selected character to tile quadrants
   - order: top-left, top-right, bottom-left, bottom-right
-  - Left-clicking a quadrant on the tile canvas performs the same assignment for that quadrant
-  - Hold `Shift` to draw pixels instead of assigning the selected character
+  - `Shift` + left-clicking a quadrant on the tile canvas performs the same assignment for that quadrant
+  - Left/right dragging on the tile canvas edits pixels in the underlying characters
 - Map/test rendering uses cached tile atlases for faster redraws on large maps.
 - Editor state persists across reloads using browser `localStorage`.
 - Server-backed asset open/save is available only when served via `server.py`.

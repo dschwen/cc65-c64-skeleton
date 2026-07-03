@@ -884,7 +884,6 @@
   }
 
   function applyTileDraw(event) {
-    if (!event.shiftKey) return;
     const cell = tileCanvasCell(event);
     if (!cell) return;
 
@@ -1602,22 +1601,22 @@
 
     ui.tileCanvas.addEventListener("mousedown", (event) => {
       if (event.shiftKey) {
-        state.drawing = true;
-        state.drawValue = event.button === 2 ? 0 : 1;
-        applyTileDraw(event);
+        state.drawing = false;
+        if (event.button !== 0) return;
+        const cell = tileCanvasCell(event);
+        if (cell) {
+          assignSelectedCharToTileQuadrant(cell.quadrant);
+        }
         return;
       }
 
-      state.drawing = false;
-      if (event.button !== 0) return;
-      const cell = tileCanvasCell(event);
-      if (cell) {
-        assignSelectedCharToTileQuadrant(cell.quadrant);
-      }
+      state.drawing = true;
+      state.drawValue = event.button === 2 ? 0 : 1;
+      applyTileDraw(event);
     });
     ui.tileCanvas.addEventListener("mousemove", (event) => {
       if (!state.drawing) return;
-      if (!event.shiftKey) {
+      if (event.shiftKey) {
         state.drawing = false;
         return;
       }

@@ -247,6 +247,23 @@ It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
 the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
 other CIA1 interrupt services.
 
+### EasyFlash cartridge build
+
+`make cartridge` builds the normal PRG first, embeds its payload in EasyFlash
+bank 0, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
+both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
+six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
+KERNAL, copies the PRG to its normal `$0801-$38FF` RAM layout, and disables the
+cartridge before entering the cc65 startup at `$080D`.
+
+The game does not currently write save data to flash. EasyFlash programming
+requires RAM-resident driver code, sector erase handling, and correct polling;
+ordinary C stores to banked ROM are not sufficient.
+
+See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
+including boot vectors, CRT CHIP layout, validation, multi-bank growth, and
+flash-save constraints.
+
 ### VIC‑II
 - **VIC register base**: `$D000` (mirrored through `$D3FF`)
 - **Border**: `$D020`

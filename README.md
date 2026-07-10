@@ -2,6 +2,7 @@
 
 This is a minimal cc65-based C64 repository skeleton with:
 - A pragmatic guide: `GUIDE_cc65_C64.md`
+- EasyFlash cartridge notes: `EASYFLASH_CARTRIDGE.md`
 - Minimal VIC/SID helper wrappers
 - A custom linker config starter: `cfg/myc64.cfg`
 - A Makefile that builds a `.prg` plus `.map`
@@ -31,6 +32,18 @@ Output:
 - `build/game.d64`
 - plus any files found in `res/` (configurable via `DISK_EXTRA_FILES`)
 
+Build an EasyFlash cartridge image:
+```bash
+make cartridge
+```
+
+See `EASYFLASH_CARTRIDGE.md` for the boot process, linker layout, CRT format,
+validation steps, multi-bank expansion guidance, and flash-save constraints.
+
+Output:
+- `build/game.crt`
+- `build/game-ef.bin` (raw populated EasyFlash bank)
+
 ## Run
 Open `build/game.prg` in your favorite C64 emulator (VICE etc.).
 
@@ -38,6 +51,7 @@ Or run via Makefile targets:
 ```bash
 make run      # autostarts build/game.prg
 make run-d64  # boots build/game.d64 as drive 8
+make run-cartridge # attaches build/game.crt
 ```
 
 Useful overrides:

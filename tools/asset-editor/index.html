@@ -92,31 +92,54 @@
       </section>
 
       <section id="side-map" class="side-panel hidden">
-        <h2>Map Files</h2>
+        <h2>Room Files</h2>
         <div class="button-grid">
-          <button id="export-map">Export Map</button>
-          <button id="import-map">Import Map</button>
+          <button id="export-map">Export Room</button>
+          <button id="import-map">Import Room</button>
         </div>
-        <label class="inline-field">Map asset
+        <label class="inline-field">Room asset
           <select id="asset-file-list-map"></select>
         </label>
         <div class="inline-controls">
           <button id="asset-refresh-map">Refresh</button>
-          <button id="asset-open-map">Open Map</button>
+          <button id="asset-open-map">Open Room</button>
         </div>
-        <label class="inline-field">Save map as
-          <input id="asset-save-path-map" type="text" value="map.bin">
+        <label class="inline-field">Save room as
+          <input id="asset-save-path-map" type="text" value="00">
         </label>
         <div class="button-grid">
-          <button id="asset-save-map">Save Map</button>
+          <button id="asset-save-map">Save Room</button>
         </div>
+
+        <h2>Object Types</h2>
+        <div class="button-grid">
+          <button id="export-object-types">Export Types</button>
+          <button id="import-object-types">Import Types</button>
+        </div>
+        <label class="inline-field">Type-list asset
+          <select id="asset-file-list-objecttypes"></select>
+        </label>
+        <div class="inline-controls">
+          <button id="asset-refresh-objecttypes">Refresh</button>
+          <button id="asset-open-objecttypes">Open Types</button>
+        </div>
+        <label class="inline-field">Save type list as
+          <input id="asset-save-path-objecttypes" type="text" value="objects.cobj">
+        </label>
+        <div class="button-grid">
+          <button id="asset-save-objecttypes">Save Types</button>
+        </div>
+
         <h2>Selected</h2>
         <div class="stat-row"><span>Tile</span><strong id="selected-tile-map">0</strong></div>
+        <div class="stat-row"><span>Object slot</span><strong id="selected-object-slot">None</strong></div>
+        <button id="delete-room-object" class="wide-button" disabled>Delete Object</button>
       </section>
 
       <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
       <input id="tiles-file" type="file" accept=".ctil,.bin" hidden>
       <input id="map-file" type="file" accept=".map,.cmap,.bin" hidden>
+      <input id="object-types-file" type="file" accept=".cobj,.bin" hidden>
 
       <h2>Status</h2>
       <p id="status" class="status hidden"></p>
@@ -179,17 +202,54 @@
       </section>
 
       <section id="map-mode" class="mode-panel hidden">
-        <h2>Map Editor</h2>
+        <h2>Room Editor</h2>
         <div class="inline-controls">
-          <label>Width <input id="map-width" type="number" min="1" max="255" value="16"></label>
-          <label>Height <input id="map-height" type="number" min="1" max="255" value="16"></label>
-          <label>Map ID <input id="map-id" type="number" min="0" max="255" value="0"></label>
-          <label>Reserved <input id="map-reserved" type="number" min="0" max="255" value="0"></label>
-          <button id="resize-map">Apply Size</button>
+          <span class="fixed-size">20 x 11 tiles / 40 x 22 half-tiles</span>
+          <label>Room ID <input id="map-id" type="number" min="0" max="255" value="0"></label>
+          <span>Format 1</span>
+        </div>
+        <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
+          <button id="map-tool-tile" class="active">Tile paint</button>
+          <button id="map-tool-object">Object place</button>
         </div>
         <div class="map-viewport">
-          <canvas id="map-canvas" width="512" height="512"></canvas>
+          <canvas id="map-canvas" width="640" height="352"></canvas>
         </div>
+
+        <div class="room-editor-grid">
+          <section class="editor-section">
+            <h3>Room Objects</h3>
+            <div class="inline-controls">
+              <label>Place type
+                <select id="room-object-type"></select>
+              </label>
+              <span id="room-object-count">0 / 256 slots</span>
+            </div>
+            <div id="room-object-list" class="room-object-list"></div>
+          </section>
+
+          <section class="editor-section">
+            <h3>Room Text Pool</h3>
+            <label>One zero-terminated string per line
+              <textarea id="room-text-source" rows="8" maxlength="255"></textarea>
+            </label>
+            <pre id="room-text-offsets" class="offset-list">00: (empty)</pre>
+          </section>
+        </div>
+
+        <section class="editor-section object-type-editor">
+          <h3>Object Type</h3>
+          <div class="inline-controls object-type-fields">
+            <label>ID <input id="object-type-id" type="number" min="1" max="255" value="1"></label>
+            <label>Name <input id="object-type-name" type="text" maxlength="14"></label>
+            <label>Width <input id="object-type-width" type="number" min="1" max="15" value="1"></label>
+            <label>Height <input id="object-type-height" type="number" min="1" max="15" value="1"></label>
+            <label>Hotspot X <input id="object-hotspot-x" type="number" min="0" max="14" value="0"></label>
+            <label>Hotspot Y <input id="object-hotspot-y" type="number" min="0" max="14" value="0"></label>
+            <label><input id="object-type-actor" type="checkbox"> PC/NPC actor</label>
+          </div>
+          <div id="object-type-cells" class="object-type-cells"></div>
+        </section>
       </section>
     </section>
 

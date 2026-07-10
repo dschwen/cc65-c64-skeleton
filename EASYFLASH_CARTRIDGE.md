@@ -1,7 +1,7 @@
 # EasyFlash Cartridge Generation
 
 This document records the design decisions and practical lessons behind this
-repository's EasyFlash build. It describes the current one-bank cartridge,
+repository's EasyFlash build. It describes the current two-bank cartridge,
 the relevant C64 and EasyFlash behavior, and the constraints to consider when
 expanding the game to use more banks or writable flash.
 
@@ -30,7 +30,7 @@ Outputs:
 | File | Purpose |
 |---|---|
 | `build/game.prg` | Normal disk/loadable game, built first |
-| `build/game-ef.bin` | Raw 16 KiB contents of EasyFlash bank 0 |
+| `build/game-ef.bin` | Raw 32 KiB contents of EasyFlash banks 0 and 1 |
 | `build/game-ef.map` | Cartridge bootstrap linker map |
 | `build/game.crt` | EasyFlash CRT image for emulators or EasyProg |
 
@@ -49,7 +49,7 @@ make CART_NAME=MYGAME cartridge
 The relevant source files are:
 
 - `cart/ef_boot.s`: cartridge header, bootstrap, PRG payload, and vectors
-- `cfg/easyflash.cfg`: raw bank 0 linker layout
+- `cfg/easyflash.cfg`: raw bank 0/1 linker layout
 - `Makefile`: PRG, raw cartridge, and CRT build pipeline
 
 ## Three different layouts
@@ -96,15 +96,17 @@ that its own ROM window may disappear immediately.
 
 A `.crt` is not a raw memory dump. It has a cartridge header followed by CHIP
 packets. Each CHIP packet identifies a bank, CPU load window, and 8 KiB data
-payload. For this project's one-bank image, `cartconv -f` reports:
+payload. For this project's two-bank image, `cartconv -f` reports:
 
 ```text
 CHIP FLASH #000 $8000 $2000
 CHIP FLASH #000 $a000 $2000
+CHIP FLASH #001 $8000 $2000
+CHIP FLASH #001 $a000 $2000
 ```
 
-These are bank 0 ROML and bank 0 ROMH. `cartconv` omits erased banks, so the
-CRT contains 16 KiB of flash data even though EasyFlash has a logical 1 MiB
+These are ROML and ROMH for banks 0 and 1. `cartconv` omits erased banks, so
+the CRT contains 32 KiB of flash data even though EasyFlash has a logical 1 MiB
 capacity. Missing banks represent erased `$FF` data.
 
 ## Boot paths
@@ -158,38 +160,46 @@ would introduce several new requirements:
 The current cartridge instead treats the working PRG as its payload:
 
 1. The normal `make` build produces `build/game.prg`.
-2. `ef_boot.s` embeds the PRG excluding its two-byte load address.
+2. `ef_boot.s` embeds the PRG excluding its two-byte load address, placing the
+   first `$3000` bytes in bank 0 and the remainder in bank 1.
 3. The bootstrap initializes CPU port registers `$01` and `$00`.
 4. It selects EasyFlash bank 0 and 16 KiB mode.
 5. It calls KERNAL `IOINIT`, `RAMTAS`, `RESTOR`, and `CINT`.
-6. It copies the payload from cartridge ROM to RAM beginning at `$0801`.
-7. It writes a small disable-and-jump trampoline into screen RAM at `$0400`.
-8. The trampoline disables EasyFlash and jumps to cc65 startup at `$080D`.
-9. The game clears screen RAM during its normal initialization.
+6. It copies the bank 0 chunk into RAM beginning at `$0801`.
+7. It copies a position-independent second-stage loader to `$C000` and jumps
+   there before selecting bank 1 through `$DE00`.
+8. The RAM stage copies the bank 1 remainder into contiguous destination RAM.
+9. It writes a small disable-and-jump trampoline into screen RAM at `$0400`.
+10. The trampoline disables EasyFlash and jumps to cc65 startup at `$080D`.
+11. The game clears screen RAM during its normal initialization.
 
 The trampoline is necessary because an instruction following `sta $DE02`
 could no longer be fetched from ROML after the cartridge is disabled.
+The `$C000` stage is necessary for the same reason when `$DE00` selects bank
+1: bank 0 ROML, including the first-stage loader, disappears immediately.
 
 This design keeps the PRG and cartridge builds behaviorally aligned and makes
 the cartridge a fast, self-contained loader. The cartridge is not banked in
 during normal gameplay.
 
-## Current bank 0 layout
+## Current bank layout
 
-`cfg/easyflash.cfg` creates one filled 16 KiB raw bank:
+`cfg/easyflash.cfg` creates two filled 16 KiB raw banks:
 
 | Range | Segment | Current use |
 |---|---|---|
 | `$8000-$8008` | `CART_HEADER` | Vectors and `CBM80` signature |
 | `$8009-$807D` | `BOOT` | RAM initialization and copy loader |
 | `$807E-$80FF` | fill | `$FF` padding |
-| `$8100-$B1FE` | `PAYLOAD` | PRG bytes for `$0801-$38FF` |
-| `$B1FF-$BFF9` | fill | `$FF` padding |
+| bank 0 `$8100-$B0FF` | `PAYLOAD0` | first `$3000` PRG payload bytes |
+| bank 0 `$B100-$BFF9` | fill | `$FF` padding |
 | `$BFFA-$BFFF` | `VECTORS` | Ultimax NMI, RESET, and IRQ vectors |
+| bank 1 `$8000+` | `PAYLOAD1` | remaining PRG payload bytes |
+| remainder of bank 1 | fill | `$FF` padding |
 
-The payload starts at `$8100` to simplify inspection and leave room for the
-bootstrap. The assembler asserts that the payload is nonempty and ends no
-later than `$BFFA`.
+The first payload starts at `$8100` to leave room for the bootstrap. The
+assembler asserts a full `$3000`-byte first chunk, a nonempty second chunk,
+and that the remainder fits in bank 1.
 
 The current bootstrap has two intentional hard-coded couplings to the PRG
 linker layout:
@@ -198,7 +208,7 @@ linker layout:
 - cc65 startup entry: `$080D`
 
 If `cfg/myc64.cfg` changes either value, update `PRG_START` and `CC65_START`
-in `cart/ef_boot.s`. Also verify the payload still fits in bank 0.
+in `cart/ef_boot.s`. Also verify the payload still fits across banks 0 and 1.
 
 ## Linker and `cartconv` pipeline
 
@@ -213,12 +223,12 @@ game-ef.bin + cartconv -> game.crt
 The raw linker output is ordered exactly as one EasyFlash bank expects:
 
 ```text
-8 KiB bank 0 ROML, then 8 KiB bank 0 ROMH
+8 KiB bank 0 ROML, bank 0 ROMH, bank 1 ROML, then bank 1 ROMH
 ```
 
-VICE 3.9 `cartconv` rejects a 16 KiB EasyFlash input by default because a
+VICE 3.9 `cartconv` rejects a 32 KiB EasyFlash input by default because a
 fully padded raw EasyFlash image would be 1 MiB. The build uses `-p` to accept
-the non-padded bank 0 binary:
+the non-padded two-bank binary:
 
 ```bash
 cartconv -p -t easy -i build/game-ef.bin -o build/game.crt -n GAME
@@ -244,6 +254,8 @@ Expected metadata includes:
 - initial `/EXROM` high and `/GAME` low (Ultimax);
 - bank 0 `$8000` CHIP packet of `$2000` bytes;
 - bank 0 `$A000` CHIP packet of `$2000` bytes.
+- bank 1 `$8000` CHIP packet of `$2000` bytes;
+- bank 1 `$A000` CHIP packet of `$2000` bytes.
 
 Inspect the raw boot header and Ultimax vectors:
 
@@ -264,13 +276,15 @@ The final six bytes should contain three `$8009` vectors:
 09 80 09 80 09 80
 ```
 
-Verify that the embedded payload matches the PRG excluding its load address:
+Verify both embedded chunks against the PRG excluding its load address:
 
 ```bash
-cmp -i 256:2 -n 12543 build/game-ef.bin build/game.prg
+cmp -i 256:2 -n 12288 build/game-ef.bin build/game.prg
+cmp -i 16384:12290 -n 8811 build/game-ef.bin build/game.prg
 ```
 
-The byte count is specific to the current build. Read `PAYLOAD` size from
+The second byte count is inferred from EOF and changes with the game. Read
+`PAYLOAD0`/`PAYLOAD1` sizes from
 `build/game-ef.map` when the game changes.
 
 Structural checks do not replace a cold-boot test in VICE and, ideally, on
@@ -288,9 +302,10 @@ EasyFlash guide as `00:1:1800`. In this linker's physical ROMH address space it
 is `$B800-$BBFF`. A valid image begins there with lowercase `eapi` bytes and
 contains the actual flash driver. This project's range remains erased `$FF`.
 
-## Expanding beyond bank 0
+## Expanding beyond bank 1
 
-The current build does not use `$DE00` after boot. To use additional banks:
+The loader uses `$DE00` to copy bank 1, then disables the cartridge. To use
+additional banks during gameplay:
 
 1. Decide on the raw ordering: bank 0 ROML, bank 0 ROMH, bank 1 ROML, bank 1
    ROMH, and so on.
@@ -353,7 +368,7 @@ No flash-save code is included in this repository yet.
 | The `CBM` signature belongs near `$BFFA` | KERNAL autostart requires five-byte `CBM80` at `$8004-$8008`. |
 | Code can switch its own ROM bank freely | Switching removes the executing bytes unless equivalent code exists in the new bank; use RAM code. |
 | `#pragma code-name` places a writable save array | Code, read-only data, initialized data, and BSS are different linker concerns; flash is not writable RAM. |
-| A 16/32 KiB binary always works with `cartconv -t easy` | VICE 3.9 requires `-p` for this non-padded 16 KiB input. |
+| A 16/32 KiB binary always works with `cartconv -t easy` | VICE 3.9 requires `-p` for this non-padded 32 KiB input. |
 | Three flash stores are enough for saving | Real saves require RAM-resident programming, erase management, polling, failure handling, and wear-aware data layout. |
 
 ### `$DE02` value table
@@ -374,11 +389,12 @@ space. This was the cause of the first black-screen cartridge build.
 
 ## Current limitations
 
-- Only EasyFlash bank 0 is populated.
-- The complete PRG payload must fit between `$8100` and `$BFF9`.
+- Only EasyFlash banks 0 and 1 are populated.
+- The complete PRG payload must fit in `$3000` bytes of bank 0 plus one full
+  16 KiB bank 1.
 - PRG load and entry addresses are hard-coded in the bootstrap.
-- The cartridge is disabled during gameplay; there is no runtime asset bank
-  API yet.
+- The cartridge is disabled during gameplay; there is no runtime asset-bank
+  API beyond the bootstrap copy.
 - There is no flash-save implementation.
 - CRT structure has been validated, but this environment could not execute a
   VICE cold-boot test because of its host video crash.

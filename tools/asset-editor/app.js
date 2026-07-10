@@ -3,8 +3,18 @@
   const CHARSET_BANKS = 2;
   const TILE_COUNT = 256;
   const CHAR_BYTES = 8;
+  const MAP_WIDTH = 20;
+  const MAP_HEIGHT = 11;
+  const MAP_TILE_COUNT = MAP_WIDTH * MAP_HEIGHT;
+  const ROOM_OBJECT_COUNT = 256;
+  const ROOM_OBJECT_BYTES = ROOM_OBJECT_COUNT * 3;
+  const ROOM_TEXT_BYTES = 256;
+  const ROOM_FILE_BYTES = 4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_TEXT_BYTES;
+  const OBJECT_TYPE_COUNT = 256;
+  const OBJECT_TYPE_BYTES = 64;
+  const OBJECT_TYPE_FILE_BYTES = OBJECT_TYPE_COUNT * OBJECT_TYPE_BYTES;
   const STORAGE_KEY = "c64-asset-editor-state-v1";
-  const STORAGE_VERSION = 1;
+  const STORAGE_VERSION = 2;
 
   const C64_COLORS = [
     "#000000", "#ffffff", "#813338", "#75cec8",
@@ -34,12 +44,29 @@
     drawing: false,
     drawValue: 1,
     map: {
-      width: 16,
-      height: 16,
+      width: MAP_WIDTH,
+      height: MAP_HEIGHT,
       id: 0,
-      reserved: 0,
-      data: new Uint8Array(16 * 16)
+      reserved: 1,
+      data: new Uint8Array(MAP_TILE_COUNT),
+      objects: new Uint8Array(ROOM_OBJECT_BYTES),
+      text: new Uint8Array(ROOM_TEXT_BYTES),
+      textSource: ""
     },
+    objectTypes: Array.from({ length: OBJECT_TYPE_COUNT }, () => ({
+      width: 0,
+      height: 0,
+      hotspotX: 0,
+      hotspotY: 0,
+      name: "",
+      chars: new Uint8Array(16),
+      colors: new Uint8Array(16),
+      flags: 0,
+      reserved: new Uint8Array(15)
+    })),
+    selectedObjectType: 1,
+    selectedObjectSlot: -1,
+    mapTool: "tile",
     test: {
       width: 16,
       height: 12,
@@ -70,6 +97,7 @@
     selectedCharTile: document.getElementById("selected-char-tile"),
     selectedTile: document.getElementById("selected-tile"),
     selectedTileMap: document.getElementById("selected-tile-map"),
+    selectedObjectSlot: document.getElementById("selected-object-slot"),
     showGrid: document.getElementById("show-grid"),
     helpOpen: document.getElementById("help-open"),
     helpDialog: document.getElementById("help-dialog"),
@@ -103,11 +131,23 @@
     resizeTest: document.getElementById("resize-test"),
 
     mapCanvas: document.getElementById("map-canvas"),
-    mapWidth: document.getElementById("map-width"),
-    mapHeight: document.getElementById("map-height"),
     mapId: document.getElementById("map-id"),
-    mapReserved: document.getElementById("map-reserved"),
-    resizeMap: document.getElementById("resize-map"),
+    mapToolTile: document.getElementById("map-tool-tile"),
+    mapToolObject: document.getElementById("map-tool-object"),
+    roomObjectType: document.getElementById("room-object-type"),
+    roomObjectCount: document.getElementById("room-object-count"),
+    roomObjectList: document.getElementById("room-object-list"),
+    deleteRoomObject: document.getElementById("delete-room-object"),
+    roomTextSource: document.getElementById("room-text-source"),
+    roomTextOffsets: document.getElementById("room-text-offsets"),
+    objectTypeId: document.getElementById("object-type-id"),
+    objectTypeName: document.getElementById("object-type-name"),
+    objectTypeWidth: document.getElementById("object-type-width"),
+    objectTypeHeight: document.getElementById("object-type-height"),
+    objectHotspotX: document.getElementById("object-hotspot-x"),
+    objectHotspotY: document.getElementById("object-hotspot-y"),
+    objectTypeActor: document.getElementById("object-type-actor"),
+    objectTypeCells: document.getElementById("object-type-cells"),
 
     exportChars: document.getElementById("export-chars"),
     importChars: document.getElementById("import-chars"),
@@ -115,33 +155,41 @@
     importTiles: document.getElementById("import-tiles"),
     exportMap: document.getElementById("export-map"),
     importMap: document.getElementById("import-map"),
+    exportObjectTypes: document.getElementById("export-object-types"),
+    importObjectTypes: document.getElementById("import-object-types"),
     charsFile: document.getElementById("chars-file"),
     tilesFile: document.getElementById("tiles-file"),
     mapFile: document.getElementById("map-file"),
+    objectTypesFile: document.getElementById("object-types-file"),
     assetServerStatus: document.getElementById("asset-server-status"),
     assetFileLists: {
       charset: document.getElementById("asset-file-list-charset"),
       tiles: document.getElementById("asset-file-list-tiles"),
-      map: document.getElementById("asset-file-list-map")
+      map: document.getElementById("asset-file-list-map"),
+      objecttypes: document.getElementById("asset-file-list-objecttypes")
     },
     assetRefreshButtons: {
       charset: document.getElementById("asset-refresh-charset"),
       tiles: document.getElementById("asset-refresh-tiles"),
-      map: document.getElementById("asset-refresh-map")
+      map: document.getElementById("asset-refresh-map"),
+      objecttypes: document.getElementById("asset-refresh-objecttypes")
     },
     assetOpenButtons: {
       charset: document.getElementById("asset-open-charset"),
       tiles: document.getElementById("asset-open-tiles"),
-      map: document.getElementById("asset-open-map")
+      map: document.getElementById("asset-open-map"),
+      objecttypes: document.getElementById("asset-open-objecttypes")
     },
     assetSavePaths: {
       charset: document.getElementById("asset-save-path-charset"),
       tiles: document.getElementById("asset-save-path-tiles"),
-      map: document.getElementById("asset-save-path-map")
+      map: document.getElementById("asset-save-path-map"),
+      objecttypes: document.getElementById("asset-save-path-objecttypes")
     },
     assetSaveChars: document.getElementById("asset-save-chars"),
     assetSaveTiles: document.getElementById("asset-save-tiles"),
-    assetSaveMap: document.getElementById("asset-save-map")
+    assetSaveMap: document.getElementById("asset-save-map"),
+    assetSaveObjectTypes: document.getElementById("asset-save-objecttypes")
   };
 
   const ctx = {
@@ -200,8 +248,25 @@
           height: state.map.height,
           id: state.map.id,
           reserved: state.map.reserved,
-          data: Array.from(state.map.data)
+          data: Array.from(state.map.data),
+          objects: Array.from(state.map.objects),
+          text: Array.from(state.map.text),
+          textSource: state.map.textSource
         },
+        objectTypes: state.objectTypes.map((type) => ({
+          width: type.width,
+          height: type.height,
+          hotspotX: type.hotspotX,
+          hotspotY: type.hotspotY,
+          name: type.name,
+          chars: Array.from(type.chars),
+          colors: Array.from(type.colors),
+          flags: type.flags,
+          reserved: Array.from(type.reserved)
+        })),
+        selectedObjectType: state.selectedObjectType,
+        selectedObjectSlot: state.selectedObjectSlot,
+        mapTool: state.mapTool,
         test: {
           width: state.test.width,
           height: state.test.height,
@@ -227,7 +292,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
-      if (!parsed || parsed.version !== STORAGE_VERSION) return false;
+      if (!parsed || (parsed.version !== 1 && parsed.version !== STORAGE_VERSION)) return false;
 
       if (Array.isArray(parsed.charset) && parsed.charset.length === state.charset.length) {
         state.charset.set(parsed.charset.map(clampByte));
@@ -267,12 +332,40 @@
         const w = Math.max(1, Math.min(255, parsed.map.width | 0));
         const h = Math.max(1, Math.min(255, parsed.map.height | 0));
         if (parsed.map.data.length === w * h) {
-          state.map.width = w;
-          state.map.height = h;
+          const fixed = new Uint8Array(MAP_TILE_COUNT);
+          for (let y = 0; y < Math.min(MAP_HEIGHT, h); y += 1) {
+            for (let x = 0; x < Math.min(MAP_WIDTH, w); x += 1) {
+              fixed[y * MAP_WIDTH + x] = clampByte(parsed.map.data[y * w + x]);
+            }
+          }
+          state.map.width = MAP_WIDTH;
+          state.map.height = MAP_HEIGHT;
           state.map.id = clampByte(parsed.map.id);
-          state.map.reserved = clampByte(parsed.map.reserved);
-          state.map.data = Uint8Array.from(parsed.map.data.map(clampByte));
+          state.map.reserved = 1;
+          state.map.data = fixed;
+          if (Array.isArray(parsed.map.objects) && parsed.map.objects.length === ROOM_OBJECT_BYTES) {
+            state.map.objects.set(parsed.map.objects.map(clampByte));
+          }
+          if (Array.isArray(parsed.map.text) && parsed.map.text.length === ROOM_TEXT_BYTES) {
+            state.map.text.set(parsed.map.text.map(clampByte));
+          }
+          state.map.textSource = typeof parsed.map.textSource === "string" ? parsed.map.textSource : "";
         }
+      }
+
+      if (Array.isArray(parsed.objectTypes) && parsed.objectTypes.length === OBJECT_TYPE_COUNT) {
+        parsed.objectTypes.forEach((source, index) => {
+          const type = state.objectTypes[index];
+          type.width = Math.max(0, Math.min(15, source.width | 0));
+          type.height = Math.max(0, Math.min(15, source.height | 0));
+          type.hotspotX = Math.max(0, Math.min(15, source.hotspotX | 0));
+          type.hotspotY = Math.max(0, Math.min(15, source.hotspotY | 0));
+          type.name = typeof source.name === "string" ? source.name.slice(0, 14) : "";
+          if (Array.isArray(source.chars) && source.chars.length === 16) type.chars.set(source.chars.map(clampByte));
+          if (Array.isArray(source.colors) && source.colors.length === 16) type.colors.set(source.colors.map((c) => clampByte(c) & 0x0f));
+          type.flags = clampByte(source.flags);
+          if (Array.isArray(source.reserved) && source.reserved.length === 15) type.reserved.set(source.reserved.map(clampByte));
+        });
       }
 
       if (parsed.test && Array.isArray(parsed.test.data)) {
@@ -299,6 +392,11 @@
           : "petscii-screen";
       state.trialColor = clampByte(parsed.trialColor ?? 1) & 0x0f;
       state.showGrid = parsed.showGrid !== false;
+      state.selectedObjectType = Math.max(1, clampByte(parsed.selectedObjectType ?? 1));
+      state.selectedObjectSlot = Number.isInteger(parsed.selectedObjectSlot)
+        ? Math.max(-1, Math.min(255, parsed.selectedObjectSlot))
+        : -1;
+      state.mapTool = parsed.mapTool === "object" ? "object" : "tile";
       return true;
     } catch (err) {
       setStatus(`Failed to load saved state: ${String(err)}`, true);
@@ -624,7 +722,62 @@
     const py = ty * 16 * scale;
     const tile = state.map.data[ty * state.map.width + tx];
     blitTile(ctx.map, tile, px, py, scale);
+    renderRoomObjects();
     drawMapCellGrid(tx, ty);
+  }
+
+  function objectTypeLabel(typeId) {
+    const type = state.objectTypes[typeId];
+    return type && type.name ? `${typeId.toString(16).padStart(2, "0").toUpperCase()} ${type.name}` :
+      typeId.toString(16).padStart(2, "0").toUpperCase();
+  }
+
+  function objectTypeIsValid(type) {
+    return type && type.width > 0 && type.height > 0 &&
+      type.width * type.height <= 16 &&
+      type.hotspotX < type.width && type.hotspotY < type.height;
+  }
+
+  function drawObjectChar(charIndex, color, dx, dy, scale) {
+    ctx.map.fillStyle = C64_COLORS[color & 0x0f];
+    for (let py = 0; py < 8; py += 1) {
+      const bits = state.charset[charsetOffset(0, charIndex, py)];
+      for (let px = 0; px < 8; px += 1) {
+        if ((bits >> (7 - px)) & 1) {
+          ctx.map.fillRect(dx + px * scale, dy + py * scale, scale, scale);
+        }
+      }
+    }
+  }
+
+  function renderRoomObjects() {
+    const scale = 2;
+    const cellPixels = 8 * scale;
+    for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
+      const p = slot * 3;
+      const typeId = state.map.objects[p];
+      if (typeId === 0) continue;
+      const type = state.objectTypes[typeId];
+      if (!objectTypeIsValid(type)) continue;
+      const originX = state.map.objects[p + 1] - type.hotspotX;
+      const originY = state.map.objects[p + 2] - type.hotspotY;
+      for (let index = 0; index < type.width * type.height; index += 1) {
+        const charIndex = type.chars[index];
+        if (charIndex === 0) continue;
+        const x = originX + (index % type.width);
+        const y = originY + Math.floor(index / type.width);
+        if (x < 0 || y < 0 || x >= MAP_WIDTH * 2 || y >= MAP_HEIGHT * 2) continue;
+        drawObjectChar(charIndex, type.colors[index], x * cellPixels, y * cellPixels, scale);
+      }
+      if (slot === state.selectedObjectSlot) {
+        const hx = state.map.objects[p + 1] * cellPixels;
+        const hy = state.map.objects[p + 2] * cellPixels;
+        ctx.map.strokeStyle = "#ffb347";
+        ctx.map.lineWidth = 2;
+        ctx.map.strokeRect(hx + 1, hy + 1, cellPixels - 2, cellPixels - 2);
+        ctx.map.lineWidth = 1;
+      }
+    }
   }
 
   function renderMapCanvas() {
@@ -638,6 +791,8 @@
         blitTile(ctx.map, tile, x * 16 * scale, y * 16 * scale, scale);
       }
     }
+
+    renderRoomObjects();
 
     if (!shouldDrawGrid(state.map.width, state.map.height)) {
       return;
@@ -657,6 +812,159 @@
       ctx.map.lineTo(ui.mapCanvas.width, py);
       ctx.map.stroke();
     }
+  }
+
+  function syncObjectTypeSelect() {
+    const current = String(state.selectedObjectType);
+    ui.roomObjectType.innerHTML = "";
+    for (let id = 1; id < OBJECT_TYPE_COUNT; id += 1) {
+      const option = document.createElement("option");
+      option.value = String(id);
+      option.textContent = objectTypeLabel(id);
+      option.disabled = !objectTypeIsValid(state.objectTypes[id]);
+      ui.roomObjectType.appendChild(option);
+    }
+    ui.roomObjectType.value = current;
+  }
+
+  function renderRoomObjectList() {
+    ui.roomObjectList.innerHTML = "";
+    let count = 0;
+    let nonActors = 0;
+    for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
+      const p = slot * 3;
+      const typeId = state.map.objects[p];
+      if (typeId === 0) continue;
+      count += 1;
+      if ((state.objectTypes[typeId].flags & 1) === 0) nonActors += 1;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "room-object-row";
+      row.classList.toggle("active", slot === state.selectedObjectSlot);
+      const slotLabel = document.createElement("span");
+      const typeLabel = document.createElement("span");
+      const positionLabel = document.createElement("span");
+      slotLabel.textContent = `#${slot.toString(16).padStart(2, "0").toUpperCase()}`;
+      typeLabel.textContent = objectTypeLabel(typeId);
+      positionLabel.textContent = `${state.map.objects[p + 1]},${state.map.objects[p + 2]}`;
+      row.append(slotLabel, typeLabel, positionLabel);
+      row.addEventListener("click", () => {
+        state.selectedObjectSlot = slot;
+        state.selectedObjectType = typeId;
+        renderMapEditorState();
+        renderMapCanvas();
+        schedulePersist();
+      });
+      ui.roomObjectList.appendChild(row);
+    }
+    ui.roomObjectCount.textContent = `${count} / 256 slots, ${nonActors} / 200 non-actors`;
+    ui.selectedObjectSlot.textContent = state.selectedObjectSlot < 0
+      ? "None"
+      : state.selectedObjectSlot.toString(16).padStart(2, "0").toUpperCase();
+    ui.deleteRoomObject.disabled = state.selectedObjectSlot < 0;
+  }
+
+  function encodeRoomTextSource(source, updateState) {
+    const bytes = new Uint8Array(ROOM_TEXT_BYTES);
+    const offsets = ["00: (empty)"];
+    let cursor = 1;
+    let truncated = false;
+    source.split(/\r?\n/).forEach((line) => {
+      if (!line) return;
+      if (cursor >= ROOM_TEXT_BYTES - 1) {
+        truncated = true;
+        return;
+      }
+      const start = cursor;
+      let i = 0;
+      for (; i < line.length && cursor < ROOM_TEXT_BYTES - 1; i += 1) {
+        bytes[cursor++] = line.charCodeAt(i) & 0xff;
+      }
+      if (i < line.length) truncated = true;
+      bytes[cursor++] = 0;
+      offsets.push(`${start.toString(16).padStart(2, "0").toUpperCase()}: ${line}`);
+    });
+    if (updateState) state.map.text = bytes;
+    ui.roomTextOffsets.textContent = offsets.join("\n");
+    if (updateState && truncated) setStatus("Room text exceeded 256 bytes and was truncated.", true);
+    return bytes;
+  }
+
+  function decodeRoomText(bytes) {
+    const lines = [];
+    let cursor = 1;
+    while (cursor < ROOM_TEXT_BYTES) {
+      while (cursor < ROOM_TEXT_BYTES && bytes[cursor] === 0) cursor += 1;
+      if (cursor >= ROOM_TEXT_BYTES) break;
+      let line = "";
+      while (cursor < ROOM_TEXT_BYTES && bytes[cursor] !== 0) {
+        line += String.fromCharCode(bytes[cursor++]);
+      }
+      lines.push(line);
+    }
+    return lines.join("\n");
+  }
+
+  function renderObjectTypeCells() {
+    const type = state.objectTypes[state.selectedObjectType];
+    ui.objectTypeCells.innerHTML = "";
+    for (let index = 0; index < 16; index += 1) {
+      const cell = document.createElement("label");
+      cell.className = "object-type-cell";
+      cell.classList.toggle("unused", index >= type.width * type.height);
+      const number = document.createElement("span");
+      number.textContent = index.toString(16).toUpperCase();
+      const charInput = document.createElement("input");
+      charInput.type = "number";
+      charInput.min = "0";
+      charInput.max = "255";
+      charInput.value = String(type.chars[index]);
+      charInput.title = "Screen character code; 0 is transparent";
+      const colorSelect = document.createElement("select");
+      for (let color = 0; color < 16; color += 1) {
+        const option = document.createElement("option");
+        option.value = String(color);
+        option.textContent = String(color);
+        option.style.backgroundColor = C64_COLORS[color];
+        colorSelect.appendChild(option);
+      }
+      colorSelect.value = String(type.colors[index]);
+      charInput.addEventListener("change", () => {
+        type.chars[index] = clampByte(Number(charInput.value));
+        renderMapCanvas();
+        schedulePersist();
+      });
+      colorSelect.addEventListener("change", () => {
+        type.colors[index] = clampByte(Number(colorSelect.value)) & 0x0f;
+        renderMapCanvas();
+        schedulePersist();
+      });
+      cell.append(number, charInput, colorSelect);
+      ui.objectTypeCells.appendChild(cell);
+    }
+  }
+
+  function renderObjectTypeEditor() {
+    const type = state.objectTypes[state.selectedObjectType];
+    ui.objectTypeId.value = String(state.selectedObjectType);
+    ui.objectTypeName.value = type.name;
+    ui.objectTypeWidth.value = String(type.width || 1);
+    ui.objectTypeHeight.value = String(type.height || 1);
+    ui.objectHotspotX.value = String(type.hotspotX);
+    ui.objectHotspotY.value = String(type.hotspotY);
+    ui.objectTypeActor.checked = (type.flags & 1) !== 0;
+    renderObjectTypeCells();
+  }
+
+  function renderMapEditorState() {
+    ui.mapToolTile.classList.toggle("active", state.mapTool === "tile");
+    ui.mapToolObject.classList.toggle("active", state.mapTool === "object");
+    syncObjectTypeSelect();
+    ui.roomObjectType.value = String(state.selectedObjectType);
+    renderRoomObjectList();
+    ui.roomTextSource.value = state.map.textSource;
+    encodeRoomTextSource(state.map.textSource, false);
+    renderObjectTypeEditor();
   }
 
   function renderTestCanvas() {
@@ -779,6 +1087,7 @@
     }
     if (state.mode === "map") {
       renderMapCanvas();
+      renderMapEditorState();
     }
     ui.charPaste.disabled = !state.charClipboard;
   }
@@ -788,10 +1097,7 @@
     ui.trialText.value = state.trialText;
     ui.trialMapping.value = state.trialMapping;
     ui.trialColor.value = String(state.trialColor);
-    ui.mapWidth.value = String(state.map.width);
-    ui.mapHeight.value = String(state.map.height);
     ui.mapId.value = String(state.map.id);
-    ui.mapReserved.value = String(state.map.reserved);
     ui.testWidth.value = String(state.test.width);
     ui.testHeight.value = String(state.test.height);
     ui.showGrid.checked = state.showGrid;
@@ -954,23 +1260,101 @@
     schedulePersist();
   }
 
-  function resizeMap(newW, newH) {
-    const w = Math.max(1, Math.min(255, newW | 0));
-    const h = Math.max(1, Math.min(255, newH | 0));
-    const next = new Uint8Array(w * h);
-
-    for (let y = 0; y < Math.min(h, state.map.height); y += 1) {
-      for (let x = 0; x < Math.min(w, state.map.width); x += 1) {
-        next[y * w + x] = state.map.data[y * state.map.width + x];
-      }
+  function roomObjectAt(halfX, halfY) {
+    for (let slot = ROOM_OBJECT_COUNT - 1; slot >= 0; slot -= 1) {
+      const p = slot * 3;
+      const typeId = state.map.objects[p];
+      if (typeId === 0) continue;
+      const type = state.objectTypes[typeId];
+      if (!objectTypeIsValid(type)) continue;
+      const localX = halfX - (state.map.objects[p + 1] - type.hotspotX);
+      const localY = halfY - (state.map.objects[p + 2] - type.hotspotY);
+      if (localX < 0 || localY < 0 || localX >= type.width || localY >= type.height) continue;
+      const index = localY * type.width + localX;
+      if (type.chars[index] !== 0) return slot;
     }
+    return -1;
+  }
 
-    state.map.width = w;
-    state.map.height = h;
-    state.map.data = next;
-    ui.mapWidth.value = String(w);
-    ui.mapHeight.value = String(h);
+  function addRoomObject(halfX, halfY) {
+    const typeId = state.selectedObjectType;
+    const type = state.objectTypes[typeId];
+    if (!objectTypeIsValid(type)) {
+      setStatus(`Define object type ${typeId} before placing it.`, true);
+      return;
+    }
+    let nonActors = 0;
+    let empty = -1;
+    for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
+      const existingType = state.map.objects[slot * 3];
+      if (existingType === 0 && empty < 0) empty = slot;
+      if (existingType !== 0 && (state.objectTypes[existingType].flags & 1) === 0) nonActors += 1;
+    }
+    if ((type.flags & 1) === 0 && nonActors >= 200) {
+      setStatus("Room already contains 200 non-actor objects.", true);
+      return;
+    }
+    if (empty < 0) {
+      setStatus("Room object list is full.", true);
+      return;
+    }
+    const p = empty * 3;
+    state.map.objects[p] = typeId;
+    state.map.objects[p + 1] = clampByte(halfX);
+    state.map.objects[p + 2] = clampByte(halfY);
+    state.selectedObjectSlot = empty;
+    setStatus(`Placed ${objectTypeLabel(typeId)} in slot ${empty}.`);
+  }
+
+  function deleteRoomObject(slot) {
+    if (slot < 0 || slot >= ROOM_OBJECT_COUNT) return;
+    state.map.objects.fill(0, slot * 3, slot * 3 + 3);
+    if (state.selectedObjectSlot === slot) state.selectedObjectSlot = -1;
+  }
+
+  function applyObjectTool(event) {
+    const { x, y } = canvasPos(ui.mapCanvas, event);
+    const halfX = Math.floor(x / 16);
+    const halfY = Math.floor(y / 16);
+    if (halfX < 0 || halfY < 0 || halfX >= MAP_WIDTH * 2 || halfY >= MAP_HEIGHT * 2) return;
+    const found = roomObjectAt(halfX, halfY);
+    if (event.button === 2) {
+      if (found >= 0) deleteRoomObject(found);
+    } else if (event.shiftKey && state.selectedObjectSlot >= 0) {
+      const p = state.selectedObjectSlot * 3;
+      state.map.objects[p + 1] = halfX;
+      state.map.objects[p + 2] = halfY;
+    } else if (found >= 0) {
+      state.selectedObjectSlot = found;
+      state.selectedObjectType = state.map.objects[found * 3];
+    } else {
+      addRoomObject(halfX, halfY);
+    }
     renderMapCanvas();
+    renderMapEditorState();
+    schedulePersist();
+  }
+
+  function updateSelectedObjectType() {
+    const type = state.objectTypes[state.selectedObjectType];
+    const width = Math.max(1, Math.min(15, Number(ui.objectTypeWidth.value) | 0));
+    const height = Math.max(1, Math.min(15, Number(ui.objectTypeHeight.value) | 0));
+    if (width * height > 16) {
+      setStatus("Object graphics may use at most 16 character cells.", true);
+      renderObjectTypeEditor();
+      return;
+    }
+    type.width = width;
+    type.height = height;
+    type.hotspotX = Math.max(0, Math.min(width - 1, Number(ui.objectHotspotX.value) | 0));
+    type.hotspotY = Math.max(0, Math.min(height - 1, Number(ui.objectHotspotY.value) | 0));
+    type.name = ui.objectTypeName.value.slice(0, 14);
+    type.flags = ui.objectTypeActor.checked ? (type.flags | 1) : (type.flags & 0xfe);
+    renderObjectTypeEditor();
+    syncObjectTypeSelect();
+    renderRoomObjectList();
+    renderMapCanvas();
+    schedulePersist();
   }
 
   function resizeTest(newW, newH) {
@@ -1030,13 +1414,31 @@
   }
 
   function buildMapBytes() {
-    const size = state.map.width * state.map.height;
-    const out = new Uint8Array(4 + size);
-    out[0] = state.map.width & 0xff;
-    out[1] = state.map.height & 0xff;
+    const out = new Uint8Array(ROOM_FILE_BYTES);
+    out[0] = MAP_WIDTH;
+    out[1] = MAP_HEIGHT;
     out[2] = state.map.id & 0xff;
-    out[3] = state.map.reserved & 0xff;
+    out[3] = 1;
     out.set(state.map.data, 4);
+    out.set(state.map.objects, 4 + MAP_TILE_COUNT);
+    out.set(state.map.text, 4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES);
+    return out;
+  }
+
+  function buildObjectTypesBytes() {
+    const out = new Uint8Array(OBJECT_TYPE_FILE_BYTES);
+    state.objectTypes.forEach((type, typeId) => {
+      const base = typeId * OBJECT_TYPE_BYTES;
+      out[base] = ((type.width & 0x0f) << 4) | (type.height & 0x0f);
+      out[base + 1] = ((type.hotspotX & 0x0f) << 4) | (type.hotspotY & 0x0f);
+      for (let i = 0; i < Math.min(14, type.name.length); i += 1) {
+        out[base + 2 + i] = type.name.charCodeAt(i) & 0xff;
+      }
+      out.set(type.chars, base + 16);
+      out.set(type.colors, base + 32);
+      out[base + 48] = type.flags;
+      out.set(type.reserved, base + 49);
+    });
     return out;
   }
 
@@ -1198,45 +1600,85 @@
   }
 
   function exportMap() {
-    downloadBinary("map.bin", buildMapBytes());
-    setStatus("Exported map.bin");
+    const name = state.map.id.toString(16).padStart(2, "0").toUpperCase();
+    downloadBinary(name, buildMapBytes());
+    setStatus(`Exported room ${name}`);
   }
 
   function importMap(buffer) {
     const data = new Uint8Array(buffer);
-    if (data.length < 4) {
-      setStatus("Map file too small.", true);
+    if (data.length < 4 + MAP_TILE_COUNT) {
+      setStatus("Room file too small.", true);
       return;
     }
     const w = data[0];
     const h = data[1];
     const id = data[2];
-    const reserved = data[3];
-
-    if (w === 0 || h === 0) {
-      setStatus("Map width/height cannot be zero.", true);
+    if (w !== MAP_WIDTH || h !== MAP_HEIGHT) {
+      setStatus(`Rooms must be ${MAP_WIDTH}x${MAP_HEIGHT} tiles.`, true);
       return;
     }
 
-    const needed = 4 + w * h;
-    if (data.length < needed) {
-      setStatus("Map payload truncated.", true);
+    if (data.length !== 4 + MAP_TILE_COUNT && data.length !== ROOM_FILE_BYTES) {
+      setStatus(`Room must be legacy 224 bytes or platform ${ROOM_FILE_BYTES} bytes.`, true);
+      return;
+    }
+    if (data.length === ROOM_FILE_BYTES && data[3] !== 1) {
+      setStatus(`Unsupported room format ${data[3]}.`, true);
       return;
     }
 
-    state.map.width = w;
-    state.map.height = h;
+    state.map.width = MAP_WIDTH;
+    state.map.height = MAP_HEIGHT;
     state.map.id = id;
-    state.map.reserved = reserved;
-    state.map.data = data.slice(4, needed);
-
-    ui.mapWidth.value = String(w);
-    ui.mapHeight.value = String(h);
+    state.map.reserved = 1;
+    state.map.data = data.slice(4, 4 + MAP_TILE_COUNT);
+    state.map.objects.fill(0);
+    state.map.text.fill(0);
+    if (data.length === ROOM_FILE_BYTES) {
+      state.map.objects.set(data.subarray(4 + MAP_TILE_COUNT, 4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
+      state.map.text.set(data.subarray(4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
+    }
+    state.map.textSource = decodeRoomText(state.map.text);
+    state.selectedObjectSlot = -1;
     ui.mapId.value = String(id);
-    ui.mapReserved.value = String(reserved);
+    ui.assetSavePaths.map.value = id.toString(16).padStart(2, "0").toUpperCase();
 
-    setStatus(`Imported map (${w}x${h}, id=${id}).`);
-    renderMapCanvas();
+    setStatus(`Imported room ${id.toString(16).padStart(2, "0").toUpperCase()}.`);
+    renderAll();
+    schedulePersist();
+  }
+
+  function exportObjectTypes() {
+    downloadBinary("objects.cobj", buildObjectTypesBytes());
+    setStatus("Exported objects.cobj");
+  }
+
+  function importObjectTypes(buffer) {
+    const data = new Uint8Array(buffer);
+    const decoder = new TextDecoder("latin1");
+    if (data.length !== OBJECT_TYPE_FILE_BYTES) {
+      setStatus(`Object type list must be ${OBJECT_TYPE_FILE_BYTES} bytes.`, true);
+      return;
+    }
+    for (let typeId = 0; typeId < OBJECT_TYPE_COUNT; typeId += 1) {
+      const base = typeId * OBJECT_TYPE_BYTES;
+      const type = state.objectTypes[typeId];
+      type.width = data[base] >> 4;
+      type.height = data[base] & 0x0f;
+      type.hotspotX = data[base + 1] >> 4;
+      type.hotspotY = data[base + 1] & 0x0f;
+      const nameBytes = data.subarray(base + 2, base + 16);
+      const zero = nameBytes.indexOf(0);
+      type.name = decoder.decode(zero >= 0 ? nameBytes.subarray(0, zero) : nameBytes).trimEnd();
+      type.chars.set(data.subarray(base + 16, base + 32));
+      type.colors.set(data.subarray(base + 32, base + 48));
+      for (let i = 0; i < 16; i += 1) type.colors[i] &= 0x0f;
+      type.flags = data[base + 48];
+      type.reserved.set(data.subarray(base + 49, base + 64));
+    }
+    setStatus("Imported 256 object types.");
+    renderAll();
     schedulePersist();
   }
 
@@ -1256,7 +1698,8 @@
       ...Object.values(ui.assetSavePaths),
       ui.assetSaveChars,
       ui.assetSaveTiles,
-      ui.assetSaveMap
+      ui.assetSaveMap,
+      ui.assetSaveObjectTypes
     ].forEach((el) => {
       el.disabled = !available;
     });
@@ -1271,13 +1714,16 @@
       if (magic === "CTIL") kinds.add("tiles");
     }
     if (bytes.length === 256 * CHAR_BYTES || bytes.length === 512 * CHAR_BYTES) kinds.add("charset");
-    if (bytes.length >= 4 && bytes[0] > 0 && bytes[1] > 0 && bytes[0] * bytes[1] === bytes.length - 4) {
+    if (bytes.length >= 4 && bytes[0] === MAP_WIDTH && bytes[1] === MAP_HEIGHT &&
+        (bytes.length === 4 + MAP_TILE_COUNT || bytes.length === ROOM_FILE_BYTES)) {
       kinds.add("map");
     }
+    if (bytes.length === OBJECT_TYPE_FILE_BYTES) kinds.add("objecttypes");
     if (kinds.size > 0) return Array.from(kinds);
     if (lower.endsWith(".cchr") || lower.endsWith(".rom") || lower.endsWith(".chr")) kinds.add("charset");
     if (lower.endsWith(".ctil") || lower.endsWith(".til") || lower.endsWith(".tiles")) kinds.add("tiles");
     if (lower.endsWith(".map") || lower.endsWith(".cmap")) kinds.add("map");
+    if (lower.endsWith(".cobj") || lower.endsWith(".objects")) kinds.add("objecttypes");
     return Array.from(kinds);
   }
 
@@ -1294,6 +1740,10 @@
       importMap(buffer);
       return true;
     }
+    if (kind === "objecttypes") {
+      importObjectTypes(buffer);
+      return true;
+    }
     setStatus(`Unknown asset type for ${path}.`, true);
     return false;
   }
@@ -1301,15 +1751,17 @@
   function assetKindLabel(kind) {
     if (kind === "charset") return "charset";
     if (kind === "tiles") return "tile";
-    return "map";
+    if (kind === "objecttypes") return "object type";
+    return "room";
   }
 
   function assetExtensionLooksCompatible(kind, path) {
     const lower = path.toLowerCase();
-    if (lower.endsWith(".bin")) return kind === "charset" || kind === "map";
+    if (lower.endsWith(".bin")) return kind === "charset" || kind === "map" || kind === "objecttypes";
     if (kind === "charset") return /\.(cchr|rom|chr)$/.test(lower);
     if (kind === "tiles") return /\.(ctil|til|tiles)$/.test(lower);
-    if (kind === "map") return /\.(map|cmap)$/.test(lower);
+    if (kind === "map") return /\.(map|cmap)$/.test(lower) || /(^|\/)[0-9a-f]{2}$/.test(lower);
+    if (kind === "objecttypes") return /\.(cobj|objects)$/.test(lower);
     return false;
   }
 
@@ -1329,7 +1781,7 @@
   }
 
   function renderAssetFileLists() {
-    ["charset", "tiles", "map"].forEach((kind) => {
+    ["charset", "tiles", "map", "objecttypes"].forEach((kind) => {
       const select = ui.assetFileLists[kind];
       const current = select.value;
       const files = assetFiles.filter((file) => Array.isArray(file.kinds) && file.kinds.includes(kind));
@@ -1418,7 +1870,9 @@
       ? buildCharsetBytes()
       : kind === "tiles"
         ? buildTilesBytes()
-        : buildMapBytes();
+        : kind === "objecttypes"
+          ? buildObjectTypesBytes()
+          : buildMapBytes();
 
     try {
       const response = await fetch(assetApiUrl(path), {
@@ -1624,12 +2078,17 @@
     });
 
     ui.mapCanvas.addEventListener("mousedown", (event) => {
+      if (state.mapTool === "object") {
+        state.drawing = false;
+        applyObjectTool(event);
+        return;
+      }
       state.drawing = true;
       state.drawValue = event.button === 2 ? 0 : 1;
       applyTilePaintOnCanvas("map", event);
     });
     ui.mapCanvas.addEventListener("mousemove", (event) => {
-      if (state.drawing) applyTilePaintOnCanvas("map", event);
+      if (state.drawing && state.mapTool === "tile") applyTilePaintOnCanvas("map", event);
     });
 
     ui.testCanvas.addEventListener("mousedown", (event) => {
@@ -1707,26 +2166,49 @@
       });
     });
 
-    ui.resizeMap.addEventListener("click", () => {
-      resizeMap(Number(ui.mapWidth.value), Number(ui.mapHeight.value));
-      state.map.id = clampByte(Number(ui.mapId.value));
-      state.map.reserved = clampByte(Number(ui.mapReserved.value));
-      ui.mapId.value = String(state.map.id);
-      ui.mapReserved.value = String(state.map.reserved);
-      setStatus(`Map resized to ${state.map.width}x${state.map.height}.`);
-      schedulePersist();
-    });
-
     ui.mapId.addEventListener("change", () => {
       state.map.id = clampByte(Number(ui.mapId.value));
       ui.mapId.value = String(state.map.id);
+      ui.assetSavePaths.map.value = state.map.id.toString(16).padStart(2, "0").toUpperCase();
       schedulePersist();
     });
 
-    ui.mapReserved.addEventListener("change", () => {
-      state.map.reserved = clampByte(Number(ui.mapReserved.value));
-      ui.mapReserved.value = String(state.map.reserved);
+    ui.mapToolTile.addEventListener("click", () => {
+      state.mapTool = "tile";
+      renderMapEditorState();
       schedulePersist();
+    });
+    ui.mapToolObject.addEventListener("click", () => {
+      state.mapTool = "object";
+      renderMapEditorState();
+      schedulePersist();
+    });
+    ui.roomObjectType.addEventListener("change", () => {
+      state.selectedObjectType = Math.max(1, clampByte(Number(ui.roomObjectType.value)));
+      renderObjectTypeEditor();
+      schedulePersist();
+    });
+    ui.deleteRoomObject.addEventListener("click", () => {
+      deleteRoomObject(state.selectedObjectSlot);
+      renderMapCanvas();
+      renderMapEditorState();
+      schedulePersist();
+    });
+    ui.roomTextSource.addEventListener("input", () => {
+      state.map.textSource = ui.roomTextSource.value;
+      encodeRoomTextSource(state.map.textSource, true);
+      schedulePersist();
+    });
+    ui.objectTypeId.addEventListener("change", () => {
+      state.selectedObjectType = Math.max(1, clampByte(Number(ui.objectTypeId.value)));
+      renderObjectTypeEditor();
+      syncObjectTypeSelect();
+      ui.roomObjectType.value = String(state.selectedObjectType);
+      schedulePersist();
+    });
+    [ui.objectTypeName, ui.objectTypeWidth, ui.objectTypeHeight,
+      ui.objectHotspotX, ui.objectHotspotY, ui.objectTypeActor].forEach((control) => {
+      control.addEventListener("change", updateSelectedObjectType);
     });
 
     ui.resizeTest.addEventListener("click", () => {
@@ -1741,16 +2223,20 @@
     ui.importTiles.addEventListener("click", () => ui.tilesFile.click());
     ui.exportMap.addEventListener("click", exportMap);
     ui.importMap.addEventListener("click", () => ui.mapFile.click());
+    ui.exportObjectTypes.addEventListener("click", exportObjectTypes);
+    ui.importObjectTypes.addEventListener("click", () => ui.objectTypesFile.click());
     Object.values(ui.assetRefreshButtons).forEach((btn) => {
       btn.addEventListener("click", refreshAssetFiles);
     });
     ui.assetOpenButtons.charset.addEventListener("click", () => openAssetFromServer("charset"));
     ui.assetOpenButtons.tiles.addEventListener("click", () => openAssetFromServer("tiles"));
     ui.assetOpenButtons.map.addEventListener("click", () => openAssetFromServer("map"));
+    ui.assetOpenButtons.objecttypes.addEventListener("click", () => openAssetFromServer("objecttypes"));
     ui.assetSaveChars.addEventListener("click", () => saveAssetToServer("charset"));
     ui.assetSaveTiles.addEventListener("click", () => saveAssetToServer("tiles"));
     ui.assetSaveMap.addEventListener("click", () => saveAssetToServer("map"));
-    ["charset", "tiles", "map"].forEach((kind) => {
+    ui.assetSaveObjectTypes.addEventListener("click", () => saveAssetToServer("objecttypes"));
+    ["charset", "tiles", "map", "objecttypes"].forEach((kind) => {
       ui.assetFileLists[kind].addEventListener("change", () => {
         if (ui.assetFileLists[kind].value) {
           ui.assetSavePaths[kind].value = ui.assetFileLists[kind].value;
@@ -1778,6 +2264,13 @@
       importMap(await file.arrayBuffer());
       ui.mapFile.value = "";
     });
+
+    ui.objectTypesFile.addEventListener("change", async () => {
+      const file = ui.objectTypesFile.files[0];
+      if (!file) return;
+      importObjectTypes(await file.arrayBuffer());
+      ui.objectTypesFile.value = "";
+    });
   }
 
   function initializeDefaults() {
@@ -1793,6 +2286,12 @@
       setCharPixel(0, i, i, 1);
       setCharPixel(0, 7 - i, i, 1);
     }
+
+    state.objectTypes[1].width = 1;
+    state.objectTypes[1].height = 1;
+    state.objectTypes[1].name = "OBJECT 1";
+    state.objectTypes[1].chars[0] = 1;
+    state.objectTypes[1].colors[0] = 1;
   }
 
   window.addEventListener("beforeunload", () => {

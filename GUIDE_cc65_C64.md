@@ -239,6 +239,9 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$2800-$2FFF` | text charset (`charset.cchr` bank 1) |
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
+| `$3A00-$3BFF` | eight runtime sprite-overlay bitmap slots |
+| `$3C00-$5A6B` | platform code and read-only tables (current extent) |
+| `$6000-$A5FF` | platform BSS (current extent) |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
@@ -249,11 +252,11 @@ other CIA1 interrupt services.
 
 ### EasyFlash cartridge build
 
-`make cartridge` builds the normal PRG first, embeds its payload in EasyFlash
-bank 0, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
+`make cartridge` builds the normal PRG first, splits its payload across
+EasyFlash banks 0 and 1, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
 both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
 six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
-KERNAL, copies the PRG to its normal `$0801-$38FF` RAM layout, and disables the
+KERNAL, copies the PRG to its linked RAM layout, and disables the
 cartridge before entering the cc65 startup at `$080D`.
 
 The game does not currently write save data to flash. EasyFlash programming
@@ -263,6 +266,9 @@ ordinary C stores to banked ROM are not sufficient.
 See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, multi-bank growth, and
 flash-save constraints.
+
+See `PLATFORM_API.md` for room/object binary formats and the public C API for
+map drawing, object movement, transitions, bottom text, and sprite dialogs.
 
 ### VIC‑II
 - **VIC register base**: `$D000` (mirrored through `$D3FF`)

@@ -272,6 +272,105 @@ button:hover {
   border-radius: 0;
 }
 
+.map-tool-buttons {
+  display: inline-flex;
+  margin-top: 0.5rem;
+}
+
+.map-tool-buttons button {
+  border-radius: 0;
+}
+
+.map-tool-buttons button.active {
+  background: var(--accent-2);
+  color: #06121c;
+}
+
+.fixed-size {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.room-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.editor-section {
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+}
+
+.editor-section textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+}
+
+.room-object-list {
+  max-height: 180px;
+  overflow: auto;
+  margin-top: 0.5rem;
+  border: 1px solid var(--line);
+}
+
+.room-object-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 80px;
+  gap: 0.4rem;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(63, 99, 126, 0.4);
+  border-radius: 0;
+  text-align: left;
+}
+
+.room-object-row.active {
+  background: var(--accent-2);
+  color: #06121c;
+}
+
+.offset-list {
+  max-height: 150px;
+  overflow: auto;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.object-type-editor {
+  margin-top: 0.8rem;
+}
+
+.object-type-fields input[type="number"] {
+  width: 4.5rem;
+}
+
+.object-type-cells {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.object-type-cell {
+  display: grid;
+  grid-template-columns: 34px 1fr 1fr;
+  gap: 0.3rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 0.35rem;
+}
+
+.object-type-cell.unused {
+  opacity: 0.45;
+}
+
+.wide-button {
+  width: 100%;
+}
+
 .trial-viewport {
   margin-top: 0.4rem;
   max-width: 100%;
@@ -360,9 +459,17 @@ kbd {
   .layout {
     grid-template-columns: 1fr;
   }
+
+  .room-editor-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
+  .object-type-cells {
+    grid-template-columns: 1fr;
+  }
+
   .shortcut-list div {
     grid-template-columns: 1fr;
     gap: 0.2rem;

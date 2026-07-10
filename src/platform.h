@@ -1,0 +1,191 @@
+#ifndef GAME_PLATFORM_H
+#define GAME_PLATFORM_H
+
+#include <stdint.h>
+
+#define PLATFORM_MAP_WIDTH            20u
+#define PLATFORM_MAP_HEIGHT           11u
+#define PLATFORM_MAP_TILE_COUNT       220u
+#define PLATFORM_MAP_CHAR_WIDTH       40u
+#define PLATFORM_MAP_CHAR_HEIGHT      22u
+#define PLATFORM_ROOM_OBJECT_COUNT    256u
+#define PLATFORM_ROOM_OBJECT_BYTES    768u
+#define PLATFORM_ROOM_TEXT_BYTES      256u
+#define PLATFORM_ROOM_FILE_BYTES      1248u
+#define PLATFORM_OBJECT_TYPE_COUNT    256u
+#define PLATFORM_OBJECT_TYPE_BYTES    64u
+#define PLATFORM_OBJECT_CELL_COUNT    16u
+#define PLATFORM_NON_ACTOR_LIMIT      200u
+
+#define PLATFORM_TEXT_LINE_TOP        0u
+#define PLATFORM_TEXT_LINE_BOTTOM     1u
+
+#define PLATFORM_OBJECT_FLAG_ACTOR    0x01u
+
+#define PLATFORM_OK                   0u
+#define PLATFORM_ERR_IO               1u
+#define PLATFORM_ERR_FORMAT           2u
+#define PLATFORM_ERR_FULL             3u
+#define PLATFORM_ERR_LIMIT            4u
+#define PLATFORM_ERR_ARGUMENT         5u
+
+#define PLATFORM_TRANSITION_NONE      0u
+#define PLATFORM_TRANSITION_TOP       1u
+#define PLATFORM_TRANSITION_LEFT      2u
+#define PLATFORM_TRANSITION_BOTTOM    3u
+#define PLATFORM_TRANSITION_RIGHT     4u
+#define PLATFORM_TRANSITION_TRIGGER   5u
+
+/*
+ * A room object occupies exactly three bytes in a room file. Coordinates are
+ * in half-tile units, which are also screen character cells. x/y locate the
+ * object type's hotspot, not the graphic's top-left corner. Type 0 is empty.
+ */
+typedef struct PlatformObject {
+    uint8_t type;
+    uint8_t x;
+    uint8_t y;
+} PlatformObject;
+
+/*
+ * Fixed 64-byte object-type record used by objects.cobj and the web editor.
+ * dimensions: high nibble width, low nibble height, in character cells.
+ * hotspot:    high nibble x, low nibble y, relative to the graphic origin.
+ * chars:      row-major screen character codes; 0 is transparent.
+ * colors:     row-major C64 colors corresponding to chars.
+ * reserved[0] currently stores PLATFORM_OBJECT_FLAG_* bits.
+ * Width * height must be <= PLATFORM_OBJECT_CELL_COUNT.
+ */
+typedef struct PlatformObjectType {
+    uint8_t dimensions;
+    uint8_t hotspot;
+    char name[14];
+    uint8_t chars[PLATFORM_OBJECT_CELL_COUNT];
+    uint8_t colors[PLATFORM_OBJECT_CELL_COUNT];
+    uint8_t reserved[16];
+} PlatformObjectType;
+
+/*
+ * Exact 1,248-byte room file. Files are named 00 through FF.
+ * width/height must be 20/11. format is currently 1.
+ * text is a pool of zero-terminated strings addressed by byte offset.
+ */
+typedef struct PlatformRoom {
+    uint8_t width;
+    uint8_t height;
+    uint8_t id;
+    uint8_t format;
+    uint8_t tiles[PLATFORM_MAP_TILE_COUNT];
+    PlatformObject objects[PLATFORM_ROOM_OBJECT_COUNT];
+    uint8_t text[PLATFORM_ROOM_TEXT_BYTES];
+} PlatformRoom;
+
+extern PlatformRoom platform_room;
+extern PlatformObject platform_player;
+extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
+
+/* Initialize VIC bank/pointers, colors, sprite overlay storage, and globals. */
+void platform_init(void);
+
+/* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
+void platform_room_clear(PlatformRoom* room, uint8_t room_id);
+
+/* Load a fixed-size room named by its two-digit uppercase hexadecimal ID. */
+uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id, uint8_t device);
+
+/* Load all 256 fixed-size object types from a sequential file. */
+uint8_t platform_object_types_load(const char* filename, uint8_t device);
+
+/* Draw one 2x2 tile at tile coordinates, clipped to the 20x11 map. */
+void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y);
+
+/* Draw all 220 room tiles, without objects. */
+void platform_map_draw(const PlatformRoom* room);
+
+/* Draw one object using its hotspot and the registered object-type graphics. */
+void platform_object_draw(const PlatformObject* object);
+
+/*
+ * Draw tiles, room objects in slot order, then player last. player may point
+ * at a room slot; that slot is skipped in the object pass and drawn last.
+ * Pass NULL when a player should not be drawn. Slot order is object z-order.
+ */
+void platform_room_draw(const PlatformRoom* room, const PlatformObject* player);
+
+/*
+ * Move an object and redraw only changed cells in its old/new graphic union.
+ * Each affected cell is recomposed from tile, room objects, then player; a
+ * screen/color write is skipped when both bytes already match.
+ */
+void platform_object_move(PlatformRoom* room, PlatformObject* object,
+                          uint8_t new_x, uint8_t new_y,
+                          const PlatformObject* player);
+
+/* Add at the first empty slot. out_slot may be NULL. */
+uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
+                                 uint8_t x, uint8_t y, uint8_t* out_slot);
+
+/* Remove a slot and minimally restore the exposed cells. */
+uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
+                                    const PlatformObject* player);
+
+/* Count populated slots; actor_only: 0=all, 1=actors, 2=non-actors. */
+uint16_t platform_room_object_count(const PlatformRoom* room,
+                                    uint8_t actor_only);
+
+/* Move a room-list record between two loaded rooms using the first free slot. */
+uint8_t platform_room_object_transfer(PlatformRoom* leaving,
+                                      PlatformRoom* entering,
+                                      uint8_t leaving_slot,
+                                      uint8_t new_x, uint8_t new_y,
+                                      uint8_t* entering_slot);
+
+/*
+ * Test a proposed half-tile step for an edge exit or trigger tile. This does
+ * not move the object or choose a destination room. For an in-room step,
+ * stepped_tile receives the tile number when non-NULL. Destination room IDs
+ * and arrival coordinates remain game-defined transition-table data.
+ */
+uint8_t platform_transition_check(const PlatformRoom* room,
+                                  const PlatformObject* object,
+                                  int8_t delta_x, int8_t delta_y,
+                                  uint8_t* stepped_tile);
+
+/* Convert ASCII to the custom lower-bank screen-code convention. */
+uint8_t platform_text_screen_code(char ch);
+
+/* Clear one of the two bottom text lines (line 0=row 23, line 1=row 24). */
+void platform_text_clear_line(uint8_t line);
+
+/* Write a zero-terminated string to a bottom line, clipped to 40 columns. */
+void platform_text_write_line(uint8_t line, uint8_t column,
+                              const char* text, uint8_t color);
+
+/* Write a room-text string selected by its byte offset into room.text. */
+void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
+                                   uint8_t column, uint8_t text_offset,
+                                   uint8_t color);
+
+/*
+ * Show three 48-character 4x7 text lines using all eight hardware sprites.
+ * half_x/half_y are character-cell coordinates; valid origins are x<=16 and
+ * y<=19. line offsets address zero-terminated strings in room.text; offset 0
+ * is conventionally empty. The sprites start one pixel below the character
+ * row, and the 24x3 underlying color cells are darkened/desaturated.
+ */
+uint8_t platform_overlay_show(const PlatformRoom* room,
+                              uint8_t half_x, uint8_t half_y,
+                              uint8_t line0_offset,
+                              uint8_t line1_offset,
+                              uint8_t line2_offset,
+                              uint8_t sprite_color);
+
+/* Disable overlay sprites and restore the original 24x3 color cells. */
+void platform_overlay_hide(void);
+
+uint8_t platform_overlay_is_visible(void);
+
+/* C64 color index -> darker desaturated C64 color index. */
+extern const uint8_t platform_overlay_gray[16];
+
+#endif

@@ -2,6 +2,7 @@
 
 This is a minimal cc65-based C64 repository skeleton with:
 - A pragmatic guide: `GUIDE_cc65_C64.md`
+- C platform API and binary contracts: `PLATFORM_API.md`
 - EasyFlash cartridge notes: `EASYFLASH_CARTRIDGE.md`
 - Minimal VIC/SID helper wrappers
 - A custom linker config starter: `cfg/myc64.cfg`
@@ -12,6 +13,7 @@ This is a minimal cc65-based C64 repository skeleton with:
 - VICE tools for optional run/disk workflows:
   - emulator (`x64sc` by default)
   - disk utility (`c1541`) for `.d64` creation
+  - `cartconv` for EasyFlash `.crt` creation
 
 ## Build
 ```bash
@@ -42,7 +44,7 @@ validation steps, multi-bank expansion guidance, and flash-save constraints.
 
 Output:
 - `build/game.crt`
-- `build/game-ef.bin` (raw populated EasyFlash bank)
+- `build/game-ef.bin` (raw populated EasyFlash banks 0 and 1)
 
 ## Run
 Open `build/game.prg` in your favorite C64 emulator (VICE etc.).

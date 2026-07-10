@@ -4,7 +4,8 @@ Browser-based editor for:
 - two monochrome charset banks, each with 256 8x8 characters
 - 256 tiles where each tile is a 2x2 character arrangement (16x16 pixels)
 - per-tile properties (1 byte per tile)
-- map editing with compact 4-byte header format
+- fixed 20x11 room editing with tiles, 256 object slots, and room text
+- 256 fixed-size object type definitions with character/color graphics
 
 Open `index.html` directly in a browser for local-only editing.
 
@@ -46,9 +47,14 @@ The server has no third-party dependencies and only exposes file operations unde
   - Hold `Shift` and click a quadrant on the 16x16 tile canvas to set it to the currently selected character.
   - Includes a tile test canvas for painting selected tiles.
 - Map mode:
-  - Edit map dimensions, map ID, and reserved byte.
-  - Paint tiles onto the map grid.
-  - Large maps render inside a scrollable viewport.
+  - Rooms are fixed at 20x11 tiles (40x22 half-tile/object coordinates).
+  - Paint tiles with the tile tool.
+  - Place/select objects with the object tool.
+  - Shift-click moves the selected object's hotspot.
+  - Right-click deletes the object under the pointer.
+  - Edit a 256-byte pool of zero-terminated room strings; generated offsets
+    are displayed for use by the C API.
+  - Edit/import/export a list of 256 object types.
 
 ## Binary formats
 
@@ -96,21 +102,44 @@ Payload part 2: tile properties (`tileCount` bytes)
   - bit 4: triggers action
   - bit 5..7: reserved
 
-### Map file (`.bin`)
+### Room file (`00` through `FF`)
 
 Header (4 bytes):
-- Byte 0: width in tiles
-- Byte 1: height in tiles
-- Byte 2: map ID
-- Byte 3: reserved
+- Byte 0: width in tiles (`20`)
+- Byte 1: height in tiles (`11`)
+- Byte 2: room ID
+- Byte 3: format version (`1`)
 
-Payload:
-- `width * height` bytes of tile numbers in row-major order.
+Payload (`1244` bytes):
+- `220` tile IDs in row-major order.
+- `768` object bytes: 256 slots of type ID, hotspot x, hotspot y.
+- `256` bytes containing zero-terminated room strings addressed by offset.
+
+Total room file size: `1248` bytes.
+
+Compatibility import accepts the legacy 224-byte 20x11 map format and clears
+the new object/text regions. Export always writes the full room format.
+
+### Object type list (`.cobj`)
+
+The file contains 256 records of 64 bytes (`16384` bytes total). Type ID is
+the record index; type 0 is reserved as an empty room-object slot.
+
+Per record:
+- Byte 0: width in high nibble, height in low nibble.
+- Byte 1: hotspot x in high nibble, hotspot y in low nibble.
+- Byte 2..15: name, up to 14 bytes, zero-padded.
+- Byte 16..31: 16 row-major screen character codes; 0 is transparent.
+- Byte 32..47: 16 corresponding C64 color indices.
+- Byte 48: flags; bit 0 marks a PC/NPC actor.
+- Byte 49..63: reserved.
+
+Width and height must be nonzero and `width * height` must not exceed 16.
 
 ## Notes
 
 - Tile editing can modify characters shared by multiple tiles.
-- Right-click is used for erasing/painting tile `0` on canvases.
+- Right-click erases/paints tile `0`, or deletes an object in object mode.
 - Press `Tab` (when not focused in an input/select/button) to toggle active charset bank.
 - Use the `Show map/test grid` checkbox to toggle tile grid overlays for the map and test canvases.
 - Use the `Help` button for an in-editor keyboard shortcut reference.
@@ -124,8 +153,9 @@ Payload:
   - order: top-left, top-right, bottom-left, bottom-right
   - `Shift` + left-clicking a quadrant on the tile canvas performs the same assignment for that quadrant
   - Left/right dragging on the tile canvas edits pixels in the underlying characters
-- Map/test rendering uses cached tile atlases for faster redraws on large maps.
+- Map/test rendering uses cached tile atlases.
 - Editor state persists across reloads using browser `localStorage`.
 - Server-backed asset open/save is available only when served via `server.py`.
-- The left-side mode tabs use separate asset dropdowns and save paths for charset, tile, and map files.
+- The left-side mode tabs use separate asset dropdowns and save paths for
+  charset, tile, room, and object-type files.
 - Saving refuses to overwrite an existing asset if the server identifies it as another type or as ambiguous data.

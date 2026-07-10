@@ -32,8 +32,10 @@ def _asset_kinds(path: Path) -> list[str]:
         kinds.add("tiles")
     if len(data) in (256 * 8, 2 * 256 * 8):
         kinds.add("charset")
-    if len(data) >= 4 and data[0] > 0 and data[1] > 0 and data[0] * data[1] == len(data) - 4:
+    if len(data) in (224, 1248) and data[:2] == bytes((20, 11)):
         kinds.add("map")
+    if len(data) == 256 * 64:
+        kinds.add("objecttypes")
 
     if kinds:
         return sorted(kinds)
@@ -44,6 +46,8 @@ def _asset_kinds(path: Path) -> list[str]:
         kinds.add("tiles")
     elif suffix in {".map", ".cmap"}:
         kinds.add("map")
+    elif suffix in {".cobj", ".objects"}:
+        kinds.add("objecttypes")
 
     return sorted(kinds)
 

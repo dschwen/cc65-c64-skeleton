@@ -23,6 +23,9 @@ LDFLAGS := -C $(CFG)
 
 SOURCES_C := $(wildcard src/*.c)
 SOURCES_S := $(wildcard src/*.s)
+ASSETS := assets/charset.cchr assets/tiles.ctil
+OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
+           $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
 
 OUT_PRG := $(OUTDIR)/game.prg
 OUT_MAP := $(OUTDIR)/game.map
@@ -36,8 +39,16 @@ all: $(OUT_PRG)
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
 
-$(OUT_PRG): $(SOURCES_C) $(SOURCES_S) | $(OUTDIR)
-	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(SOURCES_C) $(SOURCES_S)
+$(OUTDIR)/%.o: src/%.c | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(OUTDIR)/%.o: src/%.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(OUTDIR)/assets.o: $(ASSETS)
+
+$(OUT_PRG): $(OBJECTS)
+	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
 
 d64: $(OUT_D64)
 

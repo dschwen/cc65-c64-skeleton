@@ -228,6 +228,24 @@ cc65-c64-skeleton/
 
 ## 9) Reference: key base addresses (one-glance)
 
+### Current skeleton layout
+
+The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
+
+| Address range | Use |
+|---|---|
+| `$0400-$07E7` | 40x25 screen matrix |
+| `$2000-$27FF` | tile charset (`charset.cchr` bank 0) |
+| `$2800-$2FFF` | text charset (`charset.cchr` bank 1) |
+| `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
+| `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
+
+`$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
+the text charset at screen row 23 and restores the tile charset at raster 0.
+It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
+the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
+other CIA1 interrupt services.
+
 ### VIC‑II
 - **VIC register base**: `$D000` (mirrored through `$D3FF`)
 - **Border**: `$D020`

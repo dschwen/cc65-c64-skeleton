@@ -1,4 +1,6 @@
-#pragma once
+#ifndef GAME_SID_H
+#define GAME_SID_H
+
 #include <stdint.h>
 
 /* SID base address: $D400 */
@@ -14,14 +16,13 @@
 #define SID_V1_AD       0x05
 #define SID_V1_SR       0x06
 
-#define SID_VOL_FILT    0x18   /* $D418 */
+#define SID_VOL_FILT    0x18
 
-/* Control bits (common) */
-#define SID_GATE  0x01
+#define SID_GATE   0x01
 #define SID_SQUARE 0x40
 
 void sid_set_volume(uint8_t vol0_15);
-
-/* Minimal helpers for a simple tone on voice 1 */
 void sid_voice1_tone(uint16_t freq, uint16_t pulse_width);
 void sid_voice1_gate_square(uint8_t on);
+
+#endif

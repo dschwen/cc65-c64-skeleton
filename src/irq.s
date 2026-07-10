@@ -14,7 +14,7 @@ KERNAL_IRQ_OUT = $ea81
 
 TILE_MEMPTR    = $18       ; screen $0400, charset $2000
 TEXT_MEMPTR    = $1a       ; screen $0400, charset $2800
-TEXT_RASTER    = 234       ; one line before row 23's badline
+TEXT_RASTER    = 226       ; one line before row 22's badline
 
 .segment "CODE"
 
@@ -49,9 +49,9 @@ raster_irq:
     lda VIC_RASTER
     beq @top_of_frame
 
-    ; Entering through the KERNAL vector lands partway through line 234.
-    ; Switch at the start of 235: after row 22's final glyph fetch and
-    ; before the row 23 badline takes the CPU bus.
+    ; Entering through the KERNAL vector lands partway through line 226.
+    ; Switch at the start of 227: after row 21's final glyph fetch and
+    ; before the row 22 badline takes the CPU bus.
 @wait_for_text_row:
     lda VIC_RASTER
     cmp #TEXT_RASTER+1

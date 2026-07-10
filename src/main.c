@@ -4,7 +4,7 @@
 
 #define SCREEN_WIDTH       40u
 #define SCREEN_HEIGHT      25u
-#define TEXT_FIRST_ROW     23u
+#define TILE_AREA_ROWS     22u
 #define TILE_COUNT_USED    21u
 #define SCREEN_RAM         ((uint8_t*)0x0400)
 #define COLOR_RAM          ((uint8_t*)0xd800)
@@ -44,20 +44,18 @@ static void draw_tile(uint8_t tile_number, uint8_t x, uint8_t y) {
     SCREEN_RAM[offset + 1] = tile[2];
     COLOR_RAM[offset + 1] = tile[3] & 0x0f;
 
-    if (y + 1u < TEXT_FIRST_ROW) {
-        offset += SCREEN_WIDTH;
-        SCREEN_RAM[offset] = tile[4];
-        COLOR_RAM[offset] = tile[5] & 0x0f;
-        SCREEN_RAM[offset + 1] = tile[6];
-        COLOR_RAM[offset + 1] = tile[7] & 0x0f;
-    }
+    offset += SCREEN_WIDTH;
+    SCREEN_RAM[offset] = tile[4];
+    COLOR_RAM[offset] = tile[5] & 0x0f;
+    SCREEN_RAM[offset + 1] = tile[6];
+    COLOR_RAM[offset + 1] = tile[7] & 0x0f;
 }
 
 static void fill_tile_area(void) {
     uint8_t x;
     uint8_t y;
 
-    for (y = 0; y < TEXT_FIRST_ROW; y += 2) {
+    for (y = 0; y < TILE_AREA_ROWS; y += 2) {
         for (x = 0; x < SCREEN_WIDTH; x += 2) {
             draw_tile(next_random_tile(), x, y);
         }

@@ -241,7 +241,8 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
-the text charset at screen row 23 and restores the tile charset at raster 0.
+the text charset at screen row 22 and restores the tile charset at raster 0.
+Row 22 is left blank as spacing above the text on rows 23-24.
 It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
 the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
 other CIA1 interrupt services.

@@ -280,12 +280,13 @@ Verify both embedded chunks against the PRG excluding its load address:
 
 ```bash
 cmp -i 256:2 -n 12288 build/game-ef.bin build/game.prg
-cmp -i 16384:12290 -n 8811 build/game-ef.bin build/game.prg
+payload1_size=$(( $(wc -c < build/game.prg) - 2 - 0x3000 ))
+cmp -i 16384:12290 -n "$payload1_size" build/game-ef.bin build/game.prg
 ```
 
-The second byte count is inferred from EOF and changes with the game. Read
-`PAYLOAD0`/`PAYLOAD1` sizes from
-`build/game-ef.map` when the game changes.
+The second byte count is computed from the current PRG size and changes with
+the game. The linked `PAYLOAD0`/`PAYLOAD1` sizes are also recorded in
+`build/game-ef.map`.
 
 Structural checks do not replace a cold-boot test in VICE and, ideally, on
 real EasyFlash hardware. In the development environment used to add this

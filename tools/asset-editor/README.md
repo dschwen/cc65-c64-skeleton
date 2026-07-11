@@ -46,15 +46,22 @@ The server has no third-party dependencies and only exposes file operations unde
   - Draw directly on the 16x16 tile canvas to edit underlying 8x8 character pixel data.
   - Hold `Shift` and click a quadrant on the 16x16 tile canvas to set it to the currently selected character.
   - Includes a tile test canvas for painting selected tiles.
-- Map mode:
+- Object mode:
+  - Edits the global list of 256 fixed-size object-type records.
+  - Choose width and height; the visual grid immediately resizes to `width * height` cells (maximum 16).
+  - Select a character from charset bank 0, choose a color, and click a cell to paint it.
+  - Right-click a cell to make it transparent (character 0).
+  - Use the hotspot tool to click the cell that anchors the object's room coordinate.
+  - Edit the 14-byte name and actor flag; object type 0 remains reserved.
+- Room mode:
   - Rooms are fixed at 20x11 tiles (40x22 half-tile/object coordinates).
   - Paint tiles with the tile tool.
   - Place/select objects with the object tool.
   - Shift-click moves the selected object's hotspot.
   - Right-click deletes the object under the pointer.
+  - Select an object in the room list to edit its type and half-tile x/y coordinates.
   - Edit a 256-byte pool of zero-terminated room strings; generated offsets
     are displayed for use by the C API.
-  - Edit/import/export a list of 256 object types.
 
 ## Binary formats
 
@@ -139,9 +146,9 @@ Width and height must be nonzero and `width * height` must not exceed 16.
 ## Notes
 
 - Tile editing can modify characters shared by multiple tiles.
-- Right-click erases/paints tile `0`, or deletes an object in object mode.
-- Press `Tab` (when not focused in an input/select/button) to toggle active charset bank.
-- Use the `Show map/test grid` checkbox to toggle tile grid overlays for the map and test canvases.
+- Right-click erases/paints tile `0`, clears an object-type cell, or deletes a room object.
+- Press `Tab` (when not focused in an input/select/button) to toggle active charset bank in Character and Tile modes. Object and Room modes are fixed to bank 0.
+- Use the `Show room/test grid` checkbox to toggle tile grid overlays for the room and test canvases.
 - Use the `Help` button for an in-editor keyboard shortcut reference.
 - Character copy/paste:
   - `Copy Char` / `Paste Char` buttons in character mode
@@ -153,7 +160,7 @@ Width and height must be nonzero and `width * height` must not exceed 16.
   - order: top-left, top-right, bottom-left, bottom-right
   - `Shift` + left-clicking a quadrant on the tile canvas performs the same assignment for that quadrant
   - Left/right dragging on the tile canvas edits pixels in the underlying characters
-- Map/test rendering uses cached tile atlases.
+- Room/test rendering uses cached tile atlases.
 - Editor state persists across reloads using browser `localStorage`.
 - Server-backed asset open/save is available only when served via `server.py`.
 - The left-side mode tabs use separate asset dropdowns and save paths for

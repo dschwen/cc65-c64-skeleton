@@ -13,10 +13,11 @@
       <div class="mode-buttons">
         <button id="mode-char" class="mode-btn active">Character</button>
         <button id="mode-tile" class="mode-btn">Tile</button>
-        <button id="mode-map" class="mode-btn">Map</button>
+        <button id="mode-object" class="mode-btn">Objects</button>
+        <button id="mode-room" class="mode-btn">Room</button>
       </div>
       <div class="utility-controls">
-        <label><input id="show-grid" type="checkbox" checked> Show map/test grid</label>
+        <label><input id="show-grid" type="checkbox" checked> Show room/test grid</label>
         <button id="help-open">Help</button>
       </div>
 
@@ -91,26 +92,7 @@
         <p class="hint">Bits 5-7 are reserved.</p>
       </section>
 
-      <section id="side-map" class="side-panel hidden">
-        <h2>Room Files</h2>
-        <div class="button-grid">
-          <button id="export-map">Export Room</button>
-          <button id="import-map">Import Room</button>
-        </div>
-        <label class="inline-field">Room asset
-          <select id="asset-file-list-map"></select>
-        </label>
-        <div class="inline-controls">
-          <button id="asset-refresh-map">Refresh</button>
-          <button id="asset-open-map">Open Room</button>
-        </div>
-        <label class="inline-field">Save room as
-          <input id="asset-save-path-map" type="text" value="00">
-        </label>
-        <div class="button-grid">
-          <button id="asset-save-map">Save Room</button>
-        </div>
-
+      <section id="side-object" class="side-panel hidden">
         <h2>Object Types</h2>
         <div class="button-grid">
           <button id="export-object-types">Export Types</button>
@@ -128,6 +110,32 @@
         </label>
         <div class="button-grid">
           <button id="asset-save-objecttypes">Save Types</button>
+        </div>
+        <label class="inline-field">Object type
+          <select id="object-type-list" size="12"></select>
+        </label>
+        <h2>Selected</h2>
+        <div class="stat-row"><span>Character</span><strong id="selected-char-object">0</strong></div>
+      </section>
+
+      <section id="side-room" class="side-panel hidden">
+        <h2>Room Files</h2>
+        <div class="button-grid">
+          <button id="export-map">Export Room</button>
+          <button id="import-map">Import Room</button>
+        </div>
+        <label class="inline-field">Room asset
+          <select id="asset-file-list-map"></select>
+        </label>
+        <div class="inline-controls">
+          <button id="asset-refresh-map">Refresh</button>
+          <button id="asset-open-map">Open Room</button>
+        </div>
+        <label class="inline-field">Save room as
+          <input id="asset-save-path-map" type="text" value="00">
+        </label>
+        <div class="button-grid">
+          <button id="asset-save-map">Save Room</button>
         </div>
 
         <h2>Selected</h2>
@@ -201,7 +209,28 @@
         <canvas id="test-canvas" width="512" height="384"></canvas>
       </section>
 
-      <section id="map-mode" class="mode-panel hidden">
+      <section id="object-mode" class="mode-panel hidden">
+        <h2>Object Type Editor</h2>
+        <div class="inline-controls object-type-fields">
+          <label>ID <input id="object-type-id" type="number" min="1" max="255" value="1"></label>
+          <label>Name <input id="object-type-name" type="text" maxlength="14"></label>
+          <label>Width <input id="object-type-width" type="number" min="1" max="15" value="1"></label>
+          <label>Height <input id="object-type-height" type="number" min="1" max="15" value="1"></label>
+          <label>Hotspot X <input id="object-hotspot-x" type="number" min="0" max="14" value="0"></label>
+          <label>Hotspot Y <input id="object-hotspot-y" type="number" min="0" max="14" value="0"></label>
+          <label><input id="object-type-actor" type="checkbox"> PC/NPC actor</label>
+        </div>
+        <div class="object-toolbar">
+          <div class="map-tool-buttons" role="group" aria-label="Object editing tool">
+            <button id="object-tool-char" class="active">Character</button>
+            <button id="object-tool-hotspot">Hotspot</button>
+          </div>
+          <label>Paint color <select id="object-cell-color"></select></label>
+        </div>
+        <div id="object-type-grid" class="object-type-grid" aria-label="Object character grid"></div>
+      </section>
+
+      <section id="room-mode" class="mode-panel hidden">
         <h2>Room Editor</h2>
         <div class="inline-controls">
           <span class="fixed-size">20 x 11 tiles / 40 x 22 half-tiles</span>
@@ -226,6 +255,12 @@
               <span id="room-object-count">0 / 256 slots</span>
             </div>
             <div id="room-object-list" class="room-object-list"></div>
+            <div class="inline-controls room-object-fields">
+              <label>Type <select id="room-selected-object-type"></select></label>
+              <label>Half-tile X <input id="room-object-x" type="number" min="0" max="39" value="0"></label>
+              <label>Half-tile Y <input id="room-object-y" type="number" min="0" max="21" value="0"></label>
+              <button id="update-room-object" disabled>Apply</button>
+            </div>
           </section>
 
           <section class="editor-section">
@@ -237,19 +272,6 @@
           </section>
         </div>
 
-        <section class="editor-section object-type-editor">
-          <h3>Object Type</h3>
-          <div class="inline-controls object-type-fields">
-            <label>ID <input id="object-type-id" type="number" min="1" max="255" value="1"></label>
-            <label>Name <input id="object-type-name" type="text" maxlength="14"></label>
-            <label>Width <input id="object-type-width" type="number" min="1" max="15" value="1"></label>
-            <label>Height <input id="object-type-height" type="number" min="1" max="15" value="1"></label>
-            <label>Hotspot X <input id="object-hotspot-x" type="number" min="0" max="14" value="0"></label>
-            <label>Hotspot Y <input id="object-hotspot-y" type="number" min="0" max="14" value="0"></label>
-            <label><input id="object-type-actor" type="checkbox"> PC/NPC actor</label>
-          </div>
-          <div id="object-type-cells" class="object-type-cells"></div>
-        </section>
       </section>
     </section>
 
@@ -268,13 +290,14 @@
         <button id="help-close" aria-label="Close help">Close</button>
       </div>
       <dl class="shortcut-list">
-        <div><dt><kbd>Tab</kbd></dt><dd>Toggle active charset bank when focus is not in a form control.</dd></div>
+        <div><dt><kbd>Tab</kbd></dt><dd>Toggle active charset bank in Character and Tile modes when focus is not in a form control.</dd></div>
         <div><dt><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>C</kbd></dt><dd>Copy the selected character in character mode, or selected tile in tile mode.</dd></div>
         <div><dt><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd></dt><dd>Paste into the selected character in character mode, or selected tile in tile mode.</dd></div>
         <div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></dt><dd>In tile mode, assign the selected character to top-left, top-right, bottom-left, or bottom-right.</dd></div>
         <div><dt>Left/right drag tile</dt><dd>In tile mode, edit pixels across the selected tile and its underlying characters.</dd></div>
         <div><dt><kbd>Shift</kbd> + click tile quadrant</dt><dd>Set that quadrant to the currently selected character.</dd></div>
-        <div><dt>Right mouse button</dt><dd>Clear pixels in character/tile pixel editing, or paint tile 0 on map/test canvases.</dd></div>
+        <div><dt>Object grid click</dt><dd>Paint the selected bank 0 character, or set the hotspot when the hotspot tool is active.</dd></div>
+        <div><dt>Right mouse button</dt><dd>Clear pixels and object cells, or paint tile 0 on room/test canvases.</dd></div>
       </dl>
     </article>
   </dialog>

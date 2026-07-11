@@ -25,7 +25,7 @@ LDFLAGS := -C $(CFG)
 
 SOURCES_C := $(wildcard src/*.c)
 SOURCES_S := $(wildcard src/*.s)
-ASSETS := assets/charset.cchr assets/tiles.ctil
+ASSETS := assets/charset.cchr assets/tiles.ctil assets/00 assets/objects.cobj
 OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
            $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
 

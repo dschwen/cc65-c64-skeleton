@@ -14,6 +14,7 @@
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
 #define DIRTY_BYTES        110u
 #define ROOM_LFN           2u
+#define INITIAL_OBJECT_TYPE_COUNT 36u
 
 #define OBJECT_WIDTH(t)  ((uint8_t)((t)->dimensions >> 4))
 #define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0f))
@@ -22,10 +23,16 @@
 
 extern const uint8_t tile_data[];
 extern const uint8_t tile_properties[];
+extern const uint8_t initial_room_data[];
+extern const uint8_t initial_object_type_data[];
 void raster_irq_install(void);
+void overlay_render_line_packed(const PlatformRoom* room,
+                                uint8_t line, uint8_t text_offset);
 
 PlatformRoom platform_room;
-PlatformObject platform_player;
+uint8_t platform_current_room;
+uint8_t platform_player_slot;
+PlatformObject* platform_player;
 PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 
 const uint8_t platform_overlay_gray[16] = {
@@ -39,26 +46,6 @@ static uint8_t overlay_visible;
 static uint8_t overlay_x;
 static uint8_t overlay_y;
 static const char hex_digits[] = "0123456789ABCDEF";
-
-/* ASCII 32-95. Each byte contains one four-pixel row in its low nibble. */
-static const uint8_t font4x7[64][7] = {
-    {0,0,0,0,0,0,0}, {4,4,4,4,4,0,4}, {10,10,0,0,0,0,0}, {10,15,10,15,10,0,0},
-    {4,15,12,14,3,15,4}, {9,1,2,4,8,9,0}, {6,9,10,4,10,9,6}, {4,4,0,0,0,0,0},
-    {2,4,8,8,8,4,2}, {8,4,2,2,2,4,8}, {0,10,4,15,4,10,0}, {0,4,4,15,4,4,0},
-    {0,0,0,0,0,4,8}, {0,0,0,15,0,0,0}, {0,0,0,0,0,0,4}, {1,1,2,4,8,8,0},
-    {6,9,11,13,9,9,6}, {4,12,4,4,4,4,14}, {6,9,1,2,4,8,15}, {14,1,1,6,1,1,14},
-    {2,6,10,15,2,2,2}, {15,8,8,14,1,1,14}, {6,8,8,14,9,9,6}, {15,1,2,2,4,4,4},
-    {6,9,9,6,9,9,6}, {6,9,9,7,1,1,6}, {0,4,0,0,4,0,0}, {0,4,0,0,4,4,8},
-    {2,4,8,4,2,0,0}, {0,15,0,15,0,0,0}, {8,4,2,4,8,0,0}, {6,9,1,2,4,0,4},
-    {6,9,11,11,8,9,6}, {6,9,9,15,9,9,9}, {14,9,9,14,9,9,14}, {6,9,8,8,8,9,6},
-    {14,9,9,9,9,9,14}, {15,8,8,14,8,8,15}, {15,8,8,14,8,8,8}, {6,9,8,11,9,9,6},
-    {9,9,9,15,9,9,9}, {14,4,4,4,4,4,14}, {1,1,1,1,9,9,6}, {9,10,12,8,12,10,9},
-    {8,8,8,8,8,8,15}, {9,15,15,9,9,9,9}, {9,13,13,11,11,9,9}, {6,9,9,9,9,9,6},
-    {14,9,9,14,8,8,8}, {6,9,9,9,11,10,5}, {14,9,9,14,12,10,9}, {7,8,8,6,1,1,14},
-    {15,4,4,4,4,4,4}, {9,9,9,9,9,9,6}, {9,9,9,9,9,6,6}, {9,9,9,9,15,15,9},
-    {9,9,6,6,6,9,9}, {9,9,9,6,4,4,4}, {15,1,2,4,8,8,15}, {6,4,4,4,4,4,6},
-    {8,8,4,2,1,1,0}, {6,2,2,2,2,2,6}, {4,10,0,0,0,0,0}, {0,0,0,0,0,0,15}
-};
 
 static void write_screen_cell(uint8_t x, uint8_t y,
                               uint8_t ch, uint8_t color) {
@@ -249,9 +236,13 @@ void platform_init(void) {
     overlay_visible = 0;
     P_VIC(0x15) = 0;
     for (i = 0; i < 512u; ++i) P_SPRITE_DATA[i] = 0;
-    platform_room_clear(&platform_room, 0);
-    memset(&platform_player, 0, sizeof(platform_player));
     memset(platform_object_types, 0, sizeof(platform_object_types));
+    memcpy(&platform_room, initial_room_data, sizeof(platform_room));
+    memcpy(platform_object_types, initial_object_type_data,
+           INITIAL_OBJECT_TYPE_COUNT * sizeof(PlatformObjectType));
+    platform_current_room = 0;
+    platform_player_slot = 0;
+    platform_player = &platform_room.objects[platform_player_slot];
     raster_irq_install();
 }
 
@@ -279,6 +270,10 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id, uint8_t device) 
     if (room->width != PLATFORM_MAP_WIDTH || room->height != PLATFORM_MAP_HEIGHT ||
         room->id != room_id || room->format != 1u) {
         return PLATFORM_ERR_FORMAT;
+    }
+    if (room == &platform_room) {
+        platform_current_room = room_id;
+        platform_player = &platform_room.objects[platform_player_slot];
     }
     return PLATFORM_OK;
 }
@@ -514,44 +509,6 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
     }
 }
 
-static void sprite_pixel(uint8_t x, uint8_t y) {
-    uint8_t sprite;
-    uint8_t local_x;
-    uint16_t offset;
-    sprite = x / 24u;
-    local_x = x % 24u;
-    offset = (uint16_t)sprite * 64u + (uint16_t)y * 3u + (local_x >> 3);
-    P_SPRITE_DATA[offset] |= (uint8_t)(0x80u >> (local_x & 7u));
-}
-
-static void overlay_render_line(const PlatformRoom* room,
-                                uint8_t line, uint8_t text_offset) {
-    uint16_t text_index;
-    uint8_t column;
-    uint8_t glyph_index;
-    uint8_t row;
-    uint8_t bits;
-    uint8_t pixel;
-    uint8_t ch;
-
-    text_index = text_offset;
-    for (column = 0; column < 48u && text_index < PLATFORM_ROOM_TEXT_BYTES; ++column) {
-        ch = room->text[text_index++];
-        if (ch == 0u) break;
-        if (ch >= 'a' && ch <= 'z') ch = (uint8_t)(ch - 'a' + 'A');
-        glyph_index = (ch >= 32u && ch <= 95u) ? (uint8_t)(ch - 32u) : 31u;
-        for (row = 0; row < 7u; ++row) {
-            bits = font4x7[glyph_index][row];
-            for (pixel = 0; pixel < 4u; ++pixel) {
-                if (bits & (uint8_t)(8u >> pixel)) {
-                    sprite_pixel((uint8_t)(column * 4u + pixel),
-                                 (uint8_t)(line * 7u + row));
-                }
-            }
-        }
-    }
-}
-
 uint8_t platform_overlay_show(const PlatformRoom* room,
                               uint8_t half_x, uint8_t half_y,
                               uint8_t line0_offset,
@@ -568,9 +525,6 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
     if (room == 0 || half_x > 16u || half_y > 19u) return PLATFORM_ERR_ARGUMENT;
     platform_overlay_hide();
     memset(P_SPRITE_DATA, 0, 512u);
-    overlay_render_line(room, 0, line0_offset);
-    overlay_render_line(room, 1, line1_offset);
-    overlay_render_line(room, 2, line2_offset);
 
     overlay_x = half_x;
     overlay_y = half_y;
@@ -598,6 +552,10 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
     P_VIC(0x1d) = 0;
     overlay_visible = 1;
     P_VIC(0x15) = 0xff;
+
+    overlay_render_line_packed(room, 0, line0_offset);
+    overlay_render_line_packed(room, 1, line1_offset);
+    overlay_render_line_packed(room, 2, line2_offset);
     return PLATFORM_OK;
 }
 

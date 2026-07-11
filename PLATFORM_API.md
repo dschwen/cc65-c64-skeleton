@@ -42,7 +42,8 @@ room-transition logic even when a graphic extends in several directions.
 The platform preallocates:
 
 - one 1,248-byte `PlatformRoom`;
-- one three-byte `platform_player` convenience record;
+- one byte each for `platform_current_room` and `platform_player_slot`;
+- one `PlatformObject* platform_player` pointing into the current room list;
 - 256 object-type records, 16 KiB total;
 - a 110-byte dirty-cell bitmap;
 - 72 saved Color RAM bytes for the overlay.
@@ -114,10 +115,24 @@ uint8_t platform_object_types_load(const char* filename, uint8_t device);
 
 Call `platform_init()` once before other platform APIs. It selects VIC bank 0,
 sets border/background black, selects the tile charset, clears overlay sprite
-RAM, resets global storage, and installs the raster IRQ.
+RAM, installs the raster IRQ, and initializes the platform from embedded
+startup assets. Room `00` is copied into `platform_room`, object types `0-35`
+are copied from `objects.cobj` (the remaining records start empty), and these
+globals are established:
+
+```c
+platform_current_room = 0;
+platform_player_slot = 0;
+platform_player = &platform_room.objects[0];
+```
+
+Thus the player is the actual slot-0 object from room `00`, not a detached
+copy. The current asset defines it as actor type 1, "The Hero".
 
 `platform_room_load()` opens the two-digit room filename as a sequential file,
 reads exactly 1,248 bytes, then validates dimensions, ID, and version.
+Loading into the global `platform_room` also updates `platform_current_room`
+and rebinds `platform_player` to `platform_player_slot`.
 `platform_object_types_load()` reads all 16 KiB of the type list. Both return:
 
 | Result | Meaning |
@@ -316,12 +331,29 @@ dark gray, and gray as darker desaturated approximations. While the overlay is
 visible, map/object redraws update the saved original color and leave the
 visible cell darkened. `platform_overlay_hide()` restores the latest originals.
 
-The embedded font supports ASCII 32-95; lowercase is folded to uppercase.
-Unsupported bytes render as `?`.
+The overlay reads its 4x7 glyphs directly from the high nibble of charset bank
+1 at `$2800`. The supported ASCII-to-character mapping is:
+
+- `A-Z`: characters 193-218;
+- `(`, `$`, `)`, `-`: characters 219-222;
+- `a-z`: characters 225-250;
+- `.`, `,`, `!`, `?`, `:`: characters 251-255.
+
+Space and unsupported bytes render blank. Each glyph uses rows 0-6 and bits
+7-4 of its 8x8 charset character; row 7 and the low nibble are ignored.
+
+The packed renderer is implemented in `src/overlay.s`. Sprite RAM is cleared
+before the sprites are enabled. The cleared sprites are then positioned and
+enabled before characters are drawn, so text visibly crawls into the box.
+For every pixel row, an even character ORs its existing high nibble directly
+into the destination byte; the following odd character shifts its high nibble
+right by four and ORs it into the same byte. Six characters fill the three
+bytes of one sprite row. The next six continue at the next sprite's 64-byte
+block, and each successive glyph row advances three bytes within that block.
 
 ## Editor workflows
 
-Map mode has fixed 20x11 dimensions and two tools:
+Room mode has fixed 20x11 dimensions and two tools:
 
 - **Tile paint**: left-drag paints the selected tile; right-drag paints tile 0.
 - **Object place**: click an object to select it, click empty space to add the
@@ -332,10 +364,14 @@ The editor enforces the 200 non-actor limit and reports total/non-actor counts.
 The room text editor accepts one string per line and displays the generated
 hexadecimal offsets used by the C API.
 
-The object-type editor exposes dimensions, hotspot, name, actor flag, and all
-16 character/color cells. A character value of 0 is transparent. Room and
-object-type files can be imported/exported locally or opened/saved under
-`assets/` when using `make asset-editor`.
+The separate Object mode exposes dimensions, hotspot, name, actor flag, and a
+visual grid that automatically follows the selected dimensions. It paints
+selected characters from charset bank 0 with a per-cell color. Character 0 is
+transparent, right-click clears a cell, and the hotspot tool assigns the
+anchor by clicking a grid cell. Room mode provides a selected-object form for
+changing a room entry's type and half-tile coordinates. Room and object-type
+files can be imported/exported locally or opened/saved under `assets/` when
+using `make asset-editor`.
 
 ## Remaining platform decisions
 

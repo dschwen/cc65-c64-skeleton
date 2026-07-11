@@ -69,13 +69,14 @@ h3 {
 
 .mode-buttons {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0;
   margin-bottom: 0.75rem;
 }
 
 .mode-btn {
   border-radius: 0;
+  padding-inline: 0.35rem;
 }
 
 .mode-btn:first-child {
@@ -339,32 +340,76 @@ button:hover {
   white-space: pre-wrap;
 }
 
-.object-type-editor {
-  margin-top: 0.8rem;
-}
-
 .object-type-fields input[type="number"] {
   width: 4.5rem;
 }
 
-.object-type-cells {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
-  gap: 0.4rem;
-  margin-top: 0.6rem;
+.object-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  margin: 0.8rem 0;
 }
 
-.object-type-cell {
+.object-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--muted);
+}
+
+.object-type-grid {
   display: grid;
-  grid-template-columns: 34px 1fr 1fr;
-  gap: 0.3rem;
-  align-items: center;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  padding: 8px;
   border: 1px solid var(--line);
-  padding: 0.35rem;
+  background: #050d14;
 }
 
-.object-type-cell.unused {
-  opacity: 0.45;
+.object-grid-cell {
+  position: relative;
+  display: flex;
+  width: 64px;
+  height: 74px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px;
+}
+
+.object-grid-cell canvas {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 0;
+}
+
+.object-grid-cell span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.object-grid-cell.hotspot::after {
+  position: absolute;
+  inset: 2px;
+  border: 2px solid var(--accent);
+  content: "";
+  pointer-events: none;
+}
+
+.room-object-fields {
+  margin-top: 0.5rem;
+}
+
+.room-object-fields input {
+  width: 6rem;
 }
 
 .wide-button {
@@ -466,10 +511,6 @@ kbd {
 }
 
 @media (max-width: 640px) {
-  .object-type-cells {
-    grid-template-columns: 1fr;
-  }
-
   .shortcut-list div {
     grid-template-columns: 1fr;
     gap: 0.2rem;

@@ -66,6 +66,8 @@
     })),
     selectedObjectType: 1,
     selectedObjectSlot: -1,
+    objectTool: "char",
+    objectCellColor: 1,
     mapTool: "tile",
     test: {
       width: 16,
@@ -78,23 +80,27 @@
     modeButtons: {
       char: document.getElementById("mode-char"),
       tile: document.getElementById("mode-tile"),
-      map: document.getElementById("mode-map")
+      object: document.getElementById("mode-object"),
+      room: document.getElementById("mode-room")
     },
     modePanels: {
       char: document.getElementById("char-mode"),
       tile: document.getElementById("tile-mode"),
-      map: document.getElementById("map-mode")
+      object: document.getElementById("object-mode"),
+      room: document.getElementById("room-mode")
     },
     sidePanels: {
       char: document.getElementById("side-char"),
       tile: document.getElementById("side-tile"),
-      map: document.getElementById("side-map")
+      object: document.getElementById("side-object"),
+      room: document.getElementById("side-room")
     },
     charsetActiveBank: document.getElementById("charset-active-bank"),
     charsetImportBank: document.getElementById("charset-import-bank"),
     selectedBank: document.getElementById("selected-bank"),
     selectedChar: document.getElementById("selected-char"),
     selectedCharTile: document.getElementById("selected-char-tile"),
+    selectedCharObject: document.getElementById("selected-char-object"),
     selectedTile: document.getElementById("selected-tile"),
     selectedTileMap: document.getElementById("selected-tile-map"),
     selectedObjectSlot: document.getElementById("selected-object-slot"),
@@ -137,6 +143,10 @@
     roomObjectType: document.getElementById("room-object-type"),
     roomObjectCount: document.getElementById("room-object-count"),
     roomObjectList: document.getElementById("room-object-list"),
+    roomSelectedObjectType: document.getElementById("room-selected-object-type"),
+    roomObjectX: document.getElementById("room-object-x"),
+    roomObjectY: document.getElementById("room-object-y"),
+    updateRoomObject: document.getElementById("update-room-object"),
     deleteRoomObject: document.getElementById("delete-room-object"),
     roomTextSource: document.getElementById("room-text-source"),
     roomTextOffsets: document.getElementById("room-text-offsets"),
@@ -147,7 +157,11 @@
     objectHotspotX: document.getElementById("object-hotspot-x"),
     objectHotspotY: document.getElementById("object-hotspot-y"),
     objectTypeActor: document.getElementById("object-type-actor"),
-    objectTypeCells: document.getElementById("object-type-cells"),
+    objectTypeList: document.getElementById("object-type-list"),
+    objectToolChar: document.getElementById("object-tool-char"),
+    objectToolHotspot: document.getElementById("object-tool-hotspot"),
+    objectCellColor: document.getElementById("object-cell-color"),
+    objectTypeGrid: document.getElementById("object-type-grid"),
 
     exportChars: document.getElementById("export-chars"),
     importChars: document.getElementById("import-chars"),
@@ -266,6 +280,8 @@
         })),
         selectedObjectType: state.selectedObjectType,
         selectedObjectSlot: state.selectedObjectSlot,
+        objectTool: state.objectTool,
+        objectCellColor: state.objectCellColor,
         mapTool: state.mapTool,
         test: {
           width: state.test.width,
@@ -378,8 +394,9 @@
         }
       }
 
-      if (parsed.mode === "char" || parsed.mode === "tile" || parsed.mode === "map") {
-        state.mode = parsed.mode;
+      if (parsed.mode === "char" || parsed.mode === "tile" || parsed.mode === "object" ||
+          parsed.mode === "room" || parsed.mode === "map") {
+        state.mode = parsed.mode === "map" ? "room" : parsed.mode;
       }
       state.activeCharsetBank = clampCharsetBank(parsed.activeCharsetBank ?? 0);
       state.selectedChar = clampCharIndex(parsed.selectedChar ?? 0);
@@ -396,6 +413,8 @@
       state.selectedObjectSlot = Number.isInteger(parsed.selectedObjectSlot)
         ? Math.max(-1, Math.min(255, parsed.selectedObjectSlot))
         : -1;
+      state.objectTool = parsed.objectTool === "hotspot" ? "hotspot" : "char";
+      state.objectCellColor = clampByte(parsed.objectCellColor ?? 1) & 0x0f;
       state.mapTool = parsed.mapTool === "object" ? "object" : "tile";
       return true;
     } catch (err) {
@@ -816,15 +835,21 @@
 
   function syncObjectTypeSelect() {
     const current = String(state.selectedObjectType);
-    ui.roomObjectType.innerHTML = "";
+    [ui.roomObjectType, ui.roomSelectedObjectType, ui.objectTypeList].forEach((select) => {
+      select.innerHTML = "";
+    });
     for (let id = 1; id < OBJECT_TYPE_COUNT; id += 1) {
-      const option = document.createElement("option");
-      option.value = String(id);
-      option.textContent = objectTypeLabel(id);
-      option.disabled = !objectTypeIsValid(state.objectTypes[id]);
-      ui.roomObjectType.appendChild(option);
+      [ui.roomObjectType, ui.roomSelectedObjectType, ui.objectTypeList].forEach((select) => {
+        const option = document.createElement("option");
+        option.value = String(id);
+        option.textContent = objectTypeLabel(id);
+        if (select !== ui.objectTypeList) option.disabled = !objectTypeIsValid(state.objectTypes[id]);
+        select.appendChild(option);
+      });
     }
     ui.roomObjectType.value = current;
+    ui.roomSelectedObjectType.value = current;
+    ui.objectTypeList.value = current;
   }
 
   function renderRoomObjectList() {
@@ -862,6 +887,13 @@
       ? "None"
       : state.selectedObjectSlot.toString(16).padStart(2, "0").toUpperCase();
     ui.deleteRoomObject.disabled = state.selectedObjectSlot < 0;
+    ui.updateRoomObject.disabled = state.selectedObjectSlot < 0;
+    if (state.selectedObjectSlot >= 0) {
+      const p = state.selectedObjectSlot * 3;
+      ui.roomSelectedObjectType.value = String(state.map.objects[p]);
+      ui.roomObjectX.value = String(state.map.objects[p + 1]);
+      ui.roomObjectY.value = String(state.map.objects[p + 2]);
+    }
   }
 
   function encodeRoomTextSource(source, updateState) {
@@ -905,42 +937,56 @@
     return lines.join("\n");
   }
 
-  function renderObjectTypeCells() {
+  function renderObjectTypeGrid() {
     const type = state.objectTypes[state.selectedObjectType];
-    ui.objectTypeCells.innerHTML = "";
-    for (let index = 0; index < 16; index += 1) {
-      const cell = document.createElement("label");
-      cell.className = "object-type-cell";
-      cell.classList.toggle("unused", index >= type.width * type.height);
-      const number = document.createElement("span");
-      number.textContent = index.toString(16).toUpperCase();
-      const charInput = document.createElement("input");
-      charInput.type = "number";
-      charInput.min = "0";
-      charInput.max = "255";
-      charInput.value = String(type.chars[index]);
-      charInput.title = "Screen character code; 0 is transparent";
-      const colorSelect = document.createElement("select");
-      for (let color = 0; color < 16; color += 1) {
-        const option = document.createElement("option");
-        option.value = String(color);
-        option.textContent = String(color);
-        option.style.backgroundColor = C64_COLORS[color];
-        colorSelect.appendChild(option);
+    const width = type.width || 1;
+    const height = type.height || 1;
+    ui.objectTypeGrid.innerHTML = "";
+    ui.objectTypeGrid.style.gridTemplateColumns = `repeat(${width}, 64px)`;
+    for (let index = 0; index < width * height; index += 1) {
+      const cell = document.createElement("button");
+      const canvas = document.createElement("canvas");
+      const label = document.createElement("span");
+      const x = index % width;
+      const y = Math.floor(index / width);
+      cell.type = "button";
+      cell.className = "object-grid-cell";
+      cell.classList.toggle("hotspot", x === type.hotspotX && y === type.hotspotY);
+      cell.title = `Cell ${x},${y}: char ${type.chars[index]}, color ${type.colors[index] & 0x0f}`;
+      canvas.width = 48;
+      canvas.height = 48;
+      if (type.chars[index] === 0) {
+        const cellContext = canvas.getContext("2d");
+        cellContext.fillStyle = "#050d14";
+        cellContext.fillRect(0, 0, 48, 48);
+      } else {
+        drawChar(canvas.getContext("2d"), 0, type.chars[index], 0, 0, 6,
+          C64_COLORS[type.colors[index] & 0x0f], "#050d14");
       }
-      colorSelect.value = String(type.colors[index]);
-      charInput.addEventListener("change", () => {
-        type.chars[index] = clampByte(Number(charInput.value));
+      label.textContent = type.chars[index] === 0 ? "empty" : String(type.chars[index]);
+      cell.append(canvas, label);
+      cell.addEventListener("click", () => {
+        type.width = width;
+        type.height = height;
+        if (state.objectTool === "hotspot") {
+          type.hotspotX = x;
+          type.hotspotY = y;
+        } else {
+          type.chars[index] = state.selectedChar;
+          type.colors[index] = state.objectCellColor;
+        }
+        renderObjectTypeEditor();
         renderMapCanvas();
         schedulePersist();
       });
-      colorSelect.addEventListener("change", () => {
-        type.colors[index] = clampByte(Number(colorSelect.value)) & 0x0f;
+      cell.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        type.chars[index] = 0;
+        renderObjectTypeEditor();
         renderMapCanvas();
         schedulePersist();
       });
-      cell.append(number, charInput, colorSelect);
-      ui.objectTypeCells.appendChild(cell);
+      ui.objectTypeGrid.appendChild(cell);
     }
   }
 
@@ -953,7 +999,11 @@
     ui.objectHotspotX.value = String(type.hotspotX);
     ui.objectHotspotY.value = String(type.hotspotY);
     ui.objectTypeActor.checked = (type.flags & 1) !== 0;
-    renderObjectTypeCells();
+    ui.objectTypeList.value = String(state.selectedObjectType);
+    ui.objectToolChar.classList.toggle("active", state.objectTool === "char");
+    ui.objectToolHotspot.classList.toggle("active", state.objectTool === "hotspot");
+    ui.objectCellColor.value = String(state.objectCellColor);
+    renderObjectTypeGrid();
   }
 
   function renderMapEditorState() {
@@ -964,7 +1014,6 @@
     renderRoomObjectList();
     ui.roomTextSource.value = state.map.textSource;
     encodeRoomTextSource(state.map.textSource, false);
-    renderObjectTypeEditor();
   }
 
   function renderTestCanvas() {
@@ -1056,7 +1105,7 @@
   }
 
   function renderMode() {
-    ["char", "tile", "map"].forEach((m) => {
+    ["char", "tile", "object", "room"].forEach((m) => {
       ui.modePanels[m].classList.toggle("hidden", m !== state.mode);
       ui.sidePanels[m].classList.toggle("hidden", m !== state.mode);
       ui.modeButtons[m].classList.toggle("active", m === state.mode);
@@ -1068,6 +1117,7 @@
     ui.charsetActiveBank.value = String(state.activeCharsetBank);
     ui.selectedChar.textContent = String(state.selectedChar);
     ui.selectedCharTile.textContent = String(state.selectedChar);
+    ui.selectedCharObject.textContent = String(state.selectedChar);
     ui.selectedTile.textContent = String(state.selectedTile);
     ui.selectedTileMap.textContent = String(state.selectedTile);
   }
@@ -1085,7 +1135,11 @@
     if (state.mode === "tile") {
       renderTestCanvas();
     }
-    if (state.mode === "map") {
+    if (state.mode === "object") {
+      syncObjectTypeSelect();
+      renderObjectTypeEditor();
+    }
+    if (state.mode === "room") {
       renderMapCanvas();
       renderMapEditorState();
     }
@@ -1183,7 +1237,7 @@
     if (state.mode === "tile") {
       renderTestCanvas();
     }
-    if (state.mode === "map") {
+    if (state.mode === "room") {
       renderMapCanvas();
     }
     schedulePersist();
@@ -1204,7 +1258,7 @@
     if (state.mode === "tile") {
       renderTestCanvas();
     }
-    if (state.mode === "map") {
+    if (state.mode === "room") {
       renderMapCanvas();
     }
     schedulePersist();
@@ -1330,6 +1384,39 @@
     } else {
       addRoomObject(halfX, halfY);
     }
+    renderMapCanvas();
+    renderMapEditorState();
+    schedulePersist();
+  }
+
+  function updateSelectedRoomObject() {
+    const slot = state.selectedObjectSlot;
+    if (slot < 0 || slot >= ROOM_OBJECT_COUNT) return;
+    const p = slot * 3;
+    const oldTypeId = state.map.objects[p];
+    const typeId = Math.max(1, clampByte(Number(ui.roomSelectedObjectType.value)));
+    if (!objectTypeIsValid(state.objectTypes[typeId])) {
+      setStatus(`Define object type ${typeId} before assigning it.`, true);
+      renderMapEditorState();
+      return;
+    }
+    if ((state.objectTypes[oldTypeId].flags & 1) !== 0 &&
+        (state.objectTypes[typeId].flags & 1) === 0) {
+      let nonActors = 0;
+      for (let i = 0; i < ROOM_OBJECT_COUNT; i += 1) {
+        const existing = state.map.objects[i * 3];
+        if (existing !== 0 && (state.objectTypes[existing].flags & 1) === 0) nonActors += 1;
+      }
+      if (nonActors >= 200) {
+        setStatus("Room already contains 200 non-actor objects.", true);
+        renderMapEditorState();
+        return;
+      }
+    }
+    state.map.objects[p] = typeId;
+    state.map.objects[p + 1] = Math.max(0, Math.min(MAP_WIDTH * 2 - 1, Number(ui.roomObjectX.value) | 0));
+    state.map.objects[p + 2] = Math.max(0, Math.min(MAP_HEIGHT * 2 - 1, Number(ui.roomObjectY.value) | 0));
+    state.selectedObjectType = typeId;
     renderMapCanvas();
     renderMapEditorState();
     schedulePersist();
@@ -1896,6 +1983,10 @@
     Object.entries(ui.modeButtons).forEach(([mode, btn]) => {
       btn.addEventListener("click", () => {
         state.mode = mode;
+        if (mode === "object" || mode === "room") {
+          state.activeCharsetBank = 0;
+          invalidateTileAtlases();
+        }
         renderAll();
         schedulePersist();
       });
@@ -1906,7 +1997,7 @@
       if (state.mode === "tile") {
         renderTestCanvas();
       }
-      if (state.mode === "map") {
+      if (state.mode === "room") {
         renderMapCanvas();
       }
       schedulePersist();
@@ -1930,6 +2021,12 @@
       trialOpt.value = String(c);
       trialOpt.textContent = `${c}`;
       ui.trialColor.appendChild(trialOpt);
+
+      const objectOpt = document.createElement("option");
+      objectOpt.value = String(c);
+      objectOpt.textContent = `${c}`;
+      objectOpt.style.backgroundColor = C64_COLORS[c];
+      ui.objectCellColor.appendChild(objectOpt);
     }
     ui.charPreviewColor.value = String(state.charPreviewColor);
     ui.charPreviewColor.addEventListener("change", () => {
@@ -2145,6 +2242,10 @@
         return;
       }
       event.preventDefault();
+      if (state.mode === "object" || state.mode === "room") {
+        setStatus("Objects and room tiles always use charset bank 0.");
+        return;
+      }
       state.activeCharsetBank = state.activeCharsetBank === 0 ? 1 : 0;
       invalidateTileAtlases();
       renderAll();
@@ -2185,9 +2286,9 @@
     });
     ui.roomObjectType.addEventListener("change", () => {
       state.selectedObjectType = Math.max(1, clampByte(Number(ui.roomObjectType.value)));
-      renderObjectTypeEditor();
       schedulePersist();
     });
+    ui.updateRoomObject.addEventListener("click", updateSelectedRoomObject);
     ui.deleteRoomObject.addEventListener("click", () => {
       deleteRoomObject(state.selectedObjectSlot);
       renderMapCanvas();
@@ -2204,6 +2305,25 @@
       renderObjectTypeEditor();
       syncObjectTypeSelect();
       ui.roomObjectType.value = String(state.selectedObjectType);
+      schedulePersist();
+    });
+    ui.objectTypeList.addEventListener("change", () => {
+      state.selectedObjectType = Math.max(1, clampByte(Number(ui.objectTypeList.value)));
+      renderObjectTypeEditor();
+      schedulePersist();
+    });
+    ui.objectToolChar.addEventListener("click", () => {
+      state.objectTool = "char";
+      renderObjectTypeEditor();
+      schedulePersist();
+    });
+    ui.objectToolHotspot.addEventListener("click", () => {
+      state.objectTool = "hotspot";
+      renderObjectTypeEditor();
+      schedulePersist();
+    });
+    ui.objectCellColor.addEventListener("change", () => {
+      state.objectCellColor = clampByte(Number(ui.objectCellColor.value)) & 0x0f;
       schedulePersist();
     });
     [ui.objectTypeName, ui.objectTypeWidth, ui.objectTypeHeight,

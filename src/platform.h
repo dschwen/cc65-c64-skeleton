@@ -81,10 +81,17 @@ typedef struct PlatformRoom {
 } PlatformRoom;
 
 extern PlatformRoom platform_room;
-extern PlatformObject platform_player;
+/* Current room ID and player ownership inside platform_room.objects. */
+extern uint8_t platform_current_room;
+extern uint8_t platform_player_slot;
+extern PlatformObject* platform_player;
 extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 
-/* Initialize VIC bank/pointers, colors, sprite overlay storage, and globals. */
+/*
+ * Initialize VIC state and load built-in room 00/object types. The current
+ * player is room object slot 0, so platform_player points inside
+ * platform_room.objects rather than holding a detached copy.
+ */
 void platform_init(void);
 
 /* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
@@ -172,6 +179,8 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
  * y<=19. line offsets address zero-terminated strings in room.text; offset 0
  * is conventionally empty. The sprites start one pixel below the character
  * row, and the 24x3 underlying color cells are darkened/desaturated.
+ * Glyphs come from the high nibble of charset bank 1: A-Z at 193-218,
+ * ($)- at 219-222, a-z at 225-250, and .,!?: at 251-255.
  */
 uint8_t platform_overlay_show(const PlatformRoom* room,
                               uint8_t half_x, uint8_t half_y,

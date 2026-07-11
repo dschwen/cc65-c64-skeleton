@@ -13,6 +13,7 @@
 #define P_SPRITE_DATA      ((uint8_t*)0x3a00)
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
 #define DIRTY_BYTES        110u
+#define DIRTY_CELL_LIMIT   32u
 #define ROOM_LFN           2u
 #define INITIAL_OBJECT_TYPE_COUNT 36u
 
@@ -41,6 +42,11 @@ const uint8_t platform_overlay_gray[16] = {
 };
 
 static uint8_t dirty_cells[DIRTY_BYTES];
+static uint8_t dirty_x[DIRTY_CELL_LIMIT];
+static uint8_t dirty_y[DIRTY_CELL_LIMIT];
+static uint8_t dirty_count;
+static const PlatformRoom* rendered_room;
+static uint16_t rendered_object_limit;
 static uint8_t overlay_saved_colors[72];
 static uint8_t overlay_visible;
 static uint8_t overlay_x;
@@ -138,13 +144,14 @@ static void base_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
 
 static void compose_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
                          const PlatformObject* player,
+                         uint16_t object_limit,
                          uint8_t* ch, uint8_t* color) {
     uint16_t i;
     uint8_t object_ch;
     uint8_t object_color;
 
     base_cell(room, x, y, ch, color);
-    for (i = 0; i < PLATFORM_ROOM_OBJECT_COUNT; ++i) {
+    for (i = 0; i < object_limit; ++i) {
         if (player == &room->objects[i]) continue;
         if (object_cell(&room->objects[i], x, y, &object_ch, &object_color)) {
             *ch = object_ch;
@@ -159,17 +166,22 @@ static void compose_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
 
 static void dirty_clear(void) {
     memset(dirty_cells, 0, sizeof(dirty_cells));
+    dirty_count = 0;
 }
 
 static void dirty_set(uint8_t x, uint8_t y) {
     uint16_t cell;
+    uint8_t mask;
     if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= PLATFORM_MAP_CHAR_HEIGHT) return;
     cell = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-    dirty_cells[cell >> 3] |= (uint8_t)(1u << (cell & 7u));
-}
-
-static uint8_t dirty_get(uint16_t cell) {
-    return dirty_cells[cell >> 3] & (uint8_t)(1u << (cell & 7u));
+    mask = (uint8_t)(1u << (cell & 7u));
+    if (dirty_cells[cell >> 3] & mask) return;
+    dirty_cells[cell >> 3] |= mask;
+    if (dirty_count < DIRTY_CELL_LIMIT) {
+        dirty_x[dirty_count] = x;
+        dirty_y[dirty_count] = y;
+        ++dirty_count;
+    }
 }
 
 static void mark_object_cells(const PlatformObject* object) {
@@ -201,20 +213,28 @@ static void mark_object_cells(const PlatformObject* object) {
 
 static void redraw_dirty(const PlatformRoom* room,
                          const PlatformObject* player) {
-    uint16_t cell;
+    uint8_t i;
     uint8_t x;
     uint8_t y;
     uint8_t ch;
     uint8_t color;
     uint16_t offset;
     uint8_t visible_color;
+    uint16_t object_limit;
 
-    for (cell = 0; cell < PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT; ++cell) {
-        if (!dirty_get(cell)) continue;
-        x = (uint8_t)(cell % PLATFORM_MAP_CHAR_WIDTH);
-        y = (uint8_t)(cell / PLATFORM_MAP_CHAR_WIDTH);
-        compose_cell(room, x, y, player, &ch, &color);
-        offset = cell;
+    if (room == rendered_room) {
+        object_limit = rendered_object_limit;
+    } else {
+        object_limit = PLATFORM_ROOM_OBJECT_COUNT;
+        while (object_limit > 0u && room->objects[object_limit - 1u].type == 0u) {
+            --object_limit;
+        }
+    }
+    for (i = 0; i < dirty_count; ++i) {
+        x = dirty_x[i];
+        y = dirty_y[i];
+        compose_cell(room, x, y, player, object_limit, &ch, &color);
+        offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
         visible_color = color;
         if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
             y >= overlay_y && y < overlay_y + 3u) {
@@ -248,6 +268,7 @@ void platform_init(void) {
 
 void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
     if (room == 0) return;
+    if (room == rendered_room) rendered_room = 0;
     memset(room, 0, sizeof(*room));
     room->width = PLATFORM_MAP_WIDTH;
     room->height = PLATFORM_MAP_HEIGHT;
@@ -260,6 +281,7 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id, uint8_t device) 
     uint8_t status;
 
     if (room == 0) return PLATFORM_ERR_ARGUMENT;
+    if (room == rendered_room) rendered_room = 0;
     filename[0] = hex_digits[room_id >> 4];
     filename[1] = hex_digits[room_id & 0x0f];
     filename[2] = '\0';
@@ -346,8 +368,14 @@ void platform_object_draw(const PlatformObject* object) {
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
     uint16_t i;
     if (room == 0) return;
+    rendered_room = room;
+    rendered_object_limit = PLATFORM_ROOM_OBJECT_COUNT;
+    while (rendered_object_limit > 0u &&
+           room->objects[rendered_object_limit - 1u].type == 0u) {
+        --rendered_object_limit;
+    }
     platform_map_draw(room);
-    for (i = 0; i < PLATFORM_ROOM_OBJECT_COUNT; ++i) {
+    for (i = 0; i < rendered_object_limit; ++i) {
         if (player == &room->objects[i]) continue;
         platform_object_draw(&room->objects[i]);
     }
@@ -364,6 +392,37 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
     object->y = new_y;
     mark_object_cells(object);
     redraw_dirty(room, player);
+}
+
+uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
+    int16_t new_x;
+    int16_t new_y;
+    uint8_t tile;
+
+    if (platform_player == 0 || platform_player->type == 0u) {
+        return PLATFORM_ERR_ARGUMENT;
+    }
+    new_x = (int16_t)platform_player->x + delta_x;
+    new_y = (int16_t)platform_player->y + delta_y;
+    if (new_x < 0 || new_x >= PLATFORM_MAP_CHAR_WIDTH ||
+        new_y < 0 || new_y >= PLATFORM_MAP_CHAR_HEIGHT) {
+        return PLATFORM_ERR_BLOCKED;
+    }
+    tile = platform_room.tiles[(uint16_t)((uint8_t)new_y >> 1) *
+                               PLATFORM_MAP_WIDTH + ((uint8_t)new_x >> 1)];
+    if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
+        return PLATFORM_ERR_BLOCKED;
+    }
+    platform_object_move(&platform_room, platform_player,
+                         (uint8_t)new_x, (uint8_t)new_y, platform_player);
+    return PLATFORM_OK;
+}
+
+void platform_wait_frame(void) {
+    uint8_t frame;
+    frame = platform_frame_counter;
+    while (platform_frame_counter == frame) {
+    }
 }
 
 uint16_t platform_room_object_count(const PlatformRoom* room,
@@ -402,6 +461,9 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
             room->objects[i].type = type;
             room->objects[i].x = x;
             room->objects[i].y = y;
+            if (room == rendered_room && i >= rendered_object_limit) {
+                rendered_object_limit = i + 1u;
+            }
             if (out_slot != 0) *out_slot = (uint8_t)i;
             return PLATFORM_OK;
         }
@@ -420,6 +482,12 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     object->type = 0;
     object->x = 0;
     object->y = 0;
+    if (room == rendered_room && (uint16_t)slot + 1u == rendered_object_limit) {
+        while (rendered_object_limit > 0u &&
+               room->objects[rendered_object_limit - 1u].type == 0u) {
+            --rendered_object_limit;
+        }
+    }
     redraw_dirty(room, player);
     return PLATFORM_OK;
 }
@@ -440,6 +508,13 @@ uint8_t platform_room_object_transfer(PlatformRoom* leaving,
     leaving->objects[leaving_slot].type = 0;
     leaving->objects[leaving_slot].x = 0;
     leaving->objects[leaving_slot].y = 0;
+    if (leaving == rendered_room &&
+        (uint16_t)leaving_slot + 1u == rendered_object_limit) {
+        while (rendered_object_limit > 0u &&
+               leaving->objects[rendered_object_limit - 1u].type == 0u) {
+            --rendered_object_limit;
+        }
+    }
     return PLATFORM_OK;
 }
 

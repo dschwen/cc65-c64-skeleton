@@ -21,6 +21,12 @@
 #define PLATFORM_TEXT_LINE_BOTTOM     1u
 
 #define PLATFORM_OBJECT_FLAG_ACTOR    0x01u
+#define PLATFORM_TILE_SOLID_LAND      0x04u
+
+#define PLATFORM_KEY_CURSOR_DOWN      17u
+#define PLATFORM_KEY_CURSOR_RIGHT     29u
+#define PLATFORM_KEY_CURSOR_UP        145u
+#define PLATFORM_KEY_CURSOR_LEFT      157u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -28,6 +34,7 @@
 #define PLATFORM_ERR_FULL             3u
 #define PLATFORM_ERR_LIMIT            4u
 #define PLATFORM_ERR_ARGUMENT         5u
+#define PLATFORM_ERR_BLOCKED          6u
 
 #define PLATFORM_TRANSITION_NONE      0u
 #define PLATFORM_TRANSITION_TOP       1u
@@ -86,6 +93,7 @@ extern uint8_t platform_current_room;
 extern uint8_t platform_player_slot;
 extern PlatformObject* platform_player;
 extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
+extern volatile uint8_t platform_frame_counter;
 
 /*
  * Initialize VIC state and load built-in room 00/object types. The current
@@ -127,6 +135,16 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player);
 void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player);
+
+/*
+ * Move the global player one half-tile when the destination hotspot is inside
+ * the room and its tile has PLATFORM_TILE_SOLID_LAND. Uses minimal redraw.
+ */
+uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
+
+/* Wait for the next bottom-of-map IRQ, then scan/read one keyboard event. */
+void platform_wait_frame(void);
+uint8_t platform_input_poll(void);
 
 /* Add at the first empty slot. out_slot may be NULL. */
 uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,

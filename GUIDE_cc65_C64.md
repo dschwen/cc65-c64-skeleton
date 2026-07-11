@@ -255,6 +255,12 @@ It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
 the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
 other CIA1 interrupt services.
 
+The custom IRQ also bypasses normal KERNAL keyboard scanning. The platform's
+frame-driven game loop calls the assembly `platform_input_poll()` wrapper once
+per frame; it invokes the KERNAL `SCNKEY` and `GETIN` entry points. Do not poll
+`SCNKEY` in an unrestricted busy loop because its debounce and repeat timing
+assume roughly one call per video frame.
+
 ### EasyFlash cartridge build
 
 `make cartridge` builds the normal PRG first, splits its payload across

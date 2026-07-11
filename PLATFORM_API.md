@@ -200,7 +200,7 @@ uint8_t platform_room_object_transfer(PlatformRoom* leaving,
 
 `platform_object_move()` minimizes screen writes as follows:
 
-1. mark nontransparent cells at the old position in a 40x22 bitset;
+1. mark nontransparent cells at the old position in a 40x22 deduplication bitset and a compact `(x,y)` list;
 2. update the hotspot position;
 3. mark nontransparent cells at the new position;
 4. for each marked cell, compose tile + ordered objects + player;
@@ -208,7 +208,11 @@ uint8_t platform_room_object_transfer(PlatformRoom* leaving,
 6. write only bytes that differ.
 
 This correctly restores exposed tiles and overlapping objects without
-redrawing the room or blindly writing the entire bounding rectangle.
+redrawing the room or blindly writing the entire bounding rectangle. The list
+contains at most 32 cells because an object type has at most 16 cells at each
+of its old and new positions. Redraw iterates only that list, not all 880 map
+cells, and object composition stops at the rendered room's highest populated
+slot rather than testing all 256 slots for every cell.
 
 `platform_room_object_add()` uses the first type-0 slot. It rejects the add
 when all 256 slots are occupied or when the room already has 200 non-actor
@@ -225,6 +229,60 @@ object-type flags byte. `out_slot` may be `NULL`.
 room. It clears the leaving slot only after the add succeeds, so a full target
 room does not lose the object. The caller must have both rooms loaded and is
 responsible for persisting their modified files/state.
+
+## Game loop, keyboard, and player movement
+
+```c
+extern volatile uint8_t platform_frame_counter;
+
+void platform_wait_frame(void);
+uint8_t platform_input_poll(void);
+uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
+```
+
+The bottom-of-map raster IRQ increments `platform_frame_counter` once per
+video frame. `platform_wait_frame()` waits for that byte to change, providing
+a 50 Hz PAL or 60 Hz NTSC game-loop cadence.
+
+Because the custom raster IRQ exits through the KERNAL IRQ restore path rather
+than running the normal KERNAL handler, it does not scan the keyboard itself.
+`platform_input_poll()` is an assembly wrapper that calls KERNAL `SCNKEY` and
+then `GETIN`. Call it once after each `platform_wait_frame()`; calling it in an
+unthrottled busy loop would advance KERNAL debounce/repeat state too quickly.
+It returns zero when no event is available. Cursor-key values are exposed as:
+
+| Key | Constant | Value |
+|---|---|---:|
+| Down | `PLATFORM_KEY_CURSOR_DOWN` | 17 |
+| Right | `PLATFORM_KEY_CURSOR_RIGHT` | 29 |
+| Up | `PLATFORM_KEY_CURSOR_UP` | 145 |
+| Left | `PLATFORM_KEY_CURSOR_LEFT` | 157 |
+
+`platform_player_step()` proposes a signed half-tile delta. The destination
+must remain within x `0-39`, y `0-21`, and the tile under the destination
+hotspot must have `PLATFORM_TILE_SOLID_LAND` (`$04`) set. Only the hotspot is
+tested; the dimensions of the player graphic do not expand the collision
+footprint. A permitted step uses `platform_object_move()` and therefore
+redraws only changed character/color cells. It returns `PLATFORM_OK` after a
+move, `PLATFORM_ERR_BLOCKED` for a boundary/non-land tile, or
+`PLATFORM_ERR_ARGUMENT` when no player object is active.
+
+The demo loop first waits for any key event and hides the sprite dialog. It
+then handles cursor events as one-half-tile player steps:
+
+```c
+do {
+    platform_wait_frame();
+    key = platform_input_poll();
+} while (key == 0);
+platform_overlay_hide();
+
+for (;;) {
+    platform_wait_frame();
+    key = platform_input_poll();
+    /* Dispatch cursor constants to platform_player_step(). */
+}
+```
 
 ## Screen transitions
 

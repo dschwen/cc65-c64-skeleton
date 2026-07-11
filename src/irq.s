@@ -1,7 +1,7 @@
 ; Split the screen between the editor's two charset banks.
 ; The KERNAL IRQ entry has already saved A/X/Y before following $0314.
 
-.export _raster_irq_install
+.export _raster_irq_install, _platform_frame_counter
 
 VIC_CTRL1      = $d011
 VIC_RASTER     = $d012
@@ -18,14 +18,14 @@ TEXT_RASTER    = 226       ; one line before row 22's badline
 WATER_CHAR     = $2000 + 14 * 8
 
 .segment "BSS"
-water_frame: .res 1
+_platform_frame_counter: .res 1
 
 .segment "CODE"
 
 _raster_irq_install:
     sei
     lda #0
-    sta water_frame
+    sta _platform_frame_counter
 
     ; Own the IRQ source. This intentionally stops the KERNAL jiffy clock.
     lda #$7f
@@ -70,8 +70,8 @@ raster_irq:
 
     ; The tile charset is no longer visible below this split. Rotate each row
     ; of character 14 every second frame, wrapping bit 7 into bit 0.
-    inc water_frame
-    lda water_frame
+    inc _platform_frame_counter
+    lda _platform_frame_counter
     and #$01
     bne @done
     ldx #7

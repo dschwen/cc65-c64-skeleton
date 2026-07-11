@@ -303,34 +303,201 @@ EasyFlash guide as `00:1:1800`. In this linker's physical ROMH address space it
 is `$B800-$BBFF`. A valid image begins there with lowercase `eapi` bytes and
 contains the actual flash driver. This project's range remains erased `$FF`.
 
-## Expanding beyond bank 1
+## Runtime room loading (planned)
 
-The loader uses `$DE00` to copy bank 1, then disables the cartridge. To use
-additional banks during gameplay:
+The current CRT is only a fast loader. It copies the same PRG used by the disk
+build to RAM, disables EasyFlash, and enters the game. Consequently,
+`platform_room_load()` currently always calls the KERNAL disk API. Room `00`
+appears to work without a disk only because it is compiled into the PRG as the
+startup room. There is no runtime EasyFlash room backend yet.
 
-1. Decide on the raw ordering: bank 0 ROML, bank 0 ROMH, bank 1 ROML, bank 1
-   ROMH, and so on.
-2. Generate a padded 1 MiB image or a correctly ordered non-padded prefix.
-3. Keep bank-switching code in stable RAM or in a ROM region that will remain
-   selected throughout the switch.
-4. Select 16 KiB mode and write the bank number to `$DE00`.
-5. Copy assets from `$8000-$9FFF` or `$A000-$BFFF` into their runtime RAM
-   locations, or process them while the selected bank is visible.
-6. Disable the cartridge again if the game expects RAM/BASIC beneath those
-   windows.
+This must change before rooms can be entered dynamically during cartridge
+gameplay. The intended platform contract is one logical room-loading operation
+with two storage implementations:
+
+```c
+typedef enum PlatformStorage {
+    PLATFORM_STORAGE_DISK,
+    PLATFORM_STORAGE_EASYFLASH
+} PlatformStorage;
+
+void platform_storage_init(PlatformStorage storage, uint8_t device);
+uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
+```
+
+The disk backend retains the current two-hex-digit filename and `cbm_read()`
+behavior. The EasyFlash backend obtains the same 1,248-byte record from an
+asset bank. Game and rendering code must not care which backend supplied it.
+The boot loader can leave a signature byte in reserved RAM so the common PRG
+can select the EasyFlash backend when it was launched from a CRT.
+
+Only the current room needs to be resident for drawing. On a transition the
+runtime must preserve the moving actor record, persist or journal any changes
+to the leaving room, load the destination record into `platform_room`, insert
+the actor in its first permitted empty slot, update `platform_player_slot` and
+`platform_player`, and redraw. The existing `platform_room_object_transfer()`
+requires two resident room buffers and therefore is a useful primitive for
+tools or a two-buffer implementation, but it is not by itself the final
+single-buffer transition operation.
+
+Cartridge room records are immutable base data. Any object that moves between
+rooms makes the room state differ from that base. Dynamic loading therefore
+also requires a mutable-state policy: save modified rooms to disk/flash, keep a
+compact delta journal, or impose a bounded cache and define eviction. Reloading
+the original cartridge record without such a layer would resurrect removed
+objects and discard newly inserted ones.
+
+### Proposed asset packing
+
+Reserve EasyFlash banks 0 and 1 for the executable and begin runtime assets in
+bank 2. Prefer generated bank images and an index/manifest over dozens of
+overlapping ld65 memory areas.
+
+Runtime reads should normally use EasyFlash 8 KiB mode (`$DE02 = $06`), which
+exposes ROML at `$8000-$9FFF` without exposing ROMH over `$A000-$BFFF`. Six
+1,248-byte rooms fit in one ROML page:
+
+```text
+6 * 1,248 = 7,488 bytes, leaving 704 bytes per 8 KiB page
+```
+
+The 256 rooms therefore need 43 ROML pages. Together with 16 KiB of object
+types and the two executable banks, this fits in the 64 available EasyFlash
+banks when asset data is deliberately placed in ROML pages. A fixed layout can
+derive `bank = first_room_bank + room_id / 6`; a generated directory is more
+flexible if compression or additional assets are introduced later.
+
+The 8 KiB choice is deliberate. The current BSS reaches above `$A000`.
+Selecting 16 KiB cartridge mode (`$07`) would make ROMH hide that RAM during a
+copy. In the current build map `platform_object_types` begins at `$64E4` and
+extends through `$A4E3`, with IRQ/platform state above it. These addresses are
+link results rather than permanent ABI, but they demonstrate the collision. A
+RAM-resident assembly copy primitive should:
+
+1. disable IRQs and remember the previous interrupt state;
+2. write the asset bank to `$DE00`;
+3. select 8 KiB mode with `$DE02 = $06`;
+4. copy the requested bytes from `$8000-$9FFF` to unshadowed RAM;
+5. disable the cartridge with `$DE02 = $04`;
+6. restore the interrupt state;
+7. validate the room header before committing it as the current room.
+
+For failure safety, copy into a staging room when RAM permits and replace the
+current room only after validation. At minimum, do not update current-room and
+player globals until the complete record has been read and validated.
 
 A write to `$DE00` changes ROML and ROMH together. Code running from either
-window must not switch to a bank that lacks the next instruction. A small RAM
-routine is generally the simplest safe bank-copy primitive.
+window must not switch away the bank containing its next instruction. Both the
+bank-switch routine and its copy loop must therefore execute from stable RAM.
 
-Interrupt behavior must also be deliberate. If an IRQ can run while a bank is
-temporarily selected, its code and data must not depend on memory hidden by
-ROML or ROMH. Disable interrupts around short bank-copy operations or design
-the IRQ memory layout to be independent of cartridge state.
+### Object-type table placement
 
-For larger projects, generating each 16 KiB bank separately and combining
-them in a deterministic bank-ordering step is often clearer than forcing many
-overlapping `$8000/$A000` linker regions into one ld65 configuration.
+The 256 fixed 64-byte records occupy 16 KiB. Keeping them resident makes object
+drawing and collision predictable; fetching a type from EasyFlash for every
+object cell would be too expensive and would complicate IRQ safety.
+
+Putting the table at the physical top 16 KiB (`$C000-$FFFF`) is viable, but it
+turns CPU-port state into part of the platform ABI:
+
+- `$E000-$FFFF` is hidden by KERNAL ROM in the normal `$01` mapping;
+- `$D000-$DFFF` is hidden by I/O while VIC, SID, CIA, and EasyFlash registers
+  remain accessible;
+- exposing RAM under `$D000` hides those I/O registers for the duration of the
+  access;
+- mapping out KERNAL means KERNAL keyboard and disk entry points must be mapped
+  back in explicitly before calls.
+
+Before any bank switching, set bits 0-2 of the data-direction register `$00` to
+outputs. Change only bits 0-2 of `$01`, preserving its upper bits. With the
+usual upper bits `$30`, the relevant mappings are `$37` for BASIC/KERNAL/I/O,
+`$36` for RAM at `$A000` with KERNAL/I/O, `$35` for RAM at `$A000` and
+`$E000` with I/O, and `$34` for RAM throughout `$A000-$FFFF` with I/O hidden.
+The full baseline table is in `GUIDE_cc65_C64.md`.
+
+The 64-byte type record size makes a `$C000` table particularly manageable:
+
+| Type IDs | Address range | Access policy |
+|---:|---|---|
+| `0-63` | `$C000-$CFFF` | always-visible RAM |
+| `64-127` | `$D000-$DFFF` | select all-RAM mapping briefly |
+| `128-255` | `$E000-$FFFF` | KERNAL out, I/O still visible |
+
+No record crosses a 4 KiB boundary. A renderer can access types 0-63 directly
+and types 128-255 while the gameplay mapping is `$35`. For types 64-127 it
+must disable interrupts, select the `$34`-equivalent low bits, copy the one
+64-byte record to an always-visible scratch record, restore `$35`, then render
+from scratch. It cannot draw directly while `$D000` RAM is selected because
+screen colors and VIC registers are hidden at the same time.
+
+Loading the table needs the same staging rule. EasyFlash `$DE00/$DE02` vanish
+when I/O is hidden, so data destined for `$D000-$DFFF` must first be copied from
+ROML to visible scratch RAM, then EasyFlash must be disabled before selecting
+all-RAM mode and copying the staged block to `$D000`. Disk reads should also
+stage that 4 KiB rather than point KERNAL I/O directly at `$D000`.
+
+An alternative contiguous layout is `$8000-$BFFF` after EasyFlash has been
+disabled, with BASIC mapped out but KERNAL and I/O retained. It avoids the
+per-type staging case but requires moving current BSS ownership and ensuring
+that runtime ROML does not hide a destination being filled. The final choice
+should be made with the complete RAM and loading-time budget in hand.
+
+### IRQ and KERNAL independence
+
+The current raster IRQ is entered through the KERNAL IRQ prologue and exits at
+`$EA81`. The prologue has already saved A, X, and Y. Thus the routine is not
+independent of KERNAL ROM even though it owns the VIC interrupt and suppresses
+the normal jiffy-clock work.
+
+If KERNAL is normally banked out to expose RAM, replace this arrangement with a
+hardware-vector IRQ entered through the RAM vector at `$FFFE/$FFFF`. That handler
+must save and restore every register it changes, acknowledge the VIC source,
+and return with `RTI`; it cannot jump to `$EA81`. Installation and any temporary
+KERNAL calls must follow explicit `$00/$01` wrappers. The IRQ code, stack,
+vectors, frame counter, and charset data it touches must all remain visible
+under every mapping in which interrupts are enabled.
+
+Short keyboard calls can use `SEI`, map KERNAL in, call the routine, restore the
+gameplay mapping, and `CLI`. Disk loading can be long enough that it needs a
+separate loading-state design: blank or simplify the display and suspend the
+custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
+`$0314` entry with the correct, different register-save/exit conventions.
+
+Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
+ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
+changing its mode. Copy time must remain bounded so raster deadlines are not
+missed; a 1,248-byte room copy may need to be scheduled during a blanked screen
+or loading transition rather than during active display.
+
+For larger projects, generate each physical bank in deterministic order:
+bank 0 ROML, bank 0 ROMH, bank 1 ROML, bank 1 ROMH, and so on. Then combine the
+program and asset banks before `cartconv` creates the CRT.
+
+## Native drawing roadmap
+
+Full room rendering is another suitable assembly boundary. The current C map
+path performs 220 tile iterations and 880 individual cell writes. A native
+blitter can stream room tile IDs, index the eight-byte definitions at `$3000`,
+and write the four characters and colors directly to `$0400` and `$D800` while
+maintaining pointers to two adjacent screen rows.
+
+Object policy should remain in C: slot order, player-last ordering, actor
+ownership, room limits, and transitions. A native single-object renderer can
+handle the repetitive work: multiply the type ID by 64, unpack dimensions and
+hotspot nibbles, clip signed coordinates, skip transparent character zero, and
+write at most 16 character/color pairs.
+
+The public C functions should remain stable and call internal assembly fast
+paths. cc65 assembly implementations must follow its calling convention: C
+symbols have leading underscores, a single pointer normally arrives in A/X,
+and routines with stacked arguments must perform the required callee cleanup.
+Keep shared structure offsets and fixed addresses in an assembly include, with
+C size assertions, so the C and assembly layouts cannot silently diverge.
+
+While the sprite dialog is visible, color writes also update the overlay's
+saved-color backing array. Initial native routines should therefore require a
+hidden overlay or fall back to the existing C writer. After full-room drawing
+is native, profile movement separately: dirty-cell recomposition, not the full
+map blitter, is the relevant path for moving actors.
 
 ## Flash saves are a separate feature
 

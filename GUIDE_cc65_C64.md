@@ -43,6 +43,42 @@ The default linker configuration file for the target is `cfg/c64.cfg`.
 
 **Agent note:** Most “why is my code slow / glitchy / black screen” bugs are: wrong bank, wrong VIC memory pointer (`$D018`), forgetting color RAM, or clobbering zeropage/stack.
 
+### CPU-port banking contract
+
+`$0000` is the 6510 port data-direction register and `$0001` is its data
+register. Bits 0-2 of `$0000` must be outputs before `$0001` can reliably drive
+`LORAM`, `HIRAM`, and `CHAREN`:
+
+```asm
+lda $00
+ora #$07
+sta $00
+```
+
+Do not casually replace the upper five bits of `$01`; they include cassette
+port state. Save the old value or replace only the low three bits. With no
+cartridge ROM selected, useful mappings are:
+
+| `$01` low bits | Common value | `$A000-$BFFF` | `$D000-$DFFF` | `$E000-$FFFF` |
+|---|---:|---|---|---|
+| `111` | `$37` | BASIC ROM | I/O | KERNAL ROM |
+| `110` | `$36` | RAM | I/O | KERNAL ROM |
+| `101` | `$35` | RAM | I/O | RAM |
+| `100` | `$34` | RAM | RAM | RAM |
+| `011` | `$33` | BASIC ROM | character ROM | KERNAL ROM |
+| `000` | `$30` | RAM | RAM | RAM |
+
+The table assumes the common upper bits `$30`; code should normally preserve
+the actual upper bits and apply the listed low-bit pattern. When both `LORAM`
+and `HIRAM` are clear, `CHAREN` no longer selects I/O/character ROM and RAM is
+visible at `$D000-$DFFF`.
+
+The VIC reads display memory independently of this CPU mapping, but the CPU
+cannot access VIC/SID/CIA/Color RAM while the I/O layer is hidden. EasyFlash
+bank/control registers at `$DE00/$DE02` are also I/O and disappear in an
+all-RAM or character-ROM mapping. Cartridge `GAME` and `EXROM` signals add PLA
+states on top of this baseline table.
+
 ---
 
 ## 3) VIC‑II (graphics) quick map: base `$D000`
@@ -261,6 +297,15 @@ per frame; it invokes the KERNAL `SCNKEY` and `GETIN` entry points. Do not poll
 `SCNKEY` in an unrestricted busy loop because its debounce and repeat timing
 assume roughly one call per video frame.
 
+The current raster handler still depends on KERNAL ROM for its entry/exit
+register-save path. If RAM under `$E000-$FFFF` is normally visible, install a
+standalone hardware-vector handler in RAM at `$FFFE/$FFFF` that saves A/X/Y
+itself and returns with `RTI`. Map KERNAL back around explicit KERNAL calls.
+Short calls can disable IRQs for the mapping interval; longer disk operations
+need a deliberate loading-state IRQ policy. Accessing RAM under `$D000-$DFFF`
+must likewise be a short critical section because VIC/SID/CIA and Color RAM are
+unavailable in that mapping.
+
 ### EasyFlash cartridge build
 
 `make cartridge` builds the normal PRG first, splits its payload across
@@ -275,8 +320,8 @@ requires RAM-resident driver code, sector erase handling, and correct polling;
 ordinary C stores to banked ROM are not sufficient.
 
 See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
-including boot vectors, CRT CHIP layout, validation, multi-bank growth, and
-flash-save constraints.
+including boot vectors, CRT CHIP layout, validation, dynamic room banks,
+object-type RAM placement, native drawing plans, and flash-save constraints.
 
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, and sprite dialogs.

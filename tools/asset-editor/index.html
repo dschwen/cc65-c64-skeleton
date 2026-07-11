@@ -141,7 +141,6 @@
         <h2>Selected</h2>
         <div class="stat-row"><span>Tile</span><strong id="selected-tile-map">0</strong></div>
         <div class="stat-row"><span>Object slot</span><strong id="selected-object-slot">None</strong></div>
-        <button id="delete-room-object" class="wide-button" disabled>Delete Object</button>
       </section>
 
       <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
@@ -260,6 +259,7 @@
               <label>Half-tile X <input id="room-object-x" type="number" min="0" max="39" value="0"></label>
               <label>Half-tile Y <input id="room-object-y" type="number" min="0" max="21" value="0"></label>
               <button id="update-room-object" disabled>Apply</button>
+              <button id="delete-room-object" class="danger-button" disabled>Delete selected</button>
             </div>
           </section>
 

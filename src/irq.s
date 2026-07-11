@@ -15,11 +15,17 @@ KERNAL_IRQ_OUT = $ea81
 TILE_MEMPTR    = $18       ; screen $0400, charset $2000
 TEXT_MEMPTR    = $1a       ; screen $0400, charset $2800
 TEXT_RASTER    = 226       ; one line before row 22's badline
+WATER_CHAR     = $2000 + 14 * 8
+
+.segment "BSS"
+water_frame: .res 1
 
 .segment "CODE"
 
 _raster_irq_install:
     sei
+    lda #0
+    sta water_frame
 
     ; Own the IRQ source. This intentionally stops the KERNAL jiffy clock.
     lda #$7f
@@ -61,6 +67,23 @@ raster_irq:
     sta VIC_MEMPTR
     lda #0
     sta VIC_RASTER
+
+    ; The tile charset is no longer visible below this split. Rotate each row
+    ; of character 14 every second frame, wrapping bit 7 into bit 0.
+    inc water_frame
+    lda water_frame
+    and #$01
+    bne @done
+    ldx #7
+@roll_water:
+    lda WATER_CHAR,x
+    asl
+    bcc :+
+    ora #$01                ; wrap the old bit 7 into bit 0
+:
+    sta WATER_CHAR,x
+    dex
+    bpl @roll_water
     jmp @done
 
 @top_of_frame:

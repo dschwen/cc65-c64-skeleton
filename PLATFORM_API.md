@@ -342,6 +342,39 @@ The overlay reads its 4x7 glyphs directly from the high nibble of charset bank
 Space and unsupported bytes render blank. Each glyph uses rows 0-6 and bits
 7-4 of its 8x8 charset character; row 7 and the low nibble are ignored.
 
+### Overlay ASCII lookup table
+
+`ascii_glyph` in `src/overlay.s` is a direct 128-byte lookup indexed by ASCII
+code. Each value is the charset-bank-1 character position, or `00` for a blank
+or currently unsupported character. This is the complete current table;
+columns are the low hexadecimal nibble:
+
+```text
+       0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+$00:  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+$10:  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+$20:  00 FD 00 00 DC 00 00 00 DB DD 00 00 FC DE FB 00
+$30:  00 00 00 00 00 00 00 00 00 00 FF 00 00 00 00 FE
+$40:  00 C1 C2 C3 C4 C5 C6 C7 C8 C9 CA CB CC CD CE CF
+$50:  D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA 00 00 00 00 00
+$60:  00 E1 E2 E3 E4 E5 E6 E7 E8 E9 EA EB EC ED EE EF
+$70:  F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 FA 00 00 00 00 00
+```
+
+The existing named mappings are:
+
+| ASCII | Charset positions |
+|---|---|
+| `A-Z` | `$C1-$DA` (193-218) |
+| `(`, `$`, `)`, `-` | `$DB-$DE` (219-222) |
+| `a-z` | `$E1-$FA` (225-250) |
+| `.`, `,`, `!`, `?`, `:` | `$FB-$FF` (251-255) |
+
+To add a missing character, draw its seven 4-pixel rows in bits 7-4 of an
+available bank-1 charset position, leave row 7 unused, then replace that ASCII
+entry's `00` in `ascii_glyph`. For example, ASCII `0` is table index `$30`.
+The table deliberately does not infer PETSCII or screen-code conversions.
+
 The packed renderer is implemented in `src/overlay.s`. Sprite RAM is cleared
 before the sprites are enabled. The cleared sprites are then positioned and
 enabled before characters are drawn, so text visibly crawls into the box.
@@ -350,6 +383,19 @@ into the destination byte; the following odd character shifts its high nibble
 right by four and ORs it into the same byte. Six characters fill the three
 bytes of one sprite row. The next six continue at the next sprite's 64-byte
 block, and each successive glyph row advances three bytes within that block.
+
+## Raster IRQ and water animation
+
+The complete raster interrupt implementation is assembly in `src/irq.s`. It
+switches from tile charset bank 0 to text charset bank 1 immediately below the
+map, restores bank 0 at raster line 0, and acknowledges the VIC interrupt.
+
+The bottom-of-map branch also animates tile charset character 14. After the
+VIC switches to the text charset, it rotates all eight bytes at `$2070-$2077`
+left by one bit, wrapping each byte's bit 7 into bit 0. Water-property tiles 2,
+3, and 21 all use character 14 in every quadrant. A one-byte frame divider
+runs the rotation every second bottom split: 25 updates/second on PAL and 30
+updates/second on NTSC.
 
 ## Editor workflows
 

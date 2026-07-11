@@ -245,6 +245,11 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
+The IRQ is implemented entirely in `src/irq.s`. Its bottom-of-map branch also
+rotates charset character 14 (`$2070-$2077`) left every second frame to animate
+the character shared by the water tiles (25 Hz PAL, 30 Hz NTSC). The rotation
+happens only after the VIC has switched away from the tile charset, avoiding
+visible partial writes.
 Row 22 is left blank as spacing above the text on rows 23-24.
 It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
 the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or

@@ -412,8 +412,9 @@ button:hover {
   width: 6rem;
 }
 
-.wide-button {
-  width: 100%;
+.danger-button {
+  border-color: var(--danger);
+  color: #ffd8d3;
 }
 
 .trial-viewport {

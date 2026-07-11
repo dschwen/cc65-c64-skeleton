@@ -60,6 +60,7 @@ The server has no third-party dependencies and only exposes file operations unde
   - Shift-click moves the selected object's hotspot.
   - Right-click deletes the object under the pointer.
   - Select an object in the room list to edit its type and half-tile x/y coordinates.
+  - Use `Delete selected` beside the object fields to remove the selected room slot.
   - Edit a 256-byte pool of zero-terminated room strings; generated offsets
     are displayed for use by the C API.
 

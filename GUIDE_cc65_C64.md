@@ -297,14 +297,11 @@ per frame; it invokes the KERNAL `SCNKEY` and `GETIN` entry points. Do not poll
 `SCNKEY` in an unrestricted busy loop because its debounce and repeat timing
 assume roughly one call per video frame.
 
-The current raster handler still depends on KERNAL ROM for its entry/exit
-register-save path. If RAM under `$E000-$FFFF` is normally visible, install a
-standalone hardware-vector handler in RAM at `$FFFE/$FFFF` that saves A/X/Y
-itself and returns with `RTI`. Map KERNAL back around explicit KERNAL calls.
-Short calls can disable IRQs for the mapping interval; longer disk operations
-need a deliberate loading-state IRQ policy. Accessing RAM under `$D000-$DFFF`
-must likewise be a short critical section because VIC/SID/CIA and Color RAM are
-unavailable in that mapping.
+The raster handler has a standalone RAM-vector entry at `$FFFE/$FFFF` that
+saves A/X/Y and returns with `RTI`, plus a `$0314` entry for KERNAL-mapped disk
+intervals. Short keyboard calls map KERNAL around the call. Accessing RAM under
+`$D000-$DFFF` remains a short critical section because VIC/SID/CIA and Color
+RAM are unavailable in that mapping.
 
 ### EasyFlash cartridge build
 

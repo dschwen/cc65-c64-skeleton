@@ -196,7 +196,7 @@ map_glyph:
     lda #0
     rts
 
-.segment "HIGHRODATA"
+.segment "MIDRODATA"
 ascii_glyph:
     .res 33, 0                    ; $00-$20
     .byte 253                     ; !

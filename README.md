@@ -32,7 +32,7 @@ make d64
 
 Output:
 - `build/game.d64`
-- plus any files found in `res/` (configurable via `DISK_EXTRA_FILES`)
+- plus `res/*`, hexadecimal room assets, and `assets/objects.cobj`
 
 Build an EasyFlash cartridge image:
 ```bash
@@ -44,7 +44,8 @@ validation steps, multi-bank expansion guidance, and flash-save constraints.
 
 Output:
 - `build/game.crt`
-- `build/game-ef.bin` (raw populated EasyFlash banks 0 and 1)
+- `build/game-ef-base.bin` (raw executable banks 0 and 1)
+- `build/game-ef.bin` (packed executable and runtime asset banks)
 
 ## Run
 Open `build/game.prg` in your favorite C64 emulator (VICE etc.).

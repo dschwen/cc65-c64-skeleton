@@ -35,6 +35,12 @@
 #define PLATFORM_ERR_LIMIT            4u
 #define PLATFORM_ERR_ARGUMENT         5u
 #define PLATFORM_ERR_BLOCKED          6u
+#define PLATFORM_ERR_NOT_FOUND        7u
+
+#define PLATFORM_STORAGE_DISK         0u
+#define PLATFORM_STORAGE_EASYFLASH    1u
+
+typedef uint8_t PlatformStorage;
 
 #define PLATFORM_TRANSITION_NONE      0u
 #define PLATFORM_TRANSITION_TOP       1u
@@ -87,6 +93,9 @@ typedef struct PlatformRoom {
     uint8_t text[PLATFORM_ROOM_TEXT_BYTES];
 } PlatformRoom;
 
+typedef uint8_t (*PlatformRoomStoreHook)(const PlatformRoom* room);
+typedef void (*PlatformRoomRestoreHook)(PlatformRoom* room);
+
 extern PlatformRoom platform_room;
 /* Current room ID and player ownership inside platform_room.objects. */
 extern uint8_t platform_current_room;
@@ -94,22 +103,41 @@ extern uint8_t platform_player_slot;
 extern PlatformObject* platform_player;
 extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 extern volatile uint8_t platform_frame_counter;
+extern PlatformStorage platform_storage;
+extern uint8_t platform_storage_device;
 
 /*
- * Initialize VIC state and load built-in room 00/object types. The current
- * player is room object slot 0, so platform_player points inside
- * platform_room.objects rather than holding a detached copy.
+ * Initialize VIC/banking state and select disk or EasyFlash from the cartridge
+ * boot marker. The current player is room object slot 0, so platform_player
+ * points inside platform_room.objects rather than holding a detached copy.
  */
 void platform_init(void);
+
+/* Select the backend used by subsequent room loads. */
+void platform_storage_init(PlatformStorage storage, uint8_t device);
+
+/* Optional in-session/save backend hooks around single-buffer room loads. */
+void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
+                               PlatformRoomRestoreHook restore_hook);
 
 /* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 
-/* Load a fixed-size room named by its two-digit uppercase hexadecimal ID. */
-uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id, uint8_t device);
+/* Load a fixed-size room from the configured disk or EasyFlash backend. */
+uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 
 /* Load all 256 fixed-size object types from a sequential file. */
 uint8_t platform_object_types_load(const char* filename, uint8_t device);
+
+/* Resolve a type record, staging IDs 64-127 from RAM beneath I/O. */
+const PlatformObjectType* platform_object_type_get(uint8_t type_id);
+
+/*
+ * Replace the single resident room while carrying one actor record. Persistent
+ * mutations of the room being left remain the storage/save layer's concern.
+ */
+uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
+                            uint8_t new_x, uint8_t new_y);
 
 /* Draw one 2x2 tile at tile coordinates, clipped to the 20x11 map. */
 void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y);

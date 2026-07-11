@@ -15,9 +15,10 @@ _tile_properties:
     .incbin "assets/tiles.ctil", 2056, 256
 
 ; Startup data is kept in low read-only memory, then copied into the mutable
-; platform room/type tables. Types 36-255 are currently empty in objects.cobj.
+; platform room and the empty/player type records needed by a standalone PRG.
+; Disk and EasyFlash builds load the complete object table at runtime.
 .segment "RODATA"
 _initial_room_data:
     .incbin "assets/00", 0, 1248
 _initial_object_type_data:
-    .incbin "assets/objects.cobj", 0, 2304
+    .incbin "assets/objects.cobj", 0, 128

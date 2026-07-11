@@ -1,7 +1,7 @@
 # EasyFlash Cartridge Generation
 
 This document records the design decisions and practical lessons behind this
-repository's EasyFlash build. It describes the current two-bank cartridge,
+repository's EasyFlash build. It describes the executable and runtime assets,
 the relevant C64 and EasyFlash behavior, and the constraints to consider when
 expanding the game to use more banks or writable flash.
 
@@ -30,7 +30,8 @@ Outputs:
 | File | Purpose |
 |---|---|
 | `build/game.prg` | Normal disk/loadable game, built first |
-| `build/game-ef.bin` | Raw 32 KiB contents of EasyFlash banks 0 and 1 |
+| `build/game-ef-base.bin` | Raw executable banks 0 and 1 |
+| `build/game-ef.bin` | Packed executable and runtime asset banks |
 | `build/game-ef.map` | Cartridge bootstrap linker map |
 | `build/game.crt` | EasyFlash CRT image for emulators or EasyProg |
 
@@ -191,13 +192,13 @@ during normal gameplay.
 | `$8000-$8008` | `CART_HEADER` | Vectors and `CBM80` signature |
 | `$8009-$807D` | `BOOT` | RAM initialization and copy loader |
 | `$807E-$80FF` | fill | `$FF` padding |
-| bank 0 `$8100-$B0FF` | `PAYLOAD0` | first `$3000` PRG payload bytes |
-| bank 0 `$B100-$BFF9` | fill | `$FF` padding |
+| bank 0 `$8200-$B1FF` | `PAYLOAD0` | first `$3000` PRG payload bytes |
+| remaining bank 0 space | fill | `$FF` padding |
 | `$BFFA-$BFFF` | `VECTORS` | Ultimax NMI, RESET, and IRQ vectors |
 | bank 1 `$8000+` | `PAYLOAD1` | remaining PRG payload bytes |
 | remainder of bank 1 | fill | `$FF` padding |
 
-The first payload starts at `$8100` to leave room for the bootstrap. The
+The first payload starts at `$8200` to leave room for the bootstrap. The
 assembler asserts a full `$3000`-byte first chunk, a nonempty second chunk,
 and that the remainder fits in bank 1.
 
@@ -216,11 +217,12 @@ The cartridge is built in three stages:
 
 ```text
 C/assembly/assets -> game.prg
-game.prg + ef_boot.s + easyflash.cfg -> game-ef.bin
+game.prg + ef_boot.s + easyflash.cfg -> game-ef-base.bin
+game-ef-base.bin + room/type packer -> game-ef.bin
 game-ef.bin + cartconv -> game.crt
 ```
 
-The raw linker output is ordered exactly as one EasyFlash bank expects:
+The base linker output is ordered exactly as one EasyFlash bank expects:
 
 ```text
 8 KiB bank 0 ROML, bank 0 ROMH, bank 1 ROML, then bank 1 ROMH
@@ -228,7 +230,7 @@ The raw linker output is ordered exactly as one EasyFlash bank expects:
 
 VICE 3.9 `cartconv` rejects a 32 KiB EasyFlash input by default because a
 fully padded raw EasyFlash image would be 1 MiB. The build uses `-p` to accept
-the non-padded two-bank binary:
+the non-padded 47-bank prefix; `cartconv` omits erased CHIP packets:
 
 ```bash
 cartconv -p -t easy -i build/game-ef.bin -o build/game.crt -n GAME
@@ -303,13 +305,11 @@ EasyFlash guide as `00:1:1800`. In this linker's physical ROMH address space it
 is `$B800-$BBFF`. A valid image begins there with lowercase `eapi` bytes and
 contains the actual flash driver. This project's range remains erased `$FF`.
 
-## Runtime room loading (planned)
+## Runtime room loading
 
-The current CRT is only a fast loader. It copies the same PRG used by the disk
-build to RAM, disables EasyFlash, and enters the game. Consequently,
-`platform_room_load()` currently always calls the KERNAL disk API. Room `00`
-appears to work without a disk only because it is compiled into the PRG as the
-startup room. There is no runtime EasyFlash room backend yet.
+The CRT first copies the common PRG to RAM and disables EasyFlash. During
+gameplay the storage backend temporarily selects 8 KiB mode to copy rooms and
+object types from runtime ROML asset banks.
 
 This must change before rooms can be entered dynamically during cartridge
 gameplay. The intended platform contract is one logical room-loading operation
@@ -347,7 +347,7 @@ compact delta journal, or impose a bounded cache and define eviction. Reloading
 the original cartridge record without such a layer would resurrect removed
 objects and discard newly inserted ones.
 
-### Proposed asset packing
+### Asset packing
 
 Reserve EasyFlash banks 0 and 1 for the executable and begin runtime assets in
 bank 2. Prefer generated bank images and an index/manifest over dozens of
@@ -367,12 +367,11 @@ banks when asset data is deliberately placed in ROML pages. A fixed layout can
 derive `bank = first_room_bank + room_id / 6`; a generated directory is more
 flexible if compression or additional assets are introduced later.
 
-The 8 KiB choice is deliberate. The current BSS reaches above `$A000`.
-Selecting 16 KiB cartridge mode (`$07`) would make ROMH hide that RAM during a
-copy. In the current build map `platform_object_types` begins at `$64E4` and
-extends through `$A4E3`, with IRQ/platform state above it. These addresses are
-link results rather than permanent ABI, but they demonstrate the collision. A
-RAM-resident assembly copy primitive should:
+The 8 KiB choice is deliberate. Selecting 16 KiB mode (`$07`) would make ROMH
+hide `$A000-$BFFF`. Runtime reads temporarily select CPU mapping `$37` because
+8 KiB cartridge ROML requires `LORAM=HIRAM=1`, expose ROML only, then restore gameplay
+mapping `$35` when the cartridge is disabled. Code and room staging remain
+available throughout the copy. The copy path:
 
 1. disable IRQs and remember the previous interrupt state;
 2. write the asset bank to `$DE00`;
@@ -396,8 +395,8 @@ The 256 fixed 64-byte records occupy 16 KiB. Keeping them resident makes object
 drawing and collision predictable; fetching a type from EasyFlash for every
 object cell would be too expensive and would complicate IRQ safety.
 
-Putting the table at the physical top 16 KiB (`$C000-$FFFF`) is viable, but it
-turns CPU-port state into part of the platform ABI:
+The table occupies the physical top 16 KiB (`$C000-$FFFF`), making CPU-port
+state part of the platform ABI:
 
 - `$E000-$FFFF` is hidden by KERNAL ROM in the normal `$01` mapping;
 - `$D000-$DFFF` is hidden by I/O while VIC, SID, CIA, and EasyFlash registers
@@ -435,26 +434,16 @@ ROML to visible scratch RAM, then EasyFlash must be disabled before selecting
 all-RAM mode and copying the staged block to `$D000`. Disk reads should also
 stage that 4 KiB rather than point KERNAL I/O directly at `$D000`.
 
-An alternative contiguous layout is `$8000-$BFFF` after EasyFlash has been
-disabled, with BASIC mapped out but KERNAL and I/O retained. It avoids the
-per-type staging case but requires moving current BSS ownership and ensuring
-that runtime ROML does not hide a destination being filled. The final choice
-should be made with the complete RAM and loading-time budget in hand.
+The final six bytes of type 255's reserved area are runtime-owned RAM vectors
+at `$FFFA-$FFFF`; type-table loaders restore them after writing the table.
 
 ### IRQ and KERNAL independence
 
-The current raster IRQ is entered through the KERNAL IRQ prologue and exits at
-`$EA81`. The prologue has already saved A, X, and Y. Thus the routine is not
-independent of KERNAL ROM even though it owns the VIC interrupt and suppresses
-the normal jiffy-clock work.
-
-If KERNAL is normally banked out to expose RAM, replace this arrangement with a
-hardware-vector IRQ entered through the RAM vector at `$FFFE/$FFFF`. That handler
-must save and restore every register it changes, acknowledge the VIC source,
-and return with `RTI`; it cannot jump to `$EA81`. Installation and any temporary
-KERNAL calls must follow explicit `$00/$01` wrappers. The IRQ code, stack,
-vectors, frame counter, and charset data it touches must all remain visible
-under every mapping in which interrupts are enabled.
+Gameplay enters the raster handler directly through the RAM vector at
+`$FFFE/$FFFF`. It saves A/X/Y, acknowledges the VIC source, and returns with
+`RTI`. A second `$0314` entry uses the KERNAL restore path while disk code has
+temporarily selected `$37`. IRQ code, stack, frame counter, and charset data
+remain visible in both mappings.
 
 Short keyboard calls can use `SEI`, map KERNAL in, call the routine, restore the
 gameplay mapping, and `CLI`. Disk loading can be long enough that it needs a
@@ -472,21 +461,20 @@ For larger projects, generate each physical bank in deterministic order:
 bank 0 ROML, bank 0 ROMH, bank 1 ROML, bank 1 ROMH, and so on. Then combine the
 program and asset banks before `cartconv` creates the CRT.
 
-## Native drawing roadmap
+## Native drawing
 
-Full room rendering is another suitable assembly boundary. The current C map
-path performs 220 tile iterations and 880 individual cell writes. A native
-blitter can stream room tile IDs, index the eight-byte definitions at `$3000`,
+Full room rendering uses an assembly blitter instead of 880 individual C cell
+writes. It streams room tile IDs, indexes eight-byte definitions at `$3000`,
 and write the four characters and colors directly to `$0400` and `$D800` while
 maintaining pointers to two adjacent screen rows.
 
-Object policy should remain in C: slot order, player-last ordering, actor
-ownership, room limits, and transitions. A native single-object renderer can
+Object policy remains in C: slot order, player-last ordering, actor
+ownership, room limits, and transitions. A native single-object renderer
 handle the repetitive work: multiply the type ID by 64, unpack dimensions and
 hotspot nibbles, clip signed coordinates, skip transparent character zero, and
 write at most 16 character/color pairs.
 
-The public C functions should remain stable and call internal assembly fast
+The public C functions remain stable and call internal assembly fast
 paths. cc65 assembly implementations must follow its calling convention: C
 symbols have leading underscores, a single pointer normally arrives in A/X,
 and routines with stacked arguments must perform the required callee cleanup.
@@ -536,7 +524,7 @@ No flash-save code is included in this repository yet.
 | The `CBM` signature belongs near `$BFFA` | KERNAL autostart requires five-byte `CBM80` at `$8004-$8008`. |
 | Code can switch its own ROM bank freely | Switching removes the executing bytes unless equivalent code exists in the new bank; use RAM code. |
 | `#pragma code-name` places a writable save array | Code, read-only data, initialized data, and BSS are different linker concerns; flash is not writable RAM. |
-| A 16/32 KiB binary always works with `cartconv -t easy` | VICE 3.9 requires `-p` for this non-padded 32 KiB input. |
+| A partial binary always works with `cartconv -t easy` | VICE 3.9 requires `-p` for this non-padded image. |
 | Three flash stores are enough for saving | Real saves require RAM-resident programming, erase management, polling, failure handling, and wear-aware data layout. |
 
 ### `$DE02` value table
@@ -557,12 +545,10 @@ space. This was the cause of the first black-screen cartridge build.
 
 ## Current limitations
 
-- Only EasyFlash banks 0 and 1 are populated.
+- Runtime room banks are fixed at 2-44; type pages are banks 45-46.
 - The complete PRG payload must fit in `$3000` bytes of bank 0 plus one full
   16 KiB bank 1.
 - PRG load and entry addresses are hard-coded in the bootstrap.
-- The cartridge is disabled during gameplay; there is no runtime asset-bank
-  API beyond the bootstrap copy.
+- EasyFlash remains off except during bounded runtime asset copies.
 - There is no flash-save implementation.
-- CRT structure has been validated, but this environment could not execute a
-  VICE cold-boot test because of its host video crash.
+- CRT structure and bounded VICE cold boots are part of verification.

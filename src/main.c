@@ -6,6 +6,9 @@ int main(void) {
     uint8_t key;
 
     platform_init();
+    if (platform_storage == PLATFORM_STORAGE_DISK) {
+        (void)platform_object_types_load("OBJECTS.COBJ", platform_storage_device);
+    }
     platform_room_draw(&platform_room, platform_player);
     platform_overlay_show(&platform_room, 8, 16,
                           0x01, 0x16, 0x36, 1);

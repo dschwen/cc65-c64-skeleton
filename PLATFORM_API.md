@@ -35,9 +35,11 @@ room-transition logic even when a graphic extends in several directions.
 | `$2000-$27FF` | tile charset |
 | `$2800-$2FFF` | text charset |
 | `$3000-$38FF` | tiles and tile properties |
+| `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots |
 | `$3C00-$5FFF` | platform code and read-only tables |
-| `$6000+` | BSS: room, object types, work buffers |
+| `$6000-$7FFF` | room/work BSS and cc65 software stack |
+| `$C000-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
 
@@ -107,17 +109,22 @@ bytes including the flags byte.
 
 ```c
 void platform_init(void);
+void platform_storage_init(PlatformStorage storage, uint8_t device);
+void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
+                               PlatformRoomRestoreHook restore_hook);
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
-uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id,
-                           uint8_t device);
+uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_object_types_load(const char* filename, uint8_t device);
+const PlatformObjectType* platform_object_type_get(uint8_t type_id);
+uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
+                            uint8_t new_x, uint8_t new_y);
 ```
 
 Call `platform_init()` once before other platform APIs. It selects VIC bank 0,
-sets border/background black, selects the tile charset, clears overlay sprite
-RAM, installs the raster IRQ, and initializes the platform from embedded
-startup assets. Room `00` is copied into `platform_room`, object types `0-35`
-are copied from `objects.cobj` (the remaining records start empty), and these
+sets border/background black, selects the tile charset, installs the raster IRQ,
+and initializes the platform. Room `00` and types 0-1 provide the standalone
+PRG fallback; a cartridge loads the complete room/type data from EasyFlash.
+These
 globals are established:
 
 ```c
@@ -129,11 +136,10 @@ platform_player = &platform_room.objects[0];
 Thus the player is the actual slot-0 object from room `00`, not a detached
 copy. The current asset defines it as actor type 1, "The Hero".
 
-`platform_room_load()` currently opens the two-digit room filename as a
-sequential file, reads exactly 1,248 bytes, then validates dimensions, ID, and
-version. It is a disk-only implementation today; the EasyFlash bootstrap copies
-the PRG to RAM and disables the cartridge before this function can be called.
-The embedded room `00` is startup data, not evidence of runtime cartridge I/O.
+`platform_room_load()` dispatches through `platform_storage`. The disk backend
+opens the two-digit filename; the EasyFlash backend selects the fixed ROML bank
+and offset. Both read into staging RAM, validate the 1,248-byte record, and only
+then commit it to the caller's room.
 Loading into the global `platform_room` also updates `platform_current_room`
 and rebinds `platform_player` to `platform_player_slot`.
 `platform_object_types_load()` reads all 16 KiB of the type list. Both return:
@@ -153,15 +159,15 @@ uint8_t result;
 platform_init();
 result = platform_object_types_load("OBJECTS.COBJ", 8);
 if (result == PLATFORM_OK) {
-    result = platform_room_load(&platform_room, 0x2a, 8);
+    result = platform_room_load(&platform_room, 0x2a);
 }
 ```
 
 ### Dynamic-room storage contract
 
-The platform is intended to load rooms throughout gameplay, not preload all 256
-rooms. The planned storage-neutral API will dispatch the same logical load to a
-disk or EasyFlash backend. EasyFlash rooms will be immutable base records copied
+The platform loads rooms throughout gameplay rather than preloading all 256
+rooms. The storage-neutral API dispatches the same logical load to a disk or
+EasyFlash backend. EasyFlash rooms are immutable base records copied
 from banked ROM into the single resident `platform_room`; disk rooms retain the
 same `00`-`FF` names and binary format.
 
@@ -181,13 +187,13 @@ its original object list. The current `platform_room_object_transfer()` expects
 both rooms in RAM and does not itself solve persistence or the single-buffer
 transition case.
 
-The planned EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
+The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
 
 For disk gameplay, the room files must be present on the generated D64. The
-default `make d64` rule adds files found in `res/`; either place `00`-`FF` and
-`objects.cobj` there or override `DISK_EXTRA_FILES`. Embedding startup room `00`
-in the PRG does not make the remaining room files available to KERNAL I/O.
+default `make d64` rule adds `res/*`, hexadecimal room files from `assets/`, and
+`assets/objects.cobj`. Embedding startup room `00` in the PRG does not make the
+remaining rooms available to KERNAL I/O.
 
 ## Map and room drawing
 
@@ -213,9 +219,9 @@ Character code 0 in an object type is transparent: neither screen RAM nor
 Color RAM is changed for that object cell. Objects are clipped to the 40x22
 map area.
 
-The planned native renderer preserves these public functions. Assembly is a
-fast implementation detail: the map blitter will stream the 220 tile IDs and
-write screen/Color RAM directly; the object blitter will draw one clipped,
+The native renderer preserves these public functions. Assembly is an
+implementation detail: the map blitter streams the 220 tile IDs and writes
+screen/Color RAM directly; the object blitter draws one clipped,
 transparent object at a time. Room ordering and transition policy remain in C.
 When the sprite overlay is visible, implementations must preserve its saved
 colors; an initial native fast path may require a hidden overlay and use the C
@@ -491,13 +497,10 @@ The complete raster interrupt implementation is assembly in `src/irq.s`. It
 switches from tile charset bank 0 to text charset bank 1 immediately below the
 map, restores bank 0 at raster line 0, and acknowledges the VIC interrupt.
 
-The current handler is reached after the KERNAL IRQ prologue has saved A/X/Y
-and exits through the KERNAL restore routine at `$EA81`. It therefore requires
-KERNAL ROM to be mapped in at interrupt time. If a future memory layout places
-resident data under KERNAL ROM and normally banks KERNAL out, the handler must
-become a standalone hardware-vector IRQ: save/restore its own registers,
-acknowledge the VIC, and end in `RTI`. KERNAL keyboard or disk calls would then
-need short, IRQ-safe `$01` mapping wrappers.
+The gameplay handler is entered directly through RAM `$FFFE/$FFFF`, saves and
+restores A/X/Y, and ends in `RTI`. A second `$0314` entry supports KERNAL-mapped
+disk intervals. Keyboard polling uses a short `$37` wrapper and restores the
+normal `$35` gameplay mapping before returning.
 
 A contiguous `$C000-$FFFF` object table is possible through `$01` banking, but
 records in its `$D000-$DFFF` quarter must be staged through visible scratch RAM

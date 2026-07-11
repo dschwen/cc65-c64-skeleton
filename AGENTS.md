@@ -18,11 +18,13 @@ Build outputs are in `build/`:
 - `game.d64` (when using `make d64`)
 
 ## Disk image extras
-`make d64` always writes the main program (`build/game.prg`) and can also write extra files from `res/`.
+`make d64` writes the main program, room/type assets, and optional files from
+`res/`.
 
 Configurable variables:
 - `RES_DIR` (default: `res`)
-- `DISK_EXTRA_FILES` (default: all files in `$(RES_DIR)/*`)
+- `DISK_EXTRA_FILES` (default: `$(RES_DIR)/*`, hexadecimal room assets, and
+  `assets/objects.cobj`)
 - `DISK_NAME` (default disk label: `GAME`)
 - `PRG_NAME` (default program filename on disk: `GAME`)
 

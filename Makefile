@@ -15,7 +15,8 @@ DISK_NAME ?= GAME
 PRG_NAME  ?= GAME
 CART_NAME ?= GAME
 RES_DIR ?= res
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*)
+ROOM_ASSETS := $(wildcard assets/[0-9A-F][0-9A-F])
+DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(ROOM_ASSETS) assets/objects.cobj
 DISK_EXTRA_DEPS := $(wildcard $(DISK_EXTRA_FILES))
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
@@ -34,6 +35,7 @@ OUT_MAP := $(OUTDIR)/game.map
 OUT_LBL := $(OUTDIR)/game.lbl
 OUT_D64 := $(OUTDIR)/game.d64
 OUT_EF_BIN := $(OUTDIR)/game-ef.bin
+OUT_EF_BASE := $(OUTDIR)/game-ef-base.bin
 OUT_CRT := $(OUTDIR)/game.crt
 EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
 EF_CFG := cfg/easyflash.cfg
@@ -59,8 +61,12 @@ $(OUT_PRG): $(OBJECTS)
 $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
-$(OUT_EF_BIN): $(EF_BOOT_OBJ) $(EF_CFG)
+$(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
+
+$(OUT_EF_BIN): $(OUT_EF_BASE) tools/pack_easyflash.py $(ROOM_ASSETS) assets/objects.cobj
+	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets assets \
+		--objects assets/objects.cobj --output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"

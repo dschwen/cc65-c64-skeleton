@@ -46,6 +46,7 @@ void __fastcall__ platform_map_draw_native(const PlatformRoom* room);
 void platform_object_draw_native(void);
 void platform_lighting_apply_native(void);
 void platform_lightning_native(void);
+void platform_light_source_apply_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
 
@@ -65,6 +66,14 @@ uint8_t native_object_columns;
 uint8_t native_object_rows;
 uint8_t native_object_row_skip;
 uint16_t native_object_screen_offset;
+uint8_t native_light_source_x;
+uint8_t native_light_source_y;
+uint8_t native_light_radius;
+uint8_t native_light_min_x;
+uint8_t native_light_min_y;
+uint8_t native_light_columns;
+uint8_t native_light_rows;
+uint16_t native_light_screen_offset;
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_global_light;
@@ -576,16 +585,6 @@ void platform_object_draw(const PlatformObject* object) {
     platform_lighting_apply();
 }
 
-static uint8_t light_distance(uint8_t delta_x, uint8_t delta_y) {
-    if (delta_x == PLATFORM_LIGHT_MAX_RADIUS ||
-        delta_y == PLATFORM_LIGHT_MAX_RADIUS) {
-        return ((delta_x == PLATFORM_LIGHT_MAX_RADIUS && delta_y == 0u) ||
-                (delta_y == PLATFORM_LIGHT_MAX_RADIUS && delta_x == 0u))
-                   ? PLATFORM_LIGHT_MAX_RADIUS : 255u;
-    }
-    return platform_light_distance[((uint16_t)delta_y << 4) | delta_x];
-}
-
 static void light_source_apply(const PlatformObject* object) {
     const PlatformObjectType* type;
     uint8_t radius;
@@ -593,13 +592,6 @@ static void light_source_apply(const PlatformObject* object) {
     uint8_t max_x;
     uint8_t min_y;
     uint8_t max_y;
-    uint8_t x;
-    uint8_t y;
-    uint8_t delta_x;
-    uint8_t delta_y;
-    uint8_t distance;
-    uint8_t level;
-    uint16_t offset;
 
     if (object == 0 || object->type == 0u ||
         object->x >= PLATFORM_MAP_CHAR_WIDTH ||
@@ -615,26 +607,16 @@ static void light_source_apply(const PlatformObject* object) {
     min_y = object->y > radius ? object->y - radius : 0u;
     max_y = (uint16_t)object->y + radius < PLATFORM_MAP_CHAR_HEIGHT
                 ? object->y + radius : PLATFORM_MAP_CHAR_HEIGHT - 1u;
-
-    for (y = min_y; y <= max_y; ++y) {
-        delta_y = y > object->y ? y - object->y : object->y - y;
-        offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + min_x;
-        for (x = min_x; x <= max_x; ++x, ++offset) {
-            delta_x = x > object->x ? x - object->x : object->x - x;
-            distance = light_distance(delta_x, delta_y);
-            if (distance > radius) continue;
-            if (radius >= 4u && distance <= radius - 4u) {
-                level = PLATFORM_LIGHT_FULL;
-            } else if (radius >= 2u && distance <= radius - 2u) {
-                level = PLATFORM_LIGHT_TWILIGHT;
-            } else {
-                level = PLATFORM_LIGHT_DIM;
-            }
-            if (level > platform_brightness[offset]) {
-                platform_brightness[offset] = level;
-            }
-        }
-    }
+    native_light_source_x = object->x;
+    native_light_source_y = object->y;
+    native_light_radius = radius;
+    native_light_min_x = min_x;
+    native_light_min_y = min_y;
+    native_light_columns = max_x - min_x + 1u;
+    native_light_rows = max_y - min_y + 1u;
+    native_light_screen_offset =
+        (uint16_t)min_y * PLATFORM_MAP_CHAR_WIDTH + min_x;
+    platform_light_source_apply_native();
 }
 
 void platform_lighting_rebuild(const PlatformRoom* room,

@@ -49,6 +49,13 @@ Distance uses one 16x16 first-quadrant lookup table, indexed as
 table positions geometrically beyond distance 16 use an outside sentinel. The
 source bounds are clipped to 40x22 before visiting cells.
 
+The hot propagation loop is implemented by
+`platform_light_source_apply_native` in `src/render.s`. C performs bank-aware
+type lookup and rectangle clipping once per source. Assembly then patches the
+brightness and distance-table row addresses once per scanline and max-combines
+each cell without multiplication or C calls. Its complete 880-byte result has
+been regression-checked against the original C implementation.
+
 If walls later block light, add an explicit opaque tile-property bit and replace
 the direct footprint pass with a bounded flood fill using a fixed 880-bit visited
 buffer. The existing solid-land bit is movement policy and must not implicitly

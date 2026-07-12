@@ -6,6 +6,7 @@
 .export _platform_object_draw_native
 .export _platform_lighting_apply_native
 .export _platform_lightning_native
+.export _platform_light_source_apply_native
 
 .import _native_object_type
 .import _native_object_source
@@ -16,7 +17,16 @@
 .import _platform_base_colors
 .import _platform_brightness
 .import _platform_light_colors
+.import _platform_light_distance
 .import _platform_frame_counter
+.import _native_light_source_x
+.import _native_light_source_y
+.import _native_light_radius
+.import _native_light_min_x
+.import _native_light_min_y
+.import _native_light_columns
+.import _native_light_rows
+.import _native_light_screen_offset
 
 .segment "LOWCODE"
 
@@ -293,6 +303,142 @@ _platform_object_draw_native:
     sbc #1
     sta @object_rows+1
     bne @object_row
+    rts
+
+; C resolves the banked object type and prepares one clipped source rectangle.
+; This loop patches the distance-table and brightness row addresses once per
+; scanline, then max-combines the source without C calls or multiplication.
+_platform_light_source_apply_native:
+    lda _native_light_screen_offset
+    clc
+    adc #<_platform_brightness
+    sta @brightness_read+1
+    sta @brightness_write+1
+    lda _native_light_screen_offset+1
+    adc #>_platform_brightness
+    sta @brightness_read+2
+    sta @brightness_write+2
+    lda _native_light_min_y
+    sta @world_y+1
+    lda _native_light_rows
+    sta @light_row_count+1
+
+@light_source_row:
+    lda _native_light_min_x
+    sta @world_x+1
+@world_y:
+    lda #0
+    cmp _native_light_source_y
+    bcs @delta_y_positive
+    lda _native_light_source_y
+    sec
+    sbc @world_y+1
+    jmp @delta_y_ready
+@delta_y_positive:
+    sec
+    sbc _native_light_source_y
+@delta_y_ready:
+    sta @delta_y+1
+    cmp #16
+    beq @distance_row_ready
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc #<_platform_light_distance
+    sta @distance_read+1
+    lda #>_platform_light_distance
+    adc #0
+    sta @distance_read+2
+@distance_row_ready:
+    ldy #0
+
+@light_source_cell:
+@world_x:
+    lda #0
+    cmp _native_light_source_x
+    bcs @delta_x_positive
+    lda _native_light_source_x
+    sec
+    sbc @world_x+1
+    jmp @delta_x_ready
+@delta_x_positive:
+    sec
+    sbc _native_light_source_x
+@delta_x_ready:
+    tax
+@delta_y:
+    lda #0
+    cmp #16
+    beq @delta_y_sixteen
+    cpx #16
+    beq @delta_x_sixteen
+@distance_read:
+    lda _platform_light_distance,x
+    jmp @distance_ready
+@delta_y_sixteen:
+    cpx #0
+    bne @light_source_next
+    lda #16
+    jmp @distance_ready
+@delta_x_sixteen:
+    cmp #0
+    bne @light_source_next
+    lda #16
+@distance_ready:
+    cmp _native_light_radius
+    bcc @inside_light
+    bne @light_source_next
+@inside_light:
+    sta @distance+1
+    lda _native_light_radius
+    sec
+@distance:
+    sbc #0
+    cmp #4
+    bcc @not_full_light
+    lda #3
+    bne @max_light
+@not_full_light:
+    cmp #2
+    bcc @dim_light
+    lda #2
+    bne @max_light
+@dim_light:
+    lda #1
+@max_light:
+@brightness_read:
+    cmp _platform_brightness,y
+    bcc @light_source_next
+    beq @light_source_next
+@brightness_write:
+    sta _platform_brightness,y
+
+@light_source_next:
+    inc @world_x+1
+    iny
+    cpy _native_light_columns
+    bne @light_source_cell
+
+    clc
+    lda @brightness_read+1
+    adc #MAP_WIDTH_CHARS
+    sta @brightness_read+1
+    sta @brightness_write+1
+    lda @brightness_read+2
+    adc #0
+    sta @brightness_read+2
+    sta @brightness_write+2
+    inc @world_y+1
+@light_row_count:
+    lda #1
+    sec
+    sbc #1
+    sta @light_row_count+1
+    beq @light_source_done
+    jmp @light_source_row
+@light_source_done:
     rts
 
 ; Translate the 40x22 base-color and brightness buffers into Color RAM. Three

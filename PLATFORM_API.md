@@ -268,6 +268,12 @@ quadrant lookup indexed by `(abs_y << 4) | abs_x` for deltas 0-15. The four
 radius-16 axis endpoints are handled explicitly; positions outside the radius
 are excluded. Tile occlusion is not applied yet.
 
+Emitter propagation is native assembly. C resolves the potentially banked
+object-type record, clamps the radius, and prepares a clipped rectangle. The
+assembly loop patches its brightness destination and distance-table row once
+per scanline, derives each band from `radius - distance`, and performs a strict
+max write. There is no C call or multiplication in the per-cell path.
+
 `platform_lightning()` is bound to `F` in the sample game. Its assembly routine
 sets the VIC border and background to white, clears only the 40x22 map portion
 of Color RAM to black, waits for two raster-frame counter changes, restores the

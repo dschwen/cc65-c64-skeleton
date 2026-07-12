@@ -70,6 +70,11 @@ class AssetEditorHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(APP_DIR), **kwargs)
 
+    def end_headers(self) -> None:
+        # The editor is a development tool; stale UI assets are never useful.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def _send_json(self, status: HTTPStatus, payload: object) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         self.send_response(status)

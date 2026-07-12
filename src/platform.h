@@ -28,6 +28,7 @@
 #define PLATFORM_LIGHT_TWILIGHT       2u
 #define PLATFORM_LIGHT_FULL           3u
 #define PLATFORM_LIGHT_LEVEL_COUNT    4u
+#define PLATFORM_LIGHT_MAX_RADIUS     16u
 
 #define PLATFORM_KEY_CURSOR_DOWN      17u
 #define PLATFORM_KEY_CURSOR_RIGHT     29u
@@ -120,6 +121,7 @@ extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_
 extern uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 extern uint8_t platform_global_light;
 extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
+extern const uint8_t platform_light_distance[16u * 16u];
 
 #define PLATFORM_OBJECT_LIGHT(type) ((type)->reserved[1])
 
@@ -174,10 +176,12 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player);
 
 /*
  * Translate platform_base_colors through platform_brightness into Color RAM.
- * set_global fills the complete 40x22 brightness buffer before applying it.
+ * rebuild fills ambient light, max-combines room emitters, and applies it.
  */
 void platform_lighting_apply(void);
 void platform_lighting_set_global(uint8_t level);
+void platform_lighting_rebuild(const PlatformRoom* room,
+                               const PlatformObject* player);
 
 /* Flash white, blank map colors, then restore the current lighting in assembly. */
 void platform_lightning(void);

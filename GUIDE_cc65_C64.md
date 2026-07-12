@@ -320,6 +320,12 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
+The current linker layout extends resident platform code through `$64FF` and
+starts BSS at `$6500`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the cc65
+software stack top is unchanged. This trades unused BSS capacity for the
+resident lighting solver and its first-quadrant distance table; check
+`__BSS_SIZE__` in `build/game.map` when adding further fixed buffers.
+
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, and sprite dialogs.
 

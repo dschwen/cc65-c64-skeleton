@@ -55,7 +55,7 @@ $(OUTDIR)/%.o: src/%.s | $(OUTDIR)
 
 $(OUTDIR)/assets.o: $(ASSETS)
 
-$(OUT_PRG): $(OBJECTS) tools/validate_prg_layout.py
+$(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
 	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
 	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
 

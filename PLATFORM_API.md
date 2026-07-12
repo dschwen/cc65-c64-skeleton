@@ -234,9 +234,12 @@ extern uint8_t platform_base_colors[40 * 22];
 extern uint8_t platform_brightness[40 * 22];
 extern uint8_t platform_global_light;
 extern const uint8_t platform_light_colors[4 * 16];
+extern const uint8_t platform_light_distance[16 * 16];
 
 void platform_lighting_apply(void);
 void platform_lighting_set_global(uint8_t level);
+void platform_lighting_rebuild(const PlatformRoom* room,
+                               const PlatformObject* player);
 void platform_lightning(void);
 ```
 
@@ -247,10 +250,23 @@ coordinate system. Levels are `PLATFORM_LIGHT_NONE` (0),
 in `platform_base_colors`; `platform_lighting_apply()` changes only the 880 map
 entries in Color RAM. The two status rows are deliberately unaffected.
 
-`platform_lighting_set_global()` clamps invalid input to full light, fills the
-brightness buffer, and applies it immediately. The sample game binds `-` and
-`+` to decreasing and increasing this level. Direct brightness-buffer edits
-must be followed by `platform_lighting_apply()`.
+`platform_lighting_rebuild()` fills the buffer with the global ambient level,
+then max-combines every room-object and player light source before applying the
+result. `platform_lighting_set_global()` clamps invalid input to full light and
+performs that rebuild immediately. The sample game binds `-` and `+` to
+decreasing and increasing ambient light. Direct brightness-buffer edits must be
+followed by `platform_lighting_apply()`.
+
+Object-type byte 49 is a radius in character cells, clamped to 16 at runtime.
+For radius `R`, distances `0..R-4` are full light, the next two distances are
+twilight, and the outer two are dim. Thus radius 10 gives full light through
+distance 6, twilight through 8, and dim through 10. Sources use max composition,
+so overlapping lights never reduce or add numerically to an existing level.
+
+Distance is ceiling Euclidean distance. `platform_light_distance` is the first
+quadrant lookup indexed by `(abs_y << 4) | abs_x` for deltas 0-15. The four
+radius-16 axis endpoints are handled explicitly; positions outside the radius
+are excluded. Tile occlusion is not applied yet.
 
 `platform_lightning()` is bound to `F` in the sample game. Its assembly routine
 sets the VIC border and background to white, clears only the 40x22 map portion

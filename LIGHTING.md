@@ -30,26 +30,27 @@ enough to remain perceptible become blue; everything else is black.
 
 ## Object emitters
 
-Object-type record byte 49 is the emitted-light amount. Zero disables emission.
-The byte is kept wider than the four display levels so it can serve as a useful
-falloff/range budget rather than only duplicating a two-bit brightness value.
-Emission originates at the object's hotspot, which is already expressed in
-character-cell/half-tile coordinates.
+Object-type record byte 49 is the emitted-light radius. Zero disables emission,
+and values above 16 clamp to 16. Emission originates at the object's hotspot,
+which is already expressed in character-cell/half-tile coordinates.
 
-The planned room-light rebuild is:
+The implemented room-light rebuild is:
 
 1. Fill the brightness buffer with the room ambient/global level.
 2. Visit populated room objects and the player in the same type-aware manner as
    drawing. Skip types whose emitted-light byte is zero.
-3. Propagate from each hotspot using its emitted-light value as a range budget.
-   Convert remaining range into brightness 3, 2, or 1 using fixed thresholds.
+3. Propagate from each hotspot using ceiling Euclidean distance. For radius `R`,
+   `0..R-4` is full, the next two cells are twilight, and the outer two are dim.
 4. Combine overlapping lights with `max`; light never makes a cell darker.
 5. Apply the color lookup once after all sources have contributed.
 
-The first propagation implementation should use a precomputed falloff footprint
-for each supported radius, clipped to 40x22. This avoids a queue and dynamic
-allocation. If walls later block light, add an explicit opaque tile-property bit
-and replace footprints with a bounded flood fill using a fixed 880-bit visited
+Distance uses one 16x16 first-quadrant lookup table, indexed as
+`(abs_y << 4) | abs_x`. Radius-16 axis endpoints are handled separately, while
+table positions geometrically beyond distance 16 use an outside sentinel. The
+source bounds are clipped to 40x22 before visiting cells.
+
+If walls later block light, add an explicit opaque tile-property bit and replace
+the direct footprint pass with a bounded flood fill using a fixed 880-bit visited
 buffer. The existing solid-land bit is movement policy and must not implicitly
 mean opaque.
 

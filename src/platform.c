@@ -80,6 +80,25 @@ const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u] = {
     /* full light */
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 };
+/* Ceiling Euclidean distance for abs(y),abs(x) in the first 16x16 quadrant. */
+const uint8_t platform_light_distance[16u * 16u] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    4, 5, 5, 5, 6, 7, 8, 9, 9, 10, 11, 12, 13, 14, 15, 16,
+    5, 6, 6, 6, 7, 8, 8, 9, 10, 11, 12, 13, 13, 14, 15, 16,
+    6, 7, 7, 7, 8, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 255,
+    7, 8, 8, 8, 9, 9, 10, 10, 11, 12, 13, 14, 14, 15, 16, 255,
+    8, 9, 9, 9, 9, 10, 10, 11, 12, 13, 13, 14, 15, 16, 255, 255,
+    9, 10, 10, 10, 10, 11, 11, 12, 13, 13, 14, 15, 15, 16, 255, 255,
+    10, 11, 11, 11, 11, 12, 12, 13, 13, 14, 15, 15, 16, 255, 255, 255,
+    11, 12, 12, 12, 12, 13, 13, 14, 14, 15, 15, 16, 255, 255, 255, 255,
+    12, 13, 13, 13, 13, 13, 14, 14, 15, 15, 16, 255, 255, 255, 255, 255,
+    13, 14, 14, 14, 14, 14, 15, 15, 16, 16, 255, 255, 255, 255, 255, 255,
+    14, 15, 15, 15, 15, 15, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255,
+    15, 16, 16, 16, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
+};
 const uint8_t platform_overlay_gray[16] = {
     0, 12, 11, 12, 11, 11, 0, 12,
     11, 11, 11, 0, 11, 12, 11, 11
@@ -91,6 +110,7 @@ static uint8_t dirty_x[DIRTY_CELL_LIMIT];
 static uint8_t dirty_y[DIRTY_CELL_LIMIT];
 static uint8_t dirty_count;
 static const PlatformRoom* rendered_room;
+static const PlatformObject* rendered_player;
 static uint16_t rendered_object_limit;
 static uint8_t overlay_saved_colors[72];
 static uint8_t overlay_visible;
@@ -363,7 +383,10 @@ void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
 #pragma code-name (push, "MIDCODE")
 void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
     if (room == 0) return;
-    if (room == rendered_room) rendered_room = 0;
+    if (room == rendered_room) {
+        rendered_room = 0;
+        rendered_player = 0;
+    }
     memset(room, 0, sizeof(*room));
     room->width = PLATFORM_MAP_WIDTH;
     room->height = PLATFORM_MAP_HEIGHT;
@@ -417,7 +440,10 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
     if (status != PLATFORM_OK) return status;
     status = room_validate(&room_stage, room_id);
     if (status != PLATFORM_OK) return status;
-    if (room == rendered_room) rendered_room = 0;
+    if (room == rendered_room) {
+        rendered_room = 0;
+        rendered_player = 0;
+    }
     memcpy(room, &room_stage, sizeof(*room));
     if (room == &platform_room) {
         platform_current_room = room_id;
@@ -506,7 +532,7 @@ void platform_map_draw(const PlatformRoom* room) {
     if (room == 0) return;
     if (overlay_visible) platform_overlay_hide();
     platform_map_draw_native(room);
-    platform_lighting_apply();
+    platform_lighting_rebuild(room, room == rendered_room ? rendered_player : 0);
 }
 
 static void object_draw_base(const PlatformObject* object) {
@@ -550,10 +576,91 @@ void platform_object_draw(const PlatformObject* object) {
     platform_lighting_apply();
 }
 
+static uint8_t light_distance(uint8_t delta_x, uint8_t delta_y) {
+    if (delta_x == PLATFORM_LIGHT_MAX_RADIUS ||
+        delta_y == PLATFORM_LIGHT_MAX_RADIUS) {
+        return ((delta_x == PLATFORM_LIGHT_MAX_RADIUS && delta_y == 0u) ||
+                (delta_y == PLATFORM_LIGHT_MAX_RADIUS && delta_x == 0u))
+                   ? PLATFORM_LIGHT_MAX_RADIUS : 255u;
+    }
+    return platform_light_distance[((uint16_t)delta_y << 4) | delta_x];
+}
+
+static void light_source_apply(const PlatformObject* object) {
+    const PlatformObjectType* type;
+    uint8_t radius;
+    uint8_t min_x;
+    uint8_t max_x;
+    uint8_t min_y;
+    uint8_t max_y;
+    uint8_t x;
+    uint8_t y;
+    uint8_t delta_x;
+    uint8_t delta_y;
+    uint8_t distance;
+    uint8_t level;
+    uint16_t offset;
+
+    if (object == 0 || object->type == 0u ||
+        object->x >= PLATFORM_MAP_CHAR_WIDTH ||
+        object->y >= PLATFORM_MAP_CHAR_HEIGHT) return;
+    type = platform_object_type_get(object->type);
+    radius = PLATFORM_OBJECT_LIGHT(type);
+    if (radius == 0u) return;
+    if (radius > PLATFORM_LIGHT_MAX_RADIUS) radius = PLATFORM_LIGHT_MAX_RADIUS;
+
+    min_x = object->x > radius ? object->x - radius : 0u;
+    max_x = (uint16_t)object->x + radius < PLATFORM_MAP_CHAR_WIDTH
+                ? object->x + radius : PLATFORM_MAP_CHAR_WIDTH - 1u;
+    min_y = object->y > radius ? object->y - radius : 0u;
+    max_y = (uint16_t)object->y + radius < PLATFORM_MAP_CHAR_HEIGHT
+                ? object->y + radius : PLATFORM_MAP_CHAR_HEIGHT - 1u;
+
+    for (y = min_y; y <= max_y; ++y) {
+        delta_y = y > object->y ? y - object->y : object->y - y;
+        offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + min_x;
+        for (x = min_x; x <= max_x; ++x, ++offset) {
+            delta_x = x > object->x ? x - object->x : object->x - x;
+            distance = light_distance(delta_x, delta_y);
+            if (distance > radius) continue;
+            if (radius >= 4u && distance <= radius - 4u) {
+                level = PLATFORM_LIGHT_FULL;
+            } else if (radius >= 2u && distance <= radius - 2u) {
+                level = PLATFORM_LIGHT_TWILIGHT;
+            } else {
+                level = PLATFORM_LIGHT_DIM;
+            }
+            if (level > platform_brightness[offset]) {
+                platform_brightness[offset] = level;
+            }
+        }
+    }
+}
+
+void platform_lighting_rebuild(const PlatformRoom* room,
+                               const PlatformObject* player) {
+    uint16_t i;
+    uint16_t limit;
+
+    memset(platform_brightness, platform_global_light,
+           sizeof(platform_brightness));
+    if (room != 0) {
+        limit = room == rendered_room ? rendered_object_limit
+                                      : PLATFORM_ROOM_OBJECT_COUNT;
+        for (i = 0; i < limit; ++i) {
+            if (player == &room->objects[i]) continue;
+            light_source_apply(&room->objects[i]);
+        }
+        light_source_apply(player);
+    }
+    platform_lighting_apply();
+}
+
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
     uint16_t i;
     if (room == 0) return;
     rendered_room = room;
+    rendered_player = player;
     rendered_object_limit = PLATFORM_ROOM_OBJECT_COUNT;
     while (rendered_object_limit > 0u &&
            room->objects[rendered_object_limit - 1u].type == 0u) {
@@ -566,7 +673,7 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
         object_draw_base(&room->objects[i]);
     }
     object_draw_base(player);
-    platform_lighting_apply();
+    platform_lighting_rebuild(room, player);
 }
 
 static void overlay_refresh_lighting(void) {
@@ -592,8 +699,7 @@ void platform_lighting_apply(void) {
 void platform_lighting_set_global(uint8_t level) {
     if (level >= PLATFORM_LIGHT_LEVEL_COUNT) level = PLATFORM_LIGHT_FULL;
     platform_global_light = level;
-    memset(platform_brightness, level, sizeof(platform_brightness));
-    platform_lighting_apply();
+    platform_lighting_rebuild(rendered_room, rendered_player);
 }
 
 void platform_lightning(void) {
@@ -604,13 +710,19 @@ void platform_lightning(void) {
 void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player) {
+    uint8_t emits_light;
     if (room == 0 || object == 0 || object->type == 0u) return;
+    emits_light = PLATFORM_OBJECT_LIGHT(platform_object_type_get(object->type)) != 0u;
     dirty_clear();
     mark_object_cells(object);
     object->x = new_x;
     object->y = new_y;
     mark_object_cells(object);
     redraw_dirty(room, player);
+    if (emits_light && room == rendered_room) {
+        rendered_player = player;
+        platform_lighting_rebuild(room, player);
+    }
 }
 
 uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
@@ -740,9 +852,12 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player) {
     PlatformObject* object;
+    uint8_t emitted_light;
     if (room == 0) return PLATFORM_ERR_ARGUMENT;
     object = &room->objects[slot];
     if (object->type == 0u) return PLATFORM_ERR_ARGUMENT;
+    emitted_light = PLATFORM_OBJECT_LIGHT(
+        platform_object_type_get(object->type));
     dirty_clear();
     mark_object_cells(object);
     object->type = 0;
@@ -755,6 +870,10 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
         }
     }
     redraw_dirty(room, player);
+    if (emitted_light != 0u && room == rendered_room) {
+        rendered_player = player;
+        platform_lighting_rebuild(room, player);
+    }
     return PLATFORM_OK;
 }
 

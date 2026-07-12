@@ -223,9 +223,8 @@ The native renderer preserves these public functions. Assembly is an
 implementation detail: the map blitter streams the 220 tile IDs and writes
 screen/Color RAM directly; the object blitter draws one clipped,
 transparent object at a time. Room ordering and transition policy remain in C.
-When the sprite overlay is visible, implementations must preserve its saved
-colors; an initial native fast path may require a hidden overlay and use the C
-path otherwise.
+Full map/object draws hide an active sprite overlay before invoking the native
+blitters. Dirty-cell movement retains its overlay-aware saved-color handling.
 
 ## Object movement and lists
 

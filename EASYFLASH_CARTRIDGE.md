@@ -481,11 +481,10 @@ and routines with stacked arguments must perform the required callee cleanup.
 Keep shared structure offsets and fixed addresses in an assembly include, with
 C size assertions, so the C and assembly layouts cannot silently diverge.
 
-While the sprite dialog is visible, color writes also update the overlay's
-saved-color backing array. Initial native routines should therefore require a
-hidden overlay or fall back to the existing C writer. After full-room drawing
-is native, profile movement separately: dirty-cell recomposition, not the full
-map blitter, is the relevant path for moving actors.
+Full map/object draws hide the sprite dialog before invoking the native
+blitters. Dirty-cell movement remains overlay-aware because it updates the
+saved-color backing array. Movement should be profiled separately: dirty-cell
+recomposition, not the full map blitter, is the relevant path for actors.
 
 ## Flash saves are a separate feature
 

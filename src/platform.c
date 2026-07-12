@@ -20,8 +20,6 @@
 #define EF_ROOMS_PER_BANK  6u
 #define EF_TYPE_BANK_0     45u
 #define EF_TYPE_BANK_1     46u
-#define PLATFORM_NATIVE_MAP      0u
-#define PLATFORM_NATIVE_OBJECTS  0u
 
 #define OBJECT_WIDTH(t)  ((uint8_t)((t)->dimensions >> 4))
 #define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0f))
@@ -480,73 +478,45 @@ void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y) {
 }
 
 void platform_map_draw(const PlatformRoom* room) {
-    uint8_t x;
-    uint8_t y;
     if (room == 0) return;
-    if (PLATFORM_NATIVE_MAP && !overlay_visible) {
-        platform_map_draw_native(room);
-        return;
-    }
-    for (y = 0; y < PLATFORM_MAP_HEIGHT; ++y) {
-        for (x = 0; x < PLATFORM_MAP_WIDTH; ++x) {
-            platform_map_draw_tile(room->tiles[(uint16_t)y * PLATFORM_MAP_WIDTH + x], x, y);
-        }
-    }
+    if (overlay_visible) platform_overlay_hide();
+    platform_map_draw_native(room);
 }
 
 void platform_object_draw(const PlatformObject* object) {
     const PlatformObjectType* type;
     int16_t left;
     int16_t top;
-    uint8_t x;
-    uint8_t y;
-    uint8_t index;
     uint8_t source_x;
     uint8_t source_y;
     uint8_t end_x;
     uint8_t end_y;
-    int16_t world_x;
-    int16_t world_y;
 
     if (object == 0 || object->type == 0u) return;
     type = platform_object_type_get(object->type);
     if (!object_type_is_valid(type)) return;
+    if (overlay_visible) platform_overlay_hide();
     left = (int16_t)object->x - HOTSPOT_X(type);
     top = (int16_t)object->y - HOTSPOT_Y(type);
-    if (PLATFORM_NATIVE_OBJECTS && !overlay_visible) {
-        source_x = left < 0 ? (uint8_t)-left : 0u;
-        source_y = top < 0 ? (uint8_t)-top : 0u;
-        end_x = OBJECT_WIDTH(type);
-        end_y = OBJECT_HEIGHT(type);
-        if (left + end_x > PLATFORM_MAP_CHAR_WIDTH) {
-            end_x = (uint8_t)(PLATFORM_MAP_CHAR_WIDTH - left);
-        }
-        if (top + end_y > PLATFORM_MAP_CHAR_HEIGHT) {
-            end_y = (uint8_t)(PLATFORM_MAP_CHAR_HEIGHT - top);
-        }
-        if (source_x >= end_x || source_y >= end_y) return;
-        native_object_type = type;
-        native_object_source = (uint8_t)(source_y * OBJECT_WIDTH(type) + source_x);
-        native_object_columns = (uint8_t)(end_x - source_x);
-        native_object_rows = (uint8_t)(end_y - source_y);
-        native_object_row_skip = (uint8_t)(OBJECT_WIDTH(type) - native_object_columns);
-        native_object_screen_offset =
-            (uint16_t)(top + source_y) * PLATFORM_MAP_CHAR_WIDTH + left + source_x;
-        platform_object_draw_native();
-        return;
+    source_x = left < 0 ? (uint8_t)-left : 0u;
+    source_y = top < 0 ? (uint8_t)-top : 0u;
+    end_x = OBJECT_WIDTH(type);
+    end_y = OBJECT_HEIGHT(type);
+    if (left + end_x > PLATFORM_MAP_CHAR_WIDTH) {
+        end_x = (uint8_t)(PLATFORM_MAP_CHAR_WIDTH - left);
     }
-    index = 0;
-    for (y = 0; y < OBJECT_HEIGHT(type); ++y) {
-        for (x = 0; x < OBJECT_WIDTH(type); ++x, ++index) {
-            world_x = left + (int16_t)x;
-            world_y = top + (int16_t)y;
-            if (type->chars[index] != 0u && world_x >= 0 && world_y >= 0 &&
-                world_x < PLATFORM_MAP_CHAR_WIDTH && world_y < PLATFORM_MAP_CHAR_HEIGHT) {
-                write_screen_cell((uint8_t)world_x, (uint8_t)world_y,
-                                  type->chars[index], type->colors[index]);
-            }
-        }
+    if (top + end_y > PLATFORM_MAP_CHAR_HEIGHT) {
+        end_y = (uint8_t)(PLATFORM_MAP_CHAR_HEIGHT - top);
     }
+    if (source_x >= end_x || source_y >= end_y) return;
+    native_object_type = type;
+    native_object_source = (uint8_t)(source_y * OBJECT_WIDTH(type) + source_x);
+    native_object_columns = (uint8_t)(end_x - source_x);
+    native_object_rows = (uint8_t)(end_y - source_y);
+    native_object_row_skip = (uint8_t)(OBJECT_WIDTH(type) - native_object_columns);
+    native_object_screen_offset =
+        (uint16_t)(top + source_y) * PLATFORM_MAP_CHAR_WIDTH + left + source_x;
+    platform_object_draw_native();
 }
 
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {

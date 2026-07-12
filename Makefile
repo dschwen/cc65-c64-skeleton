@@ -55,8 +55,9 @@ $(OUTDIR)/%.o: src/%.s | $(OUTDIR)
 
 $(OUTDIR)/assets.o: $(ASSETS)
 
-$(OUT_PRG): $(OBJECTS)
+$(OUT_PRG): $(OBJECTS) tools/validate_prg_layout.py
 	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
+	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
 
 $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<

@@ -45,6 +45,9 @@ int main(void) {
                     platform_lighting_set_global(platform_global_light + 1u);
                 }
                 break;
+            case PLATFORM_KEY_LIGHTNING:
+                platform_lightning();
+                break;
         }
     }
 

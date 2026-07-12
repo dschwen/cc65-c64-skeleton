@@ -237,6 +237,7 @@ extern const uint8_t platform_light_colors[4 * 16];
 
 void platform_lighting_apply(void);
 void platform_lighting_set_global(uint8_t level);
+void platform_lightning(void);
 ```
 
 Brightness is per character cell, matching Color RAM and the half-tile object
@@ -250,6 +251,14 @@ entries in Color RAM. The two status rows are deliberately unaffected.
 brightness buffer, and applies it immediately. The sample game binds `-` and
 `+` to decreasing and increasing this level. Direct brightness-buffer edits
 must be followed by `platform_lighting_apply()`.
+
+`platform_lightning()` is bound to `F` in the sample game. Its assembly routine
+sets the VIC border and background to white, clears only the 40x22 map portion
+of Color RAM to black, waits for two raster-frame counter changes, restores the
+VIC colors to black, and tail-calls the native lighting pass to reconstruct
+Color RAM from the base-color and brightness buffers. Screen RAM and the two
+bottom text rows are not touched. Raster interrupts must be enabled so the frame
+counter can advance.
 
 The lookup table is indexed as `(brightness << 4) | (base_color & 15)`. Its
 four rows are documented in [LIGHTING.md](LIGHTING.md), along with the planned

@@ -35,6 +35,7 @@
 #define PLATFORM_KEY_CURSOR_LEFT      157u
 #define PLATFORM_KEY_LIGHT_DOWN       45u
 #define PLATFORM_KEY_LIGHT_UP         43u
+#define PLATFORM_KEY_LIGHTNING        70u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -177,6 +178,9 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player);
  */
 void platform_lighting_apply(void);
 void platform_lighting_set_global(uint8_t level);
+
+/* Flash white, blank map colors, then restore the current lighting in assembly. */
+void platform_lightning(void);
 
 /*
  * Move an object and redraw only changed cells in its old/new graphic union.

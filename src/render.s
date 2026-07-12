@@ -5,6 +5,7 @@
 .export _platform_map_draw_native
 .export _platform_object_draw_native
 .export _platform_lighting_apply_native
+.export _platform_lightning_native
 
 .import _native_object_type
 .import _native_object_source
@@ -15,6 +16,7 @@
 .import _platform_base_colors
 .import _platform_brightness
 .import _platform_light_colors
+.import _platform_frame_counter
 
 .segment "LOWCODE"
 
@@ -365,3 +367,38 @@ _platform_lighting_apply_native:
     cpy #112
     bne @light_tail
     rts
+
+; Produce a short VIC flash without modifying screen RAM or either offscreen
+; lighting buffer. Clearing 880 Color RAM cells keeps the white background
+; visible long enough to be perceived before the normal lighting pass restores
+; the map. The bottom two text rows are outside the affected range.
+_platform_lightning_native:
+    lda #1
+    sta $d020
+    sta $d021
+    lda #0
+    ldy #0
+@lightning_pages:
+    sta COLOR_RAM,y
+    sta COLOR_RAM+$100,y
+    sta COLOR_RAM+$200,y
+    iny
+    bne @lightning_pages
+    ldy #0
+@lightning_tail:
+    sta COLOR_RAM+$300,y
+    iny
+    cpy #112
+    bne @lightning_tail
+    ldx #2
+    lda _platform_frame_counter
+@lightning_wait:
+    cmp _platform_frame_counter
+    beq @lightning_wait
+    lda _platform_frame_counter
+    dex
+    bne @lightning_wait
+    lda #0
+    sta $d020
+    sta $d021
+    jmp _platform_lighting_apply_native

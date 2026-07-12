@@ -45,6 +45,7 @@ uint8_t platform_boot_is_easyflash(void);
 void __fastcall__ platform_map_draw_native(const PlatformRoom* room);
 void platform_object_draw_native(void);
 void platform_lighting_apply_native(void);
+void platform_lightning_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
 
@@ -568,12 +569,11 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
     platform_lighting_apply();
 }
 
-void platform_lighting_apply(void) {
+static void overlay_refresh_lighting(void) {
     uint8_t x;
     uint8_t y;
     uint16_t offset;
 
-    platform_lighting_apply_native();
     if (!overlay_visible) return;
     for (y = 0; y < 3u; ++y) {
         for (x = 0; x < 24u; ++x) {
@@ -584,11 +584,21 @@ void platform_lighting_apply(void) {
     }
 }
 
+void platform_lighting_apply(void) {
+    platform_lighting_apply_native();
+    overlay_refresh_lighting();
+}
+
 void platform_lighting_set_global(uint8_t level) {
     if (level >= PLATFORM_LIGHT_LEVEL_COUNT) level = PLATFORM_LIGHT_FULL;
     platform_global_light = level;
     memset(platform_brightness, level, sizeof(platform_brightness));
     platform_lighting_apply();
+}
+
+void platform_lightning(void) {
+    platform_lightning_native();
+    overlay_refresh_lighting();
 }
 
 void platform_object_move(PlatformRoom* room, PlatformObject* object,

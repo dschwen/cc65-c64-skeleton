@@ -57,3 +57,13 @@ Rebuild lighting after a room load, when an emitter moves, or when an emitter's
 state changes. A later optimization can compare the old and new brightness
 buffers and write only changed Color RAM cells; it does not require changing the
 map or object blitters.
+
+## Lightning flash
+
+`platform_lightning()` invokes a native assembly effect, bound to `F` by the
+sample game. It sets `$D020/$D021` to white, clears the 880 map Color RAM cells,
+waits for two changes of `platform_frame_counter`, sets `$D020/$D021` back to
+black, and jumps into the normal native lighting pass. The restore therefore
+respects both the offscreen base colors and the current brightness map without
+redrawing characters, tiles, or objects. This wait depends on the installed
+raster IRQ remaining enabled.

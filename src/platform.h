@@ -23,10 +23,18 @@
 #define PLATFORM_OBJECT_FLAG_ACTOR    0x01u
 #define PLATFORM_TILE_SOLID_LAND      0x04u
 
+#define PLATFORM_LIGHT_NONE           0u
+#define PLATFORM_LIGHT_DIM            1u
+#define PLATFORM_LIGHT_TWILIGHT       2u
+#define PLATFORM_LIGHT_FULL           3u
+#define PLATFORM_LIGHT_LEVEL_COUNT    4u
+
 #define PLATFORM_KEY_CURSOR_DOWN      17u
 #define PLATFORM_KEY_CURSOR_RIGHT     29u
 #define PLATFORM_KEY_CURSOR_UP        145u
 #define PLATFORM_KEY_CURSOR_LEFT      157u
+#define PLATFORM_KEY_LIGHT_DOWN       45u
+#define PLATFORM_KEY_LIGHT_UP         43u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -66,7 +74,8 @@ typedef struct PlatformObject {
  * hotspot:    high nibble x, low nibble y, relative to the graphic origin.
  * chars:      row-major screen character codes; 0 is transparent.
  * colors:     row-major C64 colors corresponding to chars.
- * reserved[0] currently stores PLATFORM_OBJECT_FLAG_* bits.
+ * reserved[0] stores PLATFORM_OBJECT_FLAG_* bits.
+ * reserved[1] stores emitted light; 0 means the object emits no light.
  * Width * height must be <= PLATFORM_OBJECT_CELL_COUNT.
  */
 typedef struct PlatformObjectType {
@@ -105,6 +114,13 @@ extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 extern volatile uint8_t platform_frame_counter;
 extern PlatformStorage platform_storage;
 extern uint8_t platform_storage_device;
+/* Unmodified map/object colors and per-character-cell brightness levels. */
+extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+extern uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+extern uint8_t platform_global_light;
+extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
+
+#define PLATFORM_OBJECT_LIGHT(type) ((type)->reserved[1])
 
 /*
  * Initialize VIC/banking state and select disk or EasyFlash from the cartridge
@@ -154,6 +170,13 @@ void platform_object_draw(const PlatformObject* object);
  * Pass NULL when a player should not be drawn. Slot order is object z-order.
  */
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player);
+
+/*
+ * Translate platform_base_colors through platform_brightness into Color RAM.
+ * set_global fills the complete 40x22 brightness buffer before applying it.
+ */
+void platform_lighting_apply(void);
+void platform_lighting_set_global(uint8_t level);
 
 /*
  * Move an object and redraw only changed cells in its old/new graphic union.

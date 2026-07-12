@@ -4,6 +4,7 @@
 
 .export _platform_map_draw_native
 .export _platform_object_draw_native
+.export _platform_lighting_apply_native
 
 .import _native_object_type
 .import _native_object_source
@@ -11,6 +12,9 @@
 .import _native_object_rows
 .import _native_object_row_skip
 .import _native_object_screen_offset
+.import _platform_base_colors
+.import _platform_brightness
+.import _platform_light_colors
 
 .segment "LOWCODE"
 
@@ -28,13 +32,13 @@ _platform_map_draw_native:
     sta @screen_bottom+1
     lda #>(SCREEN_RAM+MAP_WIDTH_CHARS)
     sta @screen_bottom+2
-    lda #<COLOR_RAM
+    lda #<_platform_base_colors
     sta @color_top+1
-    lda #>COLOR_RAM
+    lda #>_platform_base_colors
     sta @color_top+2
-    lda #<(COLOR_RAM+MAP_WIDTH_CHARS)
+    lda #<(_platform_base_colors+MAP_WIDTH_CHARS)
     sta @color_bottom+1
-    lda #>(COLOR_RAM+MAP_WIDTH_CHARS)
+    lda #>(_platform_base_colors+MAP_WIDTH_CHARS)
     sta @color_bottom+2
 
     lda #MAP_HEIGHT_TILES
@@ -121,14 +125,14 @@ _platform_map_draw_native:
     lda TILE_DATA+1
     and #$0f
 @color_top:
-    sta COLOR_RAM,x
+    sta _platform_base_colors,x
 
     inx
 @color_read_1:
     lda TILE_DATA+3
     and #$0f
 @color_top_right:
-    sta COLOR_RAM,x
+    sta _platform_base_colors,x
     dex
 
 @char_2:
@@ -145,13 +149,13 @@ _platform_map_draw_native:
     lda TILE_DATA+5
     and #$0f
 @color_bottom:
-    sta COLOR_RAM+MAP_WIDTH_CHARS,x
+    sta _platform_base_colors+MAP_WIDTH_CHARS,x
     inx
 @color_read_3:
     lda TILE_DATA+7
     and #$0f
 @color_bottom_right:
-    sta COLOR_RAM+MAP_WIDTH_CHARS,x
+    sta _platform_base_colors+MAP_WIDTH_CHARS,x
 
     inx
     iny
@@ -235,10 +239,10 @@ _platform_object_draw_native:
     sta @screen_write+2
     lda _native_object_screen_offset
     clc
-    adc #<COLOR_RAM
+    adc #<_platform_base_colors
     sta @color_write+1
     lda _native_object_screen_offset+1
-    adc #>COLOR_RAM
+    adc #>_platform_base_colors
     sta @color_write+2
 
     ldy _native_object_source
@@ -256,7 +260,7 @@ _platform_object_draw_native:
     lda $ffff,y
     and #$0f
 @color_write:
-    sta COLOR_RAM,x
+    sta _platform_base_colors,x
 @transparent:
     iny
     inx
@@ -287,4 +291,77 @@ _platform_object_draw_native:
     sbc #1
     sta @object_rows+1
     bne @object_row
+    rts
+
+; Translate the 40x22 base-color and brightness buffers into Color RAM. Three
+; full pages are handled in parallel, followed by the final 112 cells.
+_platform_lighting_apply_native:
+    ldy #0
+@light_pages:
+    lda _platform_base_colors,y
+    and #$0f
+    sta @index_0+1
+    lda _platform_brightness,y
+    and #$03
+    asl
+    asl
+    asl
+    asl
+@index_0:
+    ora #0
+    tax
+    lda _platform_light_colors,x
+    sta COLOR_RAM,y
+
+    lda _platform_base_colors+$100,y
+    and #$0f
+    sta @index_1+1
+    lda _platform_brightness+$100,y
+    and #$03
+    asl
+    asl
+    asl
+    asl
+@index_1:
+    ora #0
+    tax
+    lda _platform_light_colors,x
+    sta COLOR_RAM+$100,y
+
+    lda _platform_base_colors+$200,y
+    and #$0f
+    sta @index_2+1
+    lda _platform_brightness+$200,y
+    and #$03
+    asl
+    asl
+    asl
+    asl
+@index_2:
+    ora #0
+    tax
+    lda _platform_light_colors,x
+    sta COLOR_RAM+$200,y
+    iny
+    bne @light_pages
+
+    ldy #0
+@light_tail:
+    lda _platform_base_colors+$300,y
+    and #$0f
+    sta @index_3+1
+    lda _platform_brightness+$300,y
+    and #$03
+    asl
+    asl
+    asl
+    asl
+@index_3:
+    ora #0
+    tax
+    lda _platform_light_colors,x
+    sta COLOR_RAM+$300,y
+    iny
+    cpy #112
+    bne @light_tail
     rts

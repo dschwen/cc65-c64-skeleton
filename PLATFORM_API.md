@@ -95,15 +95,16 @@ the record index. Type 0 is reserved for an empty object slot.
 | 16 | 16 | row-major character codes; 0 is transparent |
 | 32 | 16 | row-major C64 color indices |
 | 48 | 1 | flags; bit 0 means PC/NPC actor |
-| 49 | 15 | reserved, must be preserved |
+| 49 | 1 | emitted light amount; 0 means no light |
+| 50 | 14 | reserved, must be preserved |
 
 Width and height are each limited to 1-15, and `width * height` must not
 exceed 16. Only the first `width * height` character/color entries are used.
 
 The 16 color bytes resolve an ambiguity in the original proposed record: an
 object graphic needs both a full eight-bit character code and a color. They
-occupy half of the originally proposed 32 future bytes, leaving 16 reserved
-bytes including the flags byte.
+occupy half of the originally proposed 32 future bytes. The remaining 16 bytes
+hold flags, emitted light, and 14 bytes reserved for later use.
 
 ## Initialization and loading
 
@@ -216,13 +217,43 @@ skipped in step 2 and drawn in step 3, so player records can remain in the room
 list while still receiving top visual priority. Pass `NULL` for no player.
 
 Character code 0 in an object type is transparent: neither screen RAM nor
-Color RAM is changed for that object cell. Objects are clipped to the 40x22
-map area.
+the offscreen base-color buffer is changed for that object cell. Objects are
+clipped to the 40x22 map area.
 
 The native renderer preserves these public functions. Assembly is an
 implementation detail: the map blitter streams the 220 tile IDs and writes
-screen/Color RAM directly; the object blitter draws one clipped,
-transparent object at a time. Room ordering and transition policy remain in C.
+screen RAM plus the offscreen base-color buffer; the object blitter draws one
+clipped, transparent object at a time. A final native pass translates base
+colors through the 40x22 brightness buffer into Color RAM. Room ordering and
+transition policy remain in C.
+
+## Lighting
+
+```c
+extern uint8_t platform_base_colors[40 * 22];
+extern uint8_t platform_brightness[40 * 22];
+extern uint8_t platform_global_light;
+extern const uint8_t platform_light_colors[4 * 16];
+
+void platform_lighting_apply(void);
+void platform_lighting_set_global(uint8_t level);
+```
+
+Brightness is per character cell, matching Color RAM and the half-tile object
+coordinate system. Levels are `PLATFORM_LIGHT_NONE` (0),
+`PLATFORM_LIGHT_DIM` (1), `PLATFORM_LIGHT_TWILIGHT` (2), and
+`PLATFORM_LIGHT_FULL` (3). Map and object rendering preserve original colors
+in `platform_base_colors`; `platform_lighting_apply()` changes only the 880 map
+entries in Color RAM. The two status rows are deliberately unaffected.
+
+`platform_lighting_set_global()` clamps invalid input to full light, fills the
+brightness buffer, and applies it immediately. The sample game binds `-` and
+`+` to decreasing and increasing this level. Direct brightness-buffer edits
+must be followed by `platform_lighting_apply()`.
+
+The lookup table is indexed as `(brightness << 4) | (base_color & 15)`. Its
+four rows are documented in [LIGHTING.md](LIGHTING.md), along with the planned
+object-emitter propagation pass.
 Full map/object draws hide an active sprite overlay before invoking the native
 blitters. Dirty-cell movement retains its overlay-aware saved-color handling.
 

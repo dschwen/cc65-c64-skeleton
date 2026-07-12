@@ -35,6 +35,16 @@ int main(void) {
             case PLATFORM_KEY_CURSOR_RIGHT:
                 platform_player_step(1, 0);
                 break;
+            case PLATFORM_KEY_LIGHT_DOWN:
+                if (platform_global_light > PLATFORM_LIGHT_NONE) {
+                    platform_lighting_set_global(platform_global_light - 1u);
+                }
+                break;
+            case PLATFORM_KEY_LIGHT_UP:
+                if (platform_global_light < PLATFORM_LIGHT_FULL) {
+                    platform_lighting_set_global(platform_global_light + 1u);
+                }
+                break;
         }
     }
 

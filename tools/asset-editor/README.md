@@ -52,7 +52,7 @@ The server has no third-party dependencies and only exposes file operations unde
   - Select a character from charset bank 0, choose a color, and click a cell to paint it.
   - Right-click a cell to make it transparent (character 0).
   - Use the hotspot tool to click the cell that anchors the object's room coordinate.
-  - Edit the 14-byte name and actor flag; object type 0 remains reserved.
+  - Edit the 14-byte name, actor flag, and emitted-light byte; object type 0 remains reserved.
 - Room mode:
   - Rooms are fixed at 20x11 tiles (40x22 half-tile/object coordinates).
   - Paint tiles with the tile tool.
@@ -140,7 +140,8 @@ Per record:
 - Byte 16..31: 16 row-major screen character codes; 0 is transparent.
 - Byte 32..47: 16 corresponding C64 color indices.
 - Byte 48: flags; bit 0 marks a PC/NPC actor.
-- Byte 49..63: reserved.
+- Byte 49: emitted light amount; `0` means no light.
+- Byte 50..63: reserved.
 
 Width and height must be nonzero and `width * height` must not exceed 16.
 

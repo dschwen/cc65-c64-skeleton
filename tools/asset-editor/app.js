@@ -14,7 +14,7 @@
   const OBJECT_TYPE_BYTES = 64;
   const OBJECT_TYPE_FILE_BYTES = OBJECT_TYPE_COUNT * OBJECT_TYPE_BYTES;
   const STORAGE_KEY = "c64-asset-editor-state-v1";
-  const STORAGE_VERSION = 2;
+  const STORAGE_VERSION = 3;
 
   const C64_COLORS = [
     "#000000", "#ffffff", "#813338", "#75cec8",
@@ -62,7 +62,8 @@
       chars: new Uint8Array(16),
       colors: new Uint8Array(16),
       flags: 0,
-      reserved: new Uint8Array(15)
+      light: 0,
+      reserved: new Uint8Array(14)
     })),
     selectedObjectType: 1,
     selectedObjectSlot: -1,
@@ -156,6 +157,7 @@
     objectTypeHeight: document.getElementById("object-type-height"),
     objectHotspotX: document.getElementById("object-hotspot-x"),
     objectHotspotY: document.getElementById("object-hotspot-y"),
+    objectTypeLight: document.getElementById("object-type-light"),
     objectTypeActor: document.getElementById("object-type-actor"),
     objectTypeList: document.getElementById("object-type-list"),
     objectToolChar: document.getElementById("object-tool-char"),
@@ -276,6 +278,7 @@
           chars: Array.from(type.chars),
           colors: Array.from(type.colors),
           flags: type.flags,
+          light: type.light,
           reserved: Array.from(type.reserved)
         })),
         selectedObjectType: state.selectedObjectType,
@@ -308,7 +311,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
-      if (!parsed || (parsed.version !== 1 && parsed.version !== STORAGE_VERSION)) return false;
+      if (!parsed || ![1, 2, STORAGE_VERSION].includes(parsed.version)) return false;
 
       if (Array.isArray(parsed.charset) && parsed.charset.length === state.charset.length) {
         state.charset.set(parsed.charset.map(clampByte));
@@ -380,7 +383,16 @@
           if (Array.isArray(source.chars) && source.chars.length === 16) type.chars.set(source.chars.map(clampByte));
           if (Array.isArray(source.colors) && source.colors.length === 16) type.colors.set(source.colors.map((c) => clampByte(c) & 0x0f));
           type.flags = clampByte(source.flags);
-          if (Array.isArray(source.reserved) && source.reserved.length === 15) type.reserved.set(source.reserved.map(clampByte));
+          if (Object.prototype.hasOwnProperty.call(source, "light")) {
+            type.light = clampByte(source.light);
+          } else if (Array.isArray(source.reserved) && source.reserved.length === 15) {
+            type.light = clampByte(source.reserved[0]);
+          }
+          if (Array.isArray(source.reserved) && source.reserved.length === 14) {
+            type.reserved.set(source.reserved.map(clampByte));
+          } else if (Array.isArray(source.reserved) && source.reserved.length === 15) {
+            type.reserved.set(source.reserved.slice(1).map(clampByte));
+          }
         });
       }
 
@@ -998,6 +1010,7 @@
     ui.objectTypeHeight.value = String(type.height || 1);
     ui.objectHotspotX.value = String(type.hotspotX);
     ui.objectHotspotY.value = String(type.hotspotY);
+    ui.objectTypeLight.value = String(type.light);
     ui.objectTypeActor.checked = (type.flags & 1) !== 0;
     ui.objectTypeList.value = String(state.selectedObjectType);
     ui.objectToolChar.classList.toggle("active", state.objectTool === "char");
@@ -1436,6 +1449,7 @@
     type.hotspotX = Math.max(0, Math.min(width - 1, Number(ui.objectHotspotX.value) | 0));
     type.hotspotY = Math.max(0, Math.min(height - 1, Number(ui.objectHotspotY.value) | 0));
     type.name = ui.objectTypeName.value.slice(0, 14);
+    type.light = clampByte(Number(ui.objectTypeLight.value));
     type.flags = ui.objectTypeActor.checked ? (type.flags | 1) : (type.flags & 0xfe);
     renderObjectTypeEditor();
     syncObjectTypeSelect();
@@ -1524,7 +1538,8 @@
       out.set(type.chars, base + 16);
       out.set(type.colors, base + 32);
       out[base + 48] = type.flags;
-      out.set(type.reserved, base + 49);
+      out[base + 49] = type.light;
+      out.set(type.reserved, base + 50);
     });
     return out;
   }
@@ -1762,7 +1777,8 @@
       type.colors.set(data.subarray(base + 32, base + 48));
       for (let i = 0; i < 16; i += 1) type.colors[i] &= 0x0f;
       type.flags = data[base + 48];
-      type.reserved.set(data.subarray(base + 49, base + 64));
+      type.light = data[base + 49];
+      type.reserved.set(data.subarray(base + 50, base + 64));
     }
     setStatus("Imported 256 object types.");
     renderAll();
@@ -2327,7 +2343,8 @@
       schedulePersist();
     });
     [ui.objectTypeName, ui.objectTypeWidth, ui.objectTypeHeight,
-      ui.objectHotspotX, ui.objectHotspotY, ui.objectTypeActor].forEach((control) => {
+      ui.objectHotspotX, ui.objectHotspotY, ui.objectTypeLight,
+      ui.objectTypeActor].forEach((control) => {
       control.addEventListener("change", updateSelectedObjectType);
     });
 

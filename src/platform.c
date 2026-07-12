@@ -44,6 +44,7 @@ void platform_object_types_clear(void);
 uint8_t platform_boot_is_easyflash(void);
 void __fastcall__ platform_map_draw_native(const PlatformRoom* room);
 void platform_object_draw_native(void);
+void platform_lighting_apply_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
 
@@ -63,8 +64,21 @@ uint8_t native_object_columns;
 uint8_t native_object_rows;
 uint8_t native_object_row_skip;
 uint16_t native_object_screen_offset;
+uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+uint8_t platform_global_light;
 
 #pragma rodata-name (push, "RODATA")
+const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u] = {
+    /* no light */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* dim: only bright colors remain visible, as blue */
+    0, 6, 0, 6, 0, 0, 0, 6, 0, 0, 6, 0, 6, 6, 6, 6,
+    /* twilight: hue-preserving darker C64 palette entries */
+    0, 12, 9, 6, 4, 5, 0, 8, 9, 0, 2, 0, 11, 5, 6, 12,
+    /* full light */
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+};
 const uint8_t platform_overlay_gray[16] = {
     0, 12, 11, 12, 11, 11, 0, 12,
     11, 11, 11, 0, 11, 12, 11, 11
@@ -97,6 +111,11 @@ static void write_screen_cell(uint8_t x, uint8_t y,
     offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
     P_SCREEN_RAM[offset] = ch;
     color &= 0x0f;
+    if (y < PLATFORM_MAP_CHAR_HEIGHT) {
+        platform_base_colors[offset] = color;
+        color = platform_light_colors[
+            ((platform_brightness[offset] & 0x03u) << 4) | color];
+    }
 
     if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
         y >= overlay_y && y < overlay_y + 3u) {
@@ -278,11 +297,13 @@ static void redraw_dirty(const PlatformRoom* room,
         y = dirty_y[i];
         compose_cell(room, x, y, player, object_limit, &ch, &color);
         offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-        visible_color = color;
+        platform_base_colors[offset] = color;
+        visible_color = platform_light_colors[
+            ((platform_brightness[offset] & 0x03u) << 4) | (color & 0x0fu)];
         if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
             y >= overlay_y && y < overlay_y + 3u) {
-            overlay_saved_colors[(y - overlay_y) * 24u + (x - overlay_x)] = color;
-            visible_color = platform_overlay_gray[color];
+            overlay_saved_colors[(y - overlay_y) * 24u + (x - overlay_x)] = visible_color;
+            visible_color = platform_overlay_gray[visible_color];
         }
         if (P_SCREEN_RAM[offset] != ch) P_SCREEN_RAM[offset] = ch;
         if (P_COLOR_RAM[offset] != visible_color) P_COLOR_RAM[offset] = visible_color;
@@ -299,6 +320,9 @@ void platform_init(void) {
     P_VIC(0x18) = 0x18;
     overlay_visible = 0;
     P_VIC(0x15) = 0;
+    memset(platform_base_colors, 0, sizeof(platform_base_colors));
+    memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
+    platform_global_light = PLATFORM_LIGHT_FULL;
     (void)platform_irq_save_disable();
     if (!cartridge) {
         platform_object_types_clear();
@@ -481,9 +505,10 @@ void platform_map_draw(const PlatformRoom* room) {
     if (room == 0) return;
     if (overlay_visible) platform_overlay_hide();
     platform_map_draw_native(room);
+    platform_lighting_apply();
 }
 
-void platform_object_draw(const PlatformObject* object) {
+static void object_draw_base(const PlatformObject* object) {
     const PlatformObjectType* type;
     int16_t left;
     int16_t top;
@@ -495,7 +520,6 @@ void platform_object_draw(const PlatformObject* object) {
     if (object == 0 || object->type == 0u) return;
     type = platform_object_type_get(object->type);
     if (!object_type_is_valid(type)) return;
-    if (overlay_visible) platform_overlay_hide();
     left = (int16_t)object->x - HOTSPOT_X(type);
     top = (int16_t)object->y - HOTSPOT_Y(type);
     source_x = left < 0 ? (uint8_t)-left : 0u;
@@ -519,6 +543,12 @@ void platform_object_draw(const PlatformObject* object) {
     platform_object_draw_native();
 }
 
+void platform_object_draw(const PlatformObject* object) {
+    if (overlay_visible) platform_overlay_hide();
+    object_draw_base(object);
+    platform_lighting_apply();
+}
+
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
     uint16_t i;
     if (room == 0) return;
@@ -528,12 +558,37 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
            room->objects[rendered_object_limit - 1u].type == 0u) {
         --rendered_object_limit;
     }
-    platform_map_draw(room);
+    if (overlay_visible) platform_overlay_hide();
+    platform_map_draw_native(room);
     for (i = 0; i < rendered_object_limit; ++i) {
         if (player == &room->objects[i]) continue;
-        platform_object_draw(&room->objects[i]);
+        object_draw_base(&room->objects[i]);
     }
-    platform_object_draw(player);
+    object_draw_base(player);
+    platform_lighting_apply();
+}
+
+void platform_lighting_apply(void) {
+    uint8_t x;
+    uint8_t y;
+    uint16_t offset;
+
+    platform_lighting_apply_native();
+    if (!overlay_visible) return;
+    for (y = 0; y < 3u; ++y) {
+        for (x = 0; x < 24u; ++x) {
+            offset = (uint16_t)(overlay_y + y) * PLATFORM_MAP_CHAR_WIDTH + overlay_x + x;
+            overlay_saved_colors[(uint16_t)y * 24u + x] = P_COLOR_RAM[offset] & 0x0f;
+            P_COLOR_RAM[offset] = platform_overlay_gray[P_COLOR_RAM[offset] & 0x0f];
+        }
+    }
+}
+
+void platform_lighting_set_global(uint8_t level) {
+    if (level >= PLATFORM_LIGHT_LEVEL_COUNT) level = PLATFORM_LIGHT_FULL;
+    platform_global_light = level;
+    memset(platform_brightness, level, sizeof(platform_brightness));
+    platform_lighting_apply();
 }
 
 void platform_object_move(PlatformRoom* room, PlatformObject* object,

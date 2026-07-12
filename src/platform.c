@@ -47,6 +47,8 @@ void platform_object_draw_native(void);
 void platform_lighting_apply_native(void);
 void platform_lightning_native(void);
 void platform_light_source_apply_native(void);
+void platform_visibility_build_native(void);
+void platform_color_clear_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
 
@@ -74,9 +76,18 @@ uint8_t native_light_min_y;
 uint8_t native_light_columns;
 uint8_t native_light_rows;
 uint16_t native_light_screen_offset;
+uint8_t native_light_visibility_offset;
+const PlatformRoom* native_visibility_room;
+uint8_t* native_visibility_mask;
+uint8_t native_visibility_origin_x;
+uint8_t native_visibility_origin_y;
+uint8_t native_visibility_origin_offset;
+uint8_t native_visibility_max_ring;
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_global_light;
+uint8_t platform_light_visibility[PLATFORM_MAP_TILE_COUNT];
+uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 
 #pragma rodata-name (push, "RODATA")
 const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u] = {
@@ -132,6 +143,7 @@ static PlatformRoomRestoreHook room_restore_hook;
 static const char hex_digits[] = "0123456789ABCDEF";
 #pragma rodata-name (pop)
 
+#pragma code-name (push, "CODE")
 static void write_screen_cell(uint8_t x, uint8_t y,
                               uint8_t ch, uint8_t color) {
     uint16_t offset;
@@ -145,6 +157,8 @@ static void write_screen_cell(uint8_t x, uint8_t y,
         platform_base_colors[offset] = color;
         color = platform_light_colors[
             ((platform_brightness[offset] & 0x03u) << 4) | color];
+        if (platform_view_tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH +
+                                (x >> 1)] == 0u) color = 0u;
     }
 
     if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
@@ -156,6 +170,7 @@ static void write_screen_cell(uint8_t x, uint8_t y,
         P_COLOR_RAM[offset] = color;
     }
 }
+#pragma code-name (pop)
 
 static uint8_t read_exact(uint8_t lfn, void* data, uint16_t size) {
     uint8_t* out;
@@ -330,6 +345,8 @@ static void redraw_dirty(const PlatformRoom* room,
         platform_base_colors[offset] = color;
         visible_color = platform_light_colors[
             ((platform_brightness[offset] & 0x03u) << 4) | (color & 0x0fu)];
+        if (platform_view_tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH +
+                                (x >> 1)] == 0u) visible_color = 0u;
         if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
             y >= overlay_y && y < overlay_y + 3u) {
             overlay_saved_colors[(y - overlay_y) * 24u + (x - overlay_x)] = visible_color;
@@ -352,6 +369,7 @@ void platform_init(void) {
     P_VIC(0x15) = 0;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
+    memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
     platform_global_light = PLATFORM_LIGHT_FULL;
     (void)platform_irq_save_disable();
     if (!cartridge) {
@@ -585,7 +603,49 @@ void platform_object_draw(const PlatformObject* object) {
     platform_lighting_apply();
 }
 
-static void light_source_apply(const PlatformObject* object) {
+static void visibility_build(const PlatformRoom* room,
+                             uint8_t origin_x, uint8_t origin_y,
+                             uint8_t min_x, uint8_t max_x,
+                             uint8_t min_y, uint8_t max_y,
+                             uint8_t* mask) {
+    uint8_t max_ring;
+    uint8_t distance;
+
+    native_visibility_room = room;
+    native_visibility_mask = mask;
+    native_visibility_origin_x = origin_x;
+    native_visibility_origin_y = origin_y;
+    native_visibility_origin_offset =
+        origin_y * PLATFORM_MAP_WIDTH + origin_x;
+    max_ring = origin_x - min_x;
+    distance = max_x - origin_x;
+    if (distance > max_ring) max_ring = distance;
+    distance = origin_y - min_y;
+    if (distance > max_ring) max_ring = distance;
+    distance = max_y - origin_y;
+    if (distance > max_ring) max_ring = distance;
+    native_visibility_max_ring = max_ring;
+    platform_visibility_build_native();
+}
+
+static void view_rebuild(const PlatformRoom* room,
+                         const PlatformObject* player) {
+    uint8_t tile_x;
+    uint8_t tile_y;
+    if (room == 0 || player == 0 || player->type == 0u ||
+        player->x >= PLATFORM_MAP_CHAR_WIDTH ||
+        player->y >= PLATFORM_MAP_CHAR_HEIGHT) {
+        memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
+        return;
+    }
+    tile_x = player->x >> 1;
+    tile_y = player->y >> 1;
+    visibility_build(room, tile_x, tile_y, 0u, PLATFORM_MAP_WIDTH - 1u,
+                     0u, PLATFORM_MAP_HEIGHT - 1u, platform_view_tiles);
+}
+
+static void light_source_apply(const PlatformRoom* room,
+                               const PlatformObject* object) {
     const PlatformObjectType* type;
     uint8_t radius;
     uint8_t min_x;
@@ -616,6 +676,11 @@ static void light_source_apply(const PlatformObject* object) {
     native_light_rows = max_y - min_y + 1u;
     native_light_screen_offset =
         (uint16_t)min_y * PLATFORM_MAP_CHAR_WIDTH + min_x;
+    native_light_visibility_offset = (min_y >> 1) * PLATFORM_MAP_WIDTH;
+    visibility_build(room, object->x >> 1, object->y >> 1,
+                     min_x >> 1, max_x >> 1,
+                     min_y >> 1, max_y >> 1,
+                     platform_light_visibility);
     platform_light_source_apply_native();
 }
 
@@ -631,9 +696,9 @@ void platform_lighting_rebuild(const PlatformRoom* room,
                                       : PLATFORM_ROOM_OBJECT_COUNT;
         for (i = 0; i < limit; ++i) {
             if (player == &room->objects[i]) continue;
-            light_source_apply(&room->objects[i]);
+            light_source_apply(room, &room->objects[i]);
         }
-        light_source_apply(player);
+        light_source_apply(room, player);
     }
     platform_lighting_apply();
 }
@@ -649,12 +714,14 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
         --rendered_object_limit;
     }
     if (overlay_visible) platform_overlay_hide();
+    platform_color_clear_native();
     platform_map_draw_native(room);
     for (i = 0; i < rendered_object_limit; ++i) {
         if (player == &room->objects[i]) continue;
         object_draw_base(&room->objects[i]);
     }
     object_draw_base(player);
+    view_rebuild(room, player);
     platform_lighting_rebuild(room, player);
 }
 
@@ -693,17 +760,27 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player) {
     uint8_t emits_light;
+    uint8_t view_changed;
     if (room == 0 || object == 0 || object->type == 0u) return;
     emits_light = PLATFORM_OBJECT_LIGHT(platform_object_type_get(object->type)) != 0u;
+    view_changed = object == player &&
+                   ((object->x >> 1) != (new_x >> 1) ||
+                    (object->y >> 1) != (new_y >> 1));
     dirty_clear();
     mark_object_cells(object);
     object->x = new_x;
     object->y = new_y;
     mark_object_cells(object);
     redraw_dirty(room, player);
+    if (view_changed && room == rendered_room) {
+        rendered_player = player;
+        view_rebuild(room, player);
+    }
     if (emits_light && room == rendered_room) {
         rendered_player = player;
         platform_lighting_rebuild(room, player);
+    } else if (view_changed && room == rendered_room) {
+        platform_lighting_apply();
     }
 }
 

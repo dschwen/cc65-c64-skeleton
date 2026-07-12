@@ -233,6 +233,7 @@ transition policy remain in C.
 extern uint8_t platform_base_colors[40 * 22];
 extern uint8_t platform_brightness[40 * 22];
 extern uint8_t platform_global_light;
+extern uint8_t platform_view_tiles[20 * 11];
 extern const uint8_t platform_light_colors[4 * 16];
 extern const uint8_t platform_light_distance[16 * 16];
 
@@ -266,7 +267,15 @@ so overlapping lights never reduce or add numerically to an existing level.
 Distance is ceiling Euclidean distance. `platform_light_distance` is the first
 quadrant lookup indexed by `(abs_y << 4) | abs_x` for deltas 0-15. The four
 radius-16 axis endpoints are handled explicitly; positions outside the radius
-are excluded. Tile occlusion is not applied yet.
+are excluded.
+
+Tile-property bit 1 (`PLATFORM_TILE_BLOCKS_VIEW`) blocks both illumination and
+player sight. A native one-parent ring propagation produces one 20x11 mask per
+emitter and a persistent 360-degree player mask. Visible opaque tiles propagate
+occlusion outward; every next-ring tile has exactly one writer, so states never
+merge. The native lighting pass writes final lit or black colors per 2x2 tile
+without exposing a fully lit intermediate map. Player visibility is recomputed
+only when half-tile movement crosses a tile boundary.
 
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The

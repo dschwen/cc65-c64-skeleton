@@ -56,10 +56,40 @@ brightness and distance-table row addresses once per scanline and max-combines
 each cell without multiplication or C calls. Its complete 880-byte result has
 been regression-checked against the original C implementation.
 
-If walls later block light, add an explicit opaque tile-property bit and replace
-the direct footprint pass with a bounded flood fill using a fixed 880-bit visited
-buffer. The existing solid-land bit is movement policy and must not implicitly
-mean opaque.
+## Occlusion and player vision
+
+Tile-property bit 1 already means `blocks view`; it is independent of passage
+and solid-land policy. Light occlusion should be computed at the 20x11 tile
+level, while distance falloff remains at 40x22 character-cell resolution.
+
+Visibility uses a one-parent outward ring propagation:
+
+1. Clear a 220-entry state mask and mark the viewer visible.
+2. Initialize the eight cells of ring 1 as visible unless the viewer tile is
+   opaque.
+3. Process each square perimeter outward. Corners write one diagonal child,
+   ordinary edge cells write one axial child, and the eight near-corner cells
+   write two children. This partitions ring `r+1` without duplicate writers.
+4. A visible opaque tile remains visible but writes `OCCLUDED`; an occluded tile
+   continues writing `OCCLUDED`. There is no state merging.
+5. Normalize occluded states to zero after the last ring.
+6. Let the native character-cell propagation loop write only when the target
+   cell's tile is marked visible. Overlapping emitters still max-combine.
+
+The complete ring builder is native assembly and uses states 0=unprocessed,
+1=visible, and 2=occluded in the same byte-per-tile buffer. It needs no dynamic
+allocation or merge rule. The 220-byte mask can later be packed if RAM pressure
+becomes more important than direct indexing.
+
+Player vision uses the same `blocks view` semantics and a separate persistent
+220-byte mask. The native lighting renderer writes either the final lit colors
+or four black cells for each tile in one pass; it never exposes a fully lit
+intermediate map. Illumination and visibility remain independent: a visible
+area may be dark, and a lit area outside the player's view is black.
+The current view is 360 degrees with no range limit. Because the origin is a
+tile, half-tile player movement recomputes LOS only when it crosses a tile edge.
+A later facing cone can restrict the target bounds/angles without changing the
+final Color RAM mask pass.
 
 Rebuild lighting after a room load, when an emitter moves, or when an emitter's
 state changes. A later optimization can compare the old and new brightness

@@ -21,6 +21,7 @@
 #define PLATFORM_TEXT_LINE_BOTTOM     1u
 
 #define PLATFORM_OBJECT_FLAG_ACTOR    0x01u
+#define PLATFORM_TILE_BLOCKS_VIEW     0x02u
 #define PLATFORM_TILE_SOLID_LAND      0x04u
 
 #define PLATFORM_LIGHT_NONE           0u
@@ -120,6 +121,7 @@ extern uint8_t platform_storage_device;
 extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 extern uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 extern uint8_t platform_global_light;
+extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
 extern const uint8_t platform_light_distance[16u * 16u];
 

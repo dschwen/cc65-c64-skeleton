@@ -75,7 +75,7 @@ const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u] = {
     /* dim: only bright colors remain visible, as blue */
     0, 6, 0, 6, 0, 0, 0, 6, 0, 0, 6, 0, 6, 6, 6, 6,
     /* twilight: hue-preserving darker C64 palette entries */
-    0, 12, 9, 6, 4, 5, 0, 8, 9, 0, 2, 0, 11, 5, 6, 12,
+    0, 12, 9, 6, 11, 11, 0, 8, 9, 11, 2, 0, 11, 5, 6, 12,
     /* full light */
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 };

@@ -253,7 +253,8 @@ must be followed by `platform_lighting_apply()`.
 
 The lookup table is indexed as `(brightness << 4) | (base_color & 15)`. Its
 four rows are documented in [LIGHTING.md](LIGHTING.md), along with the planned
-object-emitter propagation pass.
+object-emitter propagation pass. In the twilight row black remains black; none
+of the other 15 input colors maps to itself.
 Full map/object draws hide an active sprite overlay before invoking the native
 blitters. Dirty-cell movement retains its overlay-aware saved-color handling.
 

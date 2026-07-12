@@ -19,14 +19,14 @@ The color lookup rows use standard C64 color indices:
 |---:|---|---|
 | 0 | no light | `0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0` |
 | 1 | dim | `0,6,0,6,0,0,0,6,0,0,6,0,6,6,6,6` |
-| 2 | twilight | `0,12,9,6,4,5,0,8,9,0,2,0,11,5,6,12` |
+| 2 | twilight | `0,12,9,6,11,11,0,8,9,11,2,0,11,5,6,12` |
 | 3 | full | `0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15` |
 
-Level 2 selects a darker related palette entry: white becomes gray, red becomes
-brown, cyan/light blue become blue, yellow becomes orange, and light variants
-fall back to their darker hue. Level 1 deliberately discards hue and contrast:
-only colors bright enough to remain perceptible become blue; everything else is
-black.
+Level 2 keeps black as black but never maps any other input color to itself.
+White becomes gray, red becomes brown, cyan/light blue become blue, yellow
+becomes orange, brown becomes dark gray, and light variants fall back to their
+darker hue. Level 1 deliberately discards hue and contrast: only colors bright
+enough to remain perceptible become blue; everything else is black.
 
 ## Object emitters
 

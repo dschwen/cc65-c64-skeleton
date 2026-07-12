@@ -38,6 +38,9 @@
 .import _native_visibility_origin_y
 .import _native_visibility_origin_offset
 .import _native_visibility_max_ring
+.import _native_visibility_filter_walls
+.import _native_visibility_viewer_x
+.import _native_visibility_viewer_y
 
 .segment "LOWCODE"
 
@@ -698,6 +701,7 @@ _platform_visibility_build_native:
     sta @mask_read_process+1
     sta @mask_write+1
     sta @mask_write_child+1
+    sta @mask_write_process+1
     sta @mask_write_normalize+1
     lda _native_visibility_mask+1
     sta @mask_clear+2
@@ -705,6 +709,7 @@ _platform_visibility_build_native:
     sta @mask_read_process+2
     sta @mask_write+2
     sta @mask_write_child+2
+    sta @mask_write_process+2
     sta @mask_write_normalize+2
 
     lda #0
@@ -848,6 +853,7 @@ _platform_visibility_build_native:
 @process_tile:
     jsr @relative_offset
     bcc @process_done
+    stx @process_offset+1
 @mask_read_process:
     lda $ffff,x
     beq @process_done
@@ -861,6 +867,15 @@ _platform_visibility_build_native:
     lda TILE_PROPERTIES,x
     and #$02
     beq @process_visible
+    lda _native_visibility_filter_walls
+    beq @process_occluded
+    jsr @wall_between_viewer_and_light
+    bcc @process_occluded
+@process_offset:
+    ldx #0
+    lda #2
+@mask_write_process:
+    sta $ffff,x
 @process_occluded:
     lda #2
     bne @set_outgoing
@@ -870,6 +885,55 @@ _platform_visibility_build_native:
     sta @outgoing_state+1
     jsr @write_children
 @process_done:
+    rts
+
+; Carry set when either wall coordinate lies strictly between the corresponding
+; viewer and light-source coordinates.
+@wall_between_viewer_and_light:
+    lda _native_visibility_origin_x
+    cmp _native_visibility_viewer_x
+    bcc @x_origin_first
+    beq @check_between_y
+    lda @world_x+1
+    cmp _native_visibility_viewer_x
+    bcc @check_between_y
+    beq @check_between_y
+    cmp _native_visibility_origin_x
+    bcc @wall_is_between
+    jmp @check_between_y
+@x_origin_first:
+    lda @world_x+1
+    cmp _native_visibility_origin_x
+    bcc @check_between_y
+    beq @check_between_y
+    cmp _native_visibility_viewer_x
+    bcc @wall_is_between
+
+@check_between_y:
+    lda _native_visibility_origin_y
+    cmp _native_visibility_viewer_y
+    bcc @y_origin_first
+    beq @wall_not_between
+@world_y:
+    lda #0
+    cmp _native_visibility_viewer_y
+    bcc @wall_not_between
+    beq @wall_not_between
+    cmp _native_visibility_origin_y
+    bcc @wall_is_between
+    bcs @wall_not_between
+@y_origin_first:
+    lda @world_y+1
+    cmp _native_visibility_origin_y
+    bcc @wall_not_between
+    beq @wall_not_between
+    cmp _native_visibility_viewer_y
+    bcc @wall_is_between
+@wall_not_between:
+    clc
+    rts
+@wall_is_between:
+    sec
     rts
 
 ; Convert the current relative coordinate to a tile offset. Carry is clear for
@@ -888,6 +952,7 @@ _platform_visibility_build_native:
     adc #0
     cmp #MAP_HEIGHT_TILES
     bcs @relative_outside
+    sta @world_y+1
     tay
     lda @tile_row_offsets,y
     clc

@@ -83,6 +83,9 @@ uint8_t native_visibility_origin_x;
 uint8_t native_visibility_origin_y;
 uint8_t native_visibility_origin_offset;
 uint8_t native_visibility_max_ring;
+uint8_t native_visibility_filter_walls;
+uint8_t native_visibility_viewer_x;
+uint8_t native_visibility_viewer_y;
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_global_light;
@@ -640,6 +643,7 @@ static void view_rebuild(const PlatformRoom* room,
     }
     tile_x = player->x >> 1;
     tile_y = player->y >> 1;
+    native_visibility_filter_walls = 0u;
     visibility_build(room, tile_x, tile_y, 0u, PLATFORM_MAP_WIDTH - 1u,
                      0u, PLATFORM_MAP_HEIGHT - 1u, platform_view_tiles);
 }
@@ -692,6 +696,15 @@ void platform_lighting_rebuild(const PlatformRoom* room,
     memset(platform_brightness, platform_global_light,
            sizeof(platform_brightness));
     if (room != 0) {
+        if (player != 0 && player->type != 0u &&
+            player->x < PLATFORM_MAP_CHAR_WIDTH &&
+            player->y < PLATFORM_MAP_CHAR_HEIGHT) {
+            native_visibility_filter_walls = 1u;
+            native_visibility_viewer_x = player->x >> 1;
+            native_visibility_viewer_y = player->y >> 1;
+        } else {
+            native_visibility_filter_walls = 0u;
+        }
         limit = room == rendered_room ? rendered_object_limit
                                       : PLATFORM_ROOM_OBJECT_COUNT;
         for (i = 0; i < limit; ++i) {

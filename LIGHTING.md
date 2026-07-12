@@ -72,8 +72,13 @@ Visibility uses a one-parent outward ring propagation:
    write two children. This partitions ring `r+1` without duplicate writers.
 4. A visible opaque tile remains visible but writes `OCCLUDED`; an occluded tile
    continues writing `OCCLUDED`. There is no state merging.
-5. Normalize occluded states to zero after the last ring.
-6. Let the native character-cell propagation loop write only when the target
+5. During an emitter pass, suppress the opaque tile itself when either its X or
+   Y coordinate lies strictly between the corresponding emitter and player
+   coordinates. It still writes `OCCLUDED` to its children. This makes an
+   interior wall bright when the player and light are on the same side, but
+   keeps that wall dark when it separates them.
+6. Normalize occluded states to zero after the last ring.
+7. Let the native character-cell propagation loop write only when the target
    cell's tile is marked visible. Overlapping emitters still max-combine.
 
 The complete ring builder is native assembly and uses states 0=unprocessed,
@@ -90,6 +95,13 @@ The current view is 360 degrees with no range limit. Because the origin is a
 tile, half-tile player movement recomputes LOS only when it crosses a tile edge.
 A later facing cone can restrict the target bounds/angles without changing the
 final Color RAM mask pass.
+
+The separating-wall test is performed independently for every emitter and uses
+strict inequalities. A wall aligned with either endpoint is not considered
+between them. Another light on the player's side may therefore illuminate the
+same wall through the normal max-composition rule. The filter is only enabled
+for light-source masks; the player's 360-degree visibility mask still includes
+the first opaque tile in each propagated path.
 
 Rebuild lighting after a room load, when an emitter moves, or when an emitter's
 state changes. A later optimization can compare the old and new brightness

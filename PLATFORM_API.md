@@ -277,6 +277,14 @@ merge. The native lighting pass writes final lit or black colors per 2x2 tile
 without exposing a fully lit intermediate map. Player visibility is recomputed
 only when half-tile movement crosses a tile boundary.
 
+Emitter masks also apply a viewer-relative wall-facing rule. An opaque tile is
+not illuminated by a source when its X or Y coordinate lies strictly between
+the source hotspot and player hotspot on that axis. The tile remains an
+occluder, so illumination is still stopped behind it. This test runs per source:
+a light on the player's side can illuminate the wall even when a different
+light on the far side cannot. Player visibility is built first and remains a
+separate final mask over the composed brightness buffer.
+
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The
 assembly loop patches its brightness destination and distance-table row once

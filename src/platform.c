@@ -20,8 +20,8 @@
 #define EF_ROOMS_PER_BANK  6u
 #define EF_TYPE_BANK_0     45u
 #define EF_TYPE_BANK_1     46u
-#define PLATFORM_NATIVE_MAP      1u
-#define PLATFORM_NATIVE_OBJECTS  1u
+#define PLATFORM_NATIVE_MAP      0u
+#define PLATFORM_NATIVE_OBJECTS  0u
 
 #define OBJECT_WIDTH(t)  ((uint8_t)((t)->dimensions >> 4))
 #define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0f))

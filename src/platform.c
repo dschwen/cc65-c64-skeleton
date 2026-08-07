@@ -789,11 +789,11 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
         rendered_player = player;
         view_rebuild(room, player);
     }
-    if (emits_light && room == rendered_room) {
+    /* Viewer-relative emitter masks change whenever the player changes tile,
+     * even when the player is not itself a light source. */
+    if ((emits_light || view_changed) && room == rendered_room) {
         rendered_player = player;
         platform_lighting_rebuild(room, player);
-    } else if (view_changed && room == rendered_room) {
-        platform_lighting_apply();
     }
 }
 

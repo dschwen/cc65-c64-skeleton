@@ -285,6 +285,11 @@ a light on the player's side can illuminate the wall even when a different
 light on the far side cannot. Player visibility is built first and remains a
 separate final mask over the composed brightness buffer.
 
+Moving the player across a tile boundary rebuilds both the persistent player
+visibility mask and all emitter masks. This is required even for a player with
+zero emitted light because changing the viewer position can change which face
+of an opaque tile each emitter is allowed to illuminate.
+
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The
 assembly loop patches its brightness destination and distance-table row once

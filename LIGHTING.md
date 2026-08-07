@@ -104,9 +104,11 @@ for light-source masks; the player's 360-degree visibility mask still includes
 the first opaque tile in each propagated path.
 
 Rebuild lighting after a room load, when an emitter moves, or when an emitter's
-state changes. A later optimization can compare the old and new brightness
-buffers and write only changed Color RAM cells; it does not require changing the
-map or object blitters.
+state changes. Because emitter masks are viewer-relative, also rebuild them when
+the player crosses a tile boundary, even if the player emits no light. A later
+optimization can compare the old and new brightness buffers and write only
+changed Color RAM cells; it does not require changing the map or object
+blitters.
 
 ## Lightning flash
 

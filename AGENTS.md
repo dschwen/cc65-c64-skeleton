@@ -10,6 +10,8 @@ Use this file for quick operational rules. For platform details, memory map note
 - Build D64: `make d64`
 - Run PRG in VICE: `make run`
 - Run D64 in VICE: `make run-d64`
+- This is a headless environment. Run VICE through Xvfb, using
+  `xvfb-run -a x64sc ...` for direct emulator/debugging commands.
 
 Build outputs are in `build/`:
 - `game.prg`

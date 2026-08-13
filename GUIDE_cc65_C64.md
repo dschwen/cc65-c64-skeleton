@@ -276,8 +276,10 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
 | `$3A00-$3BFF` | eight runtime sprite-overlay bitmap slots |
-| `$3C00-$5A6B` | platform code and read-only tables (current extent) |
-| `$6000-$A5FF` | platform BSS (current extent) |
+| `$3C00-$6EF0` | platform code and read-only tables (current extent) |
+| `$7000-$7805` | current room and ordinary platform BSS |
+| `$7806-$7FFF` | cc65 software-stack headroom |
+| `$A000-$B37E` | gameplay work BSS beneath BASIC ROM |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
@@ -320,11 +322,18 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current linker layout extends resident platform code through `$67EF` and
-starts BSS at `$67F0`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the cc65
-software stack top is unchanged. This trades unused BSS capacity for the
-resident lighting solver and its first-quadrant distance table; check
-`__BSS_SIZE__` in `build/game.map` when adding further fixed buffers.
+The current linker layout reserves resident platform code through `$6FFF` and
+starts ordinary BSS at `$7000`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the
+cc65 software stack top is unchanged. The current BSS ends at `$7805`, leaving
+just under 2 KiB of software-stack headroom.
+
+`WORKBSS` uses `$A000-$BFFF` RAM beneath BASIC ROM for the base-color and
+brightness buffers, room-load staging, and the viewer-quadrant wall-light
+cache. Gameplay mapping `$35` exposes this RAM. KERNAL disk intervals map `$37`
+and temporarily expose BASIC ROM instead; CPU writes still reach the underlying
+RAM, and platform code restores `$35` before validating or consuming staged
+data. Check both `__BSS_SIZE__` and the `WORKBSS` end in `build/game.map` when
+adding fixed buffers.
 
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, and sprite dialogs.

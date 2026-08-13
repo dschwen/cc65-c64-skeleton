@@ -20,6 +20,10 @@
 #define EF_ROOMS_PER_BANK  6u
 #define EF_TYPE_BANK_0     45u
 #define EF_TYPE_BANK_1     46u
+#define WALL_CACHE_QUADRANT_NW 0x01u
+#define WALL_CACHE_QUADRANT_NE 0x02u
+#define WALL_CACHE_QUADRANT_SW 0x04u
+#define WALL_CACHE_QUADRANT_SE 0x08u
 
 #define OBJECT_WIDTH(t)  ((uint8_t)((t)->dimensions >> 4))
 #define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0f))
@@ -83,11 +87,10 @@ uint8_t native_visibility_origin_x;
 uint8_t native_visibility_origin_y;
 uint8_t native_visibility_origin_offset;
 uint8_t native_visibility_max_ring;
-uint8_t native_visibility_filter_walls;
-uint8_t native_visibility_viewer_x;
-uint8_t native_visibility_viewer_y;
+#pragma bss-name (push, "WORKBSS")
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+#pragma bss-name (pop)
 uint8_t platform_global_light;
 uint8_t platform_light_visibility[PLATFORM_MAP_TILE_COUNT];
 uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
@@ -139,7 +142,16 @@ static uint8_t overlay_saved_colors[72];
 static uint8_t overlay_visible;
 static uint8_t overlay_x;
 static uint8_t overlay_y;
+#pragma bss-name (push, "WORKBSS")
 static PlatformRoom room_stage;
+static uint8_t wall_light_cache[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
+static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
+static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
+static uint16_t wall_char_offsets[PLATFORM_MAP_TILE_COUNT];
+static uint8_t wall_count;
+static const PlatformRoom* wall_cache_room;
+#pragma bss-name (pop)
 static PlatformRoomStoreHook room_store_hook;
 static PlatformRoomRestoreHook room_restore_hook;
 #pragma rodata-name (push, "RODATA")
@@ -374,6 +386,8 @@ void platform_init(void) {
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
     memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
     platform_global_light = PLATFORM_LIGHT_FULL;
+    wall_count = 0u;
+    wall_cache_room = 0;
     (void)platform_irq_save_disable();
     if (!cartridge) {
         platform_object_types_clear();
@@ -474,6 +488,7 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
         rendered_room = 0;
         rendered_player = 0;
     }
+    if (room == wall_cache_room) wall_cache_room = 0;
     memcpy(room, &room_stage, sizeof(*room));
     if (room == &platform_room) {
         platform_current_room = room_id;
@@ -643,9 +658,190 @@ static void view_rebuild(const PlatformRoom* room,
     }
     tile_x = player->x >> 1;
     tile_y = player->y >> 1;
-    native_visibility_filter_walls = 0u;
     visibility_build(room, tile_x, tile_y, 0u, PLATFORM_MAP_WIDTH - 1u,
                      0u, PLATFORM_MAP_HEIGHT - 1u, platform_view_tiles);
+}
+
+static uint8_t wall_quadrants(uint8_t point_x, uint8_t point_y,
+                              uint8_t tile_x, uint8_t tile_y) {
+    uint8_t quadrants;
+    quadrants = 0u;
+    if (point_x <= tile_x) {
+        if (point_y <= tile_y) quadrants |= WALL_CACHE_QUADRANT_NW;
+        if (point_y >= tile_y) quadrants |= WALL_CACHE_QUADRANT_SW;
+    }
+    if (point_x >= tile_x) {
+        if (point_y <= tile_y) quadrants |= WALL_CACHE_QUADRANT_NE;
+        if (point_y >= tile_y) quadrants |= WALL_CACHE_QUADRANT_SE;
+    }
+    return quadrants;
+}
+
+static uint8_t light_level_at(uint8_t x, uint8_t y) {
+    uint8_t delta_x;
+    uint8_t delta_y;
+    uint8_t distance;
+    uint8_t remaining;
+
+    delta_x = x < native_light_source_x ? native_light_source_x - x
+                                        : x - native_light_source_x;
+    delta_y = y < native_light_source_y ? native_light_source_y - y
+                                        : y - native_light_source_y;
+    if (delta_x > PLATFORM_LIGHT_MAX_RADIUS ||
+        delta_y > PLATFORM_LIGHT_MAX_RADIUS) return PLATFORM_LIGHT_NONE;
+    if (delta_y == PLATFORM_LIGHT_MAX_RADIUS) {
+        if (delta_x != 0u) return PLATFORM_LIGHT_NONE;
+        distance = PLATFORM_LIGHT_MAX_RADIUS;
+    } else if (delta_x == PLATFORM_LIGHT_MAX_RADIUS) {
+        if (delta_y != 0u) return PLATFORM_LIGHT_NONE;
+        distance = PLATFORM_LIGHT_MAX_RADIUS;
+    } else {
+        distance = platform_light_distance[(uint16_t)delta_y * 16u + delta_x];
+    }
+    if (distance > native_light_radius) return PLATFORM_LIGHT_NONE;
+    remaining = native_light_radius - distance;
+    if (remaining >= 4u) return PLATFORM_LIGHT_FULL;
+    if (remaining >= 2u) return PLATFORM_LIGHT_TWILIGHT;
+    return PLATFORM_LIGHT_DIM;
+}
+
+static uint8_t packed_light_max(uint8_t packed, uint8_t quadrants) {
+    uint8_t level;
+    uint8_t candidate;
+    level = PLATFORM_LIGHT_NONE;
+    if (quadrants & WALL_CACHE_QUADRANT_NW) level = packed & 0x03u;
+    if (quadrants & WALL_CACHE_QUADRANT_NE) {
+        candidate = (packed >> 2) & 0x03u;
+        if (candidate > level) level = candidate;
+    }
+    if (quadrants & WALL_CACHE_QUADRANT_SW) {
+        candidate = (packed >> 4) & 0x03u;
+        if (candidate > level) level = candidate;
+    }
+    if (quadrants & WALL_CACHE_QUADRANT_SE) {
+        candidate = packed >> 6;
+        if (candidate > level) level = candidate;
+    }
+    return level;
+}
+
+static uint8_t packed_light_add(uint8_t packed, uint8_t quadrants,
+                                uint8_t level) {
+    uint8_t candidate;
+    candidate = packed & 0x03u;
+    if ((quadrants & WALL_CACHE_QUADRANT_NW) && level > candidate) {
+        packed = (packed & 0xfcu) | level;
+    }
+    candidate = (packed >> 2) & 0x03u;
+    if ((quadrants & WALL_CACHE_QUADRANT_NE) && level > candidate) {
+        packed = (packed & 0xf3u) | (level << 2);
+    }
+    candidate = (packed >> 4) & 0x03u;
+    if ((quadrants & WALL_CACHE_QUADRANT_SW) && level > candidate) {
+        packed = (packed & 0xcfu) | (level << 4);
+    }
+    candidate = packed >> 6;
+    if ((quadrants & WALL_CACHE_QUADRANT_SE) && level > candidate) {
+        packed = (packed & 0x3fu) | (level << 6);
+    }
+    return packed;
+}
+
+static void wall_cache_prepare(const PlatformRoom* room) {
+    uint8_t x;
+    uint8_t y;
+    uint8_t tile_offset;
+    uint16_t char_row;
+    uint16_t char_offset;
+
+    wall_count = 0u;
+    tile_offset = 0u;
+    char_row = 0u;
+    for (y = 0u; y < PLATFORM_MAP_HEIGHT; ++y) {
+        char_offset = char_row;
+        for (x = 0u; x < PLATFORM_MAP_WIDTH; ++x, ++tile_offset) {
+            if (tile_properties[room->tiles[tile_offset]] & PLATFORM_TILE_BLOCKS_VIEW) {
+                wall_tile_offsets[wall_count] = tile_offset;
+                wall_x[wall_count] = x;
+                wall_y[wall_count] = y;
+                wall_char_offsets[wall_count] = char_offset;
+                memset(&wall_light_cache[(uint16_t)wall_count * 4u], 0, 4u);
+                ++wall_count;
+            }
+            char_offset += 2u;
+        }
+        char_row += PLATFORM_MAP_CHAR_WIDTH * 2u;
+    }
+    wall_cache_room = room;
+}
+
+static void wall_cache_add_source(void) {
+    uint8_t i;
+    uint8_t cell;
+    uint8_t quadrants;
+    uint8_t level;
+    uint8_t char_x;
+    uint8_t char_y;
+    uint16_t cache_offset;
+
+    for (i = 0u; i < wall_count; ++i) {
+        if (platform_light_visibility[wall_tile_offsets[i]] == 0u) continue;
+        quadrants = wall_quadrants(native_light_source_x >> 1,
+                                   native_light_source_y >> 1,
+                                   wall_x[i], wall_y[i]);
+        cache_offset = (uint16_t)i * 4u;
+        for (cell = 0u; cell < 4u; ++cell) {
+            char_x = (wall_x[i] << 1) + (cell & 1u);
+            char_y = (wall_y[i] << 1) + (cell >> 1);
+            level = light_level_at(char_x, char_y);
+            if (level != PLATFORM_LIGHT_NONE) {
+                wall_light_cache[cache_offset + cell] = packed_light_add(
+                    wall_light_cache[cache_offset + cell], quadrants, level);
+            }
+        }
+        /* The normal source blitter now updates open cells only. */
+        platform_light_visibility[wall_tile_offsets[i]] = 0u;
+    }
+}
+
+static void wall_cache_apply(const PlatformRoom* room,
+                             const PlatformObject* player) {
+    uint8_t i;
+    uint8_t quadrants;
+    uint8_t level;
+    uint8_t player_x;
+    uint8_t player_y;
+    uint16_t cache_offset;
+    uint16_t char_offset;
+
+    if (room != wall_cache_room) return;
+    if (player != 0 && player->type != 0u &&
+        player->x < PLATFORM_MAP_CHAR_WIDTH &&
+        player->y < PLATFORM_MAP_CHAR_HEIGHT) {
+        player_x = player->x >> 1;
+        player_y = player->y >> 1;
+    } else {
+        player_x = 0xffu;
+        player_y = 0xffu;
+    }
+    for (i = 0u; i < wall_count; ++i) {
+        quadrants = player_x == 0xffu ? 0x0fu
+            : wall_quadrants(player_x, player_y, wall_x[i], wall_y[i]);
+        cache_offset = (uint16_t)i * 4u;
+        char_offset = wall_char_offsets[i];
+        level = packed_light_max(wall_light_cache[cache_offset], quadrants);
+        platform_brightness[char_offset] = level > platform_global_light
+                                               ? level : platform_global_light;
+        level = packed_light_max(wall_light_cache[cache_offset + 1u], quadrants);
+        platform_brightness[char_offset + 1u] = level > platform_global_light
+                                                    ? level : platform_global_light;
+        level = packed_light_max(wall_light_cache[cache_offset + 2u], quadrants);
+        platform_brightness[char_offset + PLATFORM_MAP_CHAR_WIDTH] =
+            level > platform_global_light ? level : platform_global_light;
+        level = packed_light_max(wall_light_cache[cache_offset + 3u], quadrants);
+        platform_brightness[char_offset + PLATFORM_MAP_CHAR_WIDTH + 1u] =
+            level > platform_global_light ? level : platform_global_light;
+    }
 }
 
 static void light_source_apply(const PlatformRoom* room,
@@ -685,6 +881,7 @@ static void light_source_apply(const PlatformRoom* room,
                      min_x >> 1, max_x >> 1,
                      min_y >> 1, max_y >> 1,
                      platform_light_visibility);
+    wall_cache_add_source();
     platform_light_source_apply_native();
 }
 
@@ -696,15 +893,7 @@ void platform_lighting_rebuild(const PlatformRoom* room,
     memset(platform_brightness, platform_global_light,
            sizeof(platform_brightness));
     if (room != 0) {
-        if (player != 0 && player->type != 0u &&
-            player->x < PLATFORM_MAP_CHAR_WIDTH &&
-            player->y < PLATFORM_MAP_CHAR_HEIGHT) {
-            native_visibility_filter_walls = 1u;
-            native_visibility_viewer_x = player->x >> 1;
-            native_visibility_viewer_y = player->y >> 1;
-        } else {
-            native_visibility_filter_walls = 0u;
-        }
+        wall_cache_prepare(room);
         limit = room == rendered_room ? rendered_object_limit
                                       : PLATFORM_ROOM_OBJECT_COUNT;
         for (i = 0; i < limit; ++i) {
@@ -712,6 +901,9 @@ void platform_lighting_rebuild(const PlatformRoom* room,
             light_source_apply(room, &room->objects[i]);
         }
         light_source_apply(room, player);
+        wall_cache_apply(room, player);
+    } else {
+        wall_cache_room = 0;
     }
     platform_lighting_apply();
 }
@@ -789,11 +981,17 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
         rendered_player = player;
         view_rebuild(room, player);
     }
-    /* Viewer-relative emitter masks change whenever the player changes tile,
-     * even when the player is not itself a light source. */
-    if ((emits_light || view_changed) && room == rendered_room) {
+    if (emits_light && room == rendered_room) {
         rendered_player = player;
         platform_lighting_rebuild(room, player);
+    } else if (view_changed && room == rendered_room) {
+        rendered_player = player;
+        if (wall_cache_room == room) {
+            wall_cache_apply(room, player);
+            platform_lighting_apply();
+        } else {
+            platform_lighting_rebuild(room, player);
+        }
     }
 }
 

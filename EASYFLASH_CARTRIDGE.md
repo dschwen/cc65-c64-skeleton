@@ -154,6 +154,8 @@ would introduce several new requirements:
 
 - writable `DATA` needs separate load and run addresses plus startup copying;
 - `BSS` and the cc65 software stack must remain in RAM;
+- `WORKBSS` at `$A000-$BFFF` is underlying RAM and requires EasyFlash ROMH and
+  BASIC ROM to be disabled before gameplay accesses it;
 - code executing inside a banked window cannot switch away its own bank;
 - ROML/ROMH hide RAM or BASIC ROM beneath their CPU windows;
 - VIC-visible assets still need a deliberate RAM/VIC-bank strategy.

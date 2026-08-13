@@ -37,8 +37,9 @@ room-transition logic even when a graphic extends in several directions.
 | `$3000-$38FF` | tiles and tile properties |
 | `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots |
-| `$3C00-$5FFF` | platform code and read-only tables |
-| `$6000-$7FFF` | room/work BSS and cc65 software stack |
+| `$3C00-$6FFF` | platform code and read-only tables |
+| `$7000-$7FFF` | current room, ordinary BSS, and cc65 software stack |
+| `$A000-$BFFF` | gameplay work RAM beneath BASIC ROM |
 | `$C000-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
@@ -253,10 +254,11 @@ entries in Color RAM. The two status rows are deliberately unaffected.
 
 `platform_lighting_rebuild()` fills the buffer with the global ambient level,
 then max-combines every room-object and player light source before applying the
-result. `platform_lighting_set_global()` clamps invalid input to full light and
-performs that rebuild immediately. The sample game binds `-` and `+` to
-decreasing and increasing ambient light. Direct brightness-buffer edits must be
-followed by `platform_lighting_apply()`.
+result. It also rebuilds the internal viewer-quadrant cache for opaque tiles.
+`platform_lighting_set_global()` clamps invalid input to full light and performs
+that rebuild immediately. The sample game binds `-` and `+` to decreasing and
+increasing ambient light. Direct brightness-buffer edits must be followed by
+`platform_lighting_apply()`.
 
 Object-type byte 49 is a radius in character cells, clamped to 16 at runtime.
 For radius `R`, distances `0..R-4` are full light, the next two distances are
@@ -285,10 +287,20 @@ a light on the player's side can illuminate the wall even when a different
 light on the far side cannot. Player visibility is built first and remains a
 separate final mask over the composed brightness buffer.
 
-Moving the player across a tile boundary rebuilds both the persistent player
-visibility mask and all emitter masks. This is required even for a player with
-zero emitted light because changing the viewer position can change which face
-of an opaque tile each emitter is allowed to illuminate.
+For each opaque character cell, the platform caches four 2-bit maxima: one for
+each viewer quadrant relative to that tile. Moving a non-emitting player across
+a tile boundary rebuilds the persistent player visibility mask and selects new
+wall brightness from this cache. It does not clear the 880-byte brightness
+buffer, recast any emitter, or rerun open-cell distance falloff. Moving an
+emitter, changing ambient light, loading a room, or explicitly rebuilding
+lighting invalidates and recreates the cache.
+
+`platform_base_colors`, `platform_brightness`, room staging, and the internal
+wall cache live in `$A000-$BFFF` RAM beneath BASIC ROM. They are accessible in
+the normal gameplay mapping (`$01` low bits `101`) but temporarily hidden while
+the disk backend maps BASIC/KERNAL ROM. Platform storage functions own those
+mapping intervals; game code must not access these buffers concurrently with a
+KERNAL storage call.
 
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The

@@ -37,12 +37,17 @@ which is already expressed in character-cell/half-tile coordinates.
 The implemented room-light rebuild is:
 
 1. Fill the brightness buffer with the room ambient/global level.
-2. Visit populated room objects and the player in the same type-aware manner as
+2. Build the compact list of opaque room tiles and clear their four-quadrant
+   wall-light cache.
+3. Visit populated room objects and the player in the same type-aware manner as
    drawing. Skip types whose emitted-light byte is zero.
-3. Propagate from each hotspot using ceiling Euclidean distance. For radius `R`,
+4. Propagate from each hotspot using ceiling Euclidean distance. For radius `R`,
    `0..R-4` is full, the next two cells are twilight, and the outer two are dim.
-4. Combine overlapping lights with `max`; light never makes a cell darker.
-5. Apply the color lookup once after all sources have contributed.
+5. Max-combine open-cell light directly into `platform_brightness`. For every
+   opaque tile reached by the source, max-combine its four character-cell
+   levels into the wall cache quadrant(s) containing the source.
+6. Select each cached wall level using the quadrant(s) containing the player.
+7. Apply the color lookup once after all sources have contributed.
 
 Distance uses one 16x16 first-quadrant lookup table, indexed as
 `(abs_y << 4) | abs_x`. Radius-16 axis endpoints are handled separately, while
@@ -53,8 +58,17 @@ The hot propagation loop is implemented by
 `platform_light_source_apply_native` in `src/render.s`. C performs bank-aware
 type lookup and rectangle clipping once per source. Assembly then patches the
 brightness and distance-table row addresses once per scanline and max-combines
-each cell without multiplication or C calls. Its complete 880-byte result has
-been regression-checked against the original C implementation.
+each open cell without multiplication or C calls. Opaque tile entries are
+removed from that native pass after their four character-cell values have been
+stored in the cache. Its complete 880-byte result has been regression-checked
+against the previous implementation.
+
+Each cached wall character uses one byte: four 2-bit maxima for northwest,
+northeast, southwest, and southeast viewers. A source on a wall axis belongs to
+both adjacent quadrants. Selecting the maximum of the viewer's applicable
+quadrants is equivalent to the strict viewer-relative rule: a wall is rejected
+when its X or Y lies strictly between viewer and source. This retains exact
+half-tile distance falloff and correct max composition across multiple lights.
 
 ## Occlusion and player vision
 
@@ -72,11 +86,9 @@ Visibility uses a one-parent outward ring propagation:
    write two children. This partitions ring `r+1` without duplicate writers.
 4. A visible opaque tile remains visible but writes `OCCLUDED`; an occluded tile
    continues writing `OCCLUDED`. There is no state merging.
-5. During an emitter pass, suppress the opaque tile itself when either its X or
-   Y coordinate lies strictly between the corresponding emitter and player
-   coordinates. It still writes `OCCLUDED` to its children. This makes an
-   interior wall bright when the player and light are on the same side, but
-   keeps that wall dark when it separates them.
+5. During a full emitter pass, cache the opaque tile's light in the source-side
+   quadrant(s), then exclude that tile from the open-cell propagation loop. It
+   still writes `OCCLUDED` to its children.
 6. Normalize occluded states to zero after the last ring.
 7. Let the native character-cell propagation loop write only when the target
    cell's tile is marked visible. Overlapping emitters still max-combine.
@@ -96,19 +108,27 @@ tile, half-tile player movement recomputes LOS only when it crosses a tile edge.
 A later facing cone can restrict the target bounds/angles without changing the
 final Color RAM mask pass.
 
-The separating-wall test is performed independently for every emitter and uses
-strict inequalities. A wall aligned with either endpoint is not considered
-between them. Another light on the player's side may therefore illuminate the
-same wall through the normal max-composition rule. The filter is only enabled
-for light-source masks; the player's 360-degree visibility mask still includes
-the first opaque tile in each propagated path.
+The separating-wall cache is populated independently for every emitter. A wall
+aligned with either endpoint belongs to both adjacent quadrants and is not
+considered between them. Another light on the player's side may therefore
+illuminate the same wall through the normal max-composition rule. The player's
+360-degree visibility mask still includes the first opaque tile in each
+propagated path.
 
 Rebuild lighting after a room load, when an emitter moves, or when an emitter's
-state changes. Because emitter masks are viewer-relative, also rebuild them when
-the player crosses a tile boundary, even if the player emits no light. A later
-optimization can compare the old and new brightness buffers and write only
-changed Color RAM cells; it does not require changing the map or object
-blitters.
+state changes. When a non-emitting player crosses a tile boundary, rebuild only
+the player visibility mask, select new wall levels from the cache, and run the
+native Color RAM pass. Open-cell brightness and emitter visibility masks are
+not recomputed. A later optimization can compare the old and new Color RAM
+result, but a scanned dirty pass was measured slower for the current room and
+is deliberately not retained.
+
+A deterministic VICE benchmark of five half-cell player moves crossed tile
+boundaries on moves 2, 3, and 5. Those complete `platform_player_step()` calls
+fell from 496,959/472,491/480,698 cycles to 370,651/348,972/357,209 cycles, a
+25.4-26.1% reduction. Moves that stayed within the same tile were effectively
+unchanged. These figures include object redraw, player LOS, wall-cache
+selection, and the final Color RAM pass.
 
 ## Lightning flash
 

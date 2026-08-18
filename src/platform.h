@@ -11,7 +11,8 @@
 #define PLATFORM_ROOM_OBJECT_COUNT    256u
 #define PLATFORM_ROOM_OBJECT_BYTES    768u
 #define PLATFORM_ROOM_TEXT_BYTES      256u
-#define PLATFORM_ROOM_FILE_BYTES      1248u
+#define PLATFORM_ROOM_FILE_BYTES      1253u
+#define PLATFORM_ROOM_FORMAT          2u
 #define PLATFORM_OBJECT_TYPE_COUNT    256u
 #define PLATFORM_OBJECT_TYPE_BYTES    64u
 #define PLATFORM_OBJECT_CELL_COUNT    16u
@@ -38,6 +39,7 @@
 #define PLATFORM_KEY_LIGHT_DOWN       45u
 #define PLATFORM_KEY_LIGHT_UP         43u
 #define PLATFORM_KEY_LIGHTNING        70u
+#define PLATFORM_KEY_LOOK             76u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -59,6 +61,16 @@ typedef uint8_t PlatformStorage;
 #define PLATFORM_TRANSITION_BOTTOM    3u
 #define PLATFORM_TRANSITION_RIGHT     4u
 #define PLATFORM_TRANSITION_TRIGGER   5u
+
+#define PLATFORM_DIRECTION_NORTH      0u
+#define PLATFORM_DIRECTION_EAST       1u
+#define PLATFORM_DIRECTION_WEST       2u
+#define PLATFORM_DIRECTION_SOUTH      3u
+
+#define PLATFORM_ROOM_EXIT_NORTH      0x01u
+#define PLATFORM_ROOM_EXIT_EAST       0x02u
+#define PLATFORM_ROOM_EXIT_WEST       0x04u
+#define PLATFORM_ROOM_EXIT_SOUTH      0x08u
 
 /*
  * A room object occupies exactly three bytes in a room file. Coordinates are
@@ -91,8 +103,10 @@ typedef struct PlatformObjectType {
 } PlatformObjectType;
 
 /*
- * Exact 1,248-byte room file. Files are named 00 through FF.
- * width/height must be 20/11. format is currently 1.
+ * Exact 1,253-byte room file. Files are named 00 through FF.
+ * width/height must be 20/11. format is currently 2. exit_mask indicates
+ * which of the four neighbor bytes are valid, since every byte value is a
+ * usable room ID.
  * text is a pool of zero-terminated strings addressed by byte offset.
  */
 typedef struct PlatformRoom {
@@ -100,6 +114,11 @@ typedef struct PlatformRoom {
     uint8_t height;
     uint8_t id;
     uint8_t format;
+    uint8_t exit_mask;
+    uint8_t north;
+    uint8_t east;
+    uint8_t west;
+    uint8_t south;
     uint8_t tiles[PLATFORM_MAP_TILE_COUNT];
     PlatformObject objects[PLATFORM_ROOM_OBJECT_COUNT];
     uint8_t text[PLATFORM_ROOM_TEXT_BYTES];
@@ -147,6 +166,10 @@ void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 /* Load a fixed-size room from the configured disk or EasyFlash backend. */
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 
+/* Resolve one enabled cardinal neighbor; returns PLATFORM_ERR_NOT_FOUND otherwise. */
+uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
+                               uint8_t* room_id);
+
 /* Load all 256 fixed-size object types from a sequential file. */
 uint8_t platform_object_types_load(const char* filename, uint8_t device);
 
@@ -154,8 +177,10 @@ uint8_t platform_object_types_load(const char* filename, uint8_t device);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 
 /*
- * Replace the single resident room while carrying one actor record. Persistent
- * mutations of the room being left remain the storage/save layer's concern.
+ * Atomically replace the resident room while carrying one actor. The
+ * destination is staged, restored, collision-checked, and allocated a slot
+ * before the current player is removed. Persistent mutations other than the
+ * runtime player's original spawn remain the storage/save layer's concern.
  */
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
@@ -253,6 +278,15 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
                                    uint8_t color);
 
 /*
+ * Describe the adjacent hotspot tile in the two bottom lines. Repeated object
+ * types are grouped as a count plus their 14-byte type name. Looking beyond
+ * an enabled room edge reports an exit without loading the neighbor.
+ */
+uint8_t platform_look_direction(const PlatformRoom* room,
+                                const PlatformObject* viewer,
+                                uint8_t direction, uint8_t color);
+
+/*
  * Show three 48-character 4x7 text lines using all eight hardware sprites.
  * half_x/half_y are character-cell coordinates; valid origins are x<=16 and
  * y<=19. line offsets address zero-terminated strings in room.text; offset 0
@@ -267,6 +301,11 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
                               uint8_t line1_offset,
                               uint8_t line2_offset,
                               uint8_t sprite_color);
+
+/* Show three dynamic zero-terminated strings with the same sprite renderer. */
+uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
+                                   const char* line0, const char* line1,
+                                   const char* line2, uint8_t sprite_color);
 
 /* Disable overlay sprites and restore the original 24x3 color cells. */
 void platform_overlay_hide(void);

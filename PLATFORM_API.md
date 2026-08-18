@@ -37,14 +37,15 @@ room-transition logic even when a graphic extends in several directions.
 | `$3000-$38FF` | tiles and tile properties |
 | `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots |
-| `$3C00-$6FFF` | platform code and read-only tables |
-| `$7000-$7FFF` | current room, ordinary BSS, and cc65 software stack |
+| `$3C00-$79DF` | platform code and read-only tables |
+| `$79E0-$7FFF` | ordinary BSS and cc65 software stack |
+| `$8000-$84E4` | current room RAM |
 | `$A000-$BFFF` | gameplay work RAM beneath BASIC ROM |
 | `$C000-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
 
-- one 1,248-byte `PlatformRoom`;
+- one 1,253-byte `PlatformRoom`;
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
 - 256 object-type records, 16 KiB total;
@@ -56,17 +57,22 @@ No API allocates heap memory.
 ## Room file format
 
 Room files are named by the uppercase two-digit hexadecimal room ID: `00`
-through `FF`. Each file is exactly 1,248 bytes.
+through `FF`. Each file is exactly 1,253 bytes.
 
 | Offset | Size | Content |
 |---:|---:|---|
 | `0` | 1 | width, always 20 |
 | `1` | 1 | height, always 11 |
 | `2` | 1 | room ID |
-| `3` | 1 | format version, currently 1 |
-| `4` | 220 | tile IDs, 20x11 row-major |
-| `224` | 768 | 256 three-byte object slots |
-| `992` | 256 | zero-terminated room-text pool |
+| `3` | 1 | format version, currently 2 |
+| `4` | 1 | valid-exit mask: north/east/west/south in bits 0-3 |
+| `5` | 1 | north neighbor room ID |
+| `6` | 1 | east neighbor room ID |
+| `7` | 1 | west neighbor room ID |
+| `8` | 1 | south neighbor room ID |
+| `9` | 220 | tile IDs, 20x11 row-major |
+| `229` | 768 | 256 three-byte object slots |
+| `997` | 256 | zero-terminated room-text pool |
 
 An object slot is:
 
@@ -80,8 +86,10 @@ Text strings are addressed by their byte offset in the 256-byte text pool.
 Offset 0 is conventionally kept as a zero byte so callers can select an empty
 line without a separate sentinel value.
 
-The editor can import the old 224-byte 20x11 map format. It initializes the
-new object and text regions to zero and exports the full 1,248-byte format.
+The exit mask is separate because every byte value, including room `FF`, is a
+valid destination. Links may be one-way. The editor imports old 224-byte maps
+and 1,248-byte format-1 rooms with disabled exits, and exports format 2.
+`tools/migrate_rooms_v2.py` provides the equivalent asset migration.
 
 ## Object-type file format
 
@@ -116,6 +124,8 @@ void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
                                PlatformRoomRestoreHook restore_hook);
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
+uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
+                               uint8_t* room_id);
 uint8_t platform_object_types_load(const char* filename, uint8_t device);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
@@ -140,7 +150,7 @@ copy. The current asset defines it as actor type 1, "The Hero".
 
 `platform_room_load()` dispatches through `platform_storage`. The disk backend
 opens the two-digit filename; the EasyFlash backend selects the fixed ROML bank
-and offset. Both read into staging RAM, validate the 1,248-byte record, and only
+and offset. Both read into staging RAM, validate the 1,253-byte record, and only
 then commit it to the caller's room.
 Loading into the global `platform_room` also updates `platform_current_room`
 and rebinds `platform_player` to `platform_player_slot`.
@@ -402,15 +412,13 @@ It returns zero when no event is available. Cursor-key values are exposed as:
 | Right | `PLATFORM_KEY_CURSOR_RIGHT` | 29 |
 | Up | `PLATFORM_KEY_CURSOR_UP` | 145 |
 | Left | `PLATFORM_KEY_CURSOR_LEFT` | 157 |
+| Look | `PLATFORM_KEY_LOOK` | 76 (`L`) |
 
-`platform_player_step()` proposes a signed half-tile delta. The destination
-must remain within x `0-39`, y `0-21`, and the tile under the destination
-hotspot must have `PLATFORM_TILE_SOLID_LAND` (`$04`) set. Only the hotspot is
-tested; the dimensions of the player graphic do not expand the collision
-footprint. A permitted step uses `platform_object_move()` and therefore
-redraws only changed character/color cells. It returns `PLATFORM_OK` after a
-move, `PLATFORM_ERR_BLOCKED` for a boundary/non-land tile, or
-`PLATFORM_ERR_ARGUMENT` when no player object is active.
+`platform_player_step()` proposes a signed half-tile delta. An in-room
+destination must have `PLATFORM_TILE_SOLID_LAND` (`$04`) set. Crossing an edge
+uses the corresponding enabled neighbor and enters at the opposite boundary
+while preserving the orthogonal coordinate. Only the hotspot is tested; the
+dimensions of the player graphic do not expand the collision footprint.
 
 The demo loop first waits for any key event and hides the sprite dialog. It
 then handles cursor events as one-half-tile player steps:
@@ -451,9 +459,15 @@ returns one of:
 An in-room result writes the proposed hotspot's tile ID to `stepped_tile` when
 that pointer is non-NULL. Trigger detection uses tile property bit 4.
 
-Destination room IDs and arrival coordinates are intentionally not stored in
-the current room format because no neighbor/trigger-table binary schema has
-been selected yet. Game code should resolve:
+Format 2 stores the four edge destinations. `platform_room_neighbor()` returns
+`PLATFORM_ERR_NOT_FOUND` when a direction is disabled. Before committing an
+edge transition, `platform_room_enter()` loads and validates the destination,
+applies its restore hook, suppresses the baked player spawn when returning
+home, checks arrival land, and allocates a destination object slot. Only then
+does it remove/store the old player and commit the staged room. Any earlier
+failure leaves the current room intact.
+
+Trigger destinations remain game-defined. Game code resolves:
 
 ```text
 (current room, edge direction)
@@ -461,10 +475,7 @@ or
 (current room, trigger tile/position)
 ```
 
-to a destination room and hotspot, load the destination, call
-`platform_room_object_transfer()` for a listed player/NPC, then redraw. This
-keeps the current room contract stable until the transition table requirements
-are explicit.
+to a destination room and hotspot before calling `platform_room_enter()`.
 
 ## Bottom text API
 
@@ -476,6 +487,9 @@ void platform_text_write_line(uint8_t line, uint8_t column,
 void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
                                    uint8_t column, uint8_t text_offset,
                                    uint8_t color);
+uint8_t platform_look_direction(const PlatformRoom* room,
+                                const PlatformObject* viewer,
+                                uint8_t direction, uint8_t color);
 ```
 
 Line 0 is screen row 23; line 1 is row 24. Strings are clipped at column 40.
@@ -498,6 +512,15 @@ platform_text_write_room_line(&platform_room,
                               1, room_string_offset, 1);
 ```
 
+`platform_look_direction()` describes the adjacent hotspot tile across both
+rows. Repeated type IDs are grouped (`5 Gold`), names come from the 14-byte
+object-type name, and output fills the two rows and clips at 80 characters. An
+enabled room edge is reported as an exit without loading the neighbor.
+
+The sample loop enters look mode on `L`, displays `Looking...` in the sprite
+overlay, and waits for a cursor direction. A direction hides the overlay and
+writes the description to the bottom rows; pressing `L` again cancels.
+
 ## Sprite dialog overlay
 
 ```c
@@ -507,6 +530,9 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
                               uint8_t line1_offset,
                               uint8_t line2_offset,
                               uint8_t sprite_color);
+uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
+                                   const char* line0, const char* line1,
+                                   const char* line2, uint8_t sprite_color);
 void platform_overlay_hide(void);
 uint8_t platform_overlay_is_visible(void);
 extern const uint8_t platform_overlay_gray[16];
@@ -516,6 +542,13 @@ The overlay uses all eight standard-resolution monochrome sprites side by
 side. It is 192x21 pixels and renders three lines of 48 4x7 glyphs. Each line
 parameter is a byte offset into `room->text`; point a line at offset 0 to leave
 it empty.
+
+`platform_overlay_show_text()` accepts three direct C strings and otherwise
+uses the same clearing, positioning, progressive glyph crawl, and dimming
+behavior. cc65 stores C string letters in PETSCII, so the assembly entry
+normalizes PETSCII upper/lower case before indexing the ASCII glyph table. The
+packed room-text entry continues to consume editor-authored ASCII bytes. The
+demo uses the direct-string entry for the `Looking...` input state.
 
 `half_x` and `half_y` align the overlay to the 8x8 character grid. Valid
 origins are x `0-16` and y `0-19`. The sprite top is shifted down one pixel,
@@ -576,7 +609,9 @@ The existing named mappings are:
 To add a missing character, draw its seven 4-pixel rows in bits 7-4 of an
 available bank-1 charset position, leave row 7 unused, then replace that ASCII
 entry's `00` in `ascii_glyph`. For example, ASCII `0` is table index `$30`.
-The table deliberately does not infer PETSCII or screen-code conversions.
+The table itself deliberately contains only ASCII indices. The direct C-string
+entry normalizes cc65 PETSCII letters before consulting it; packed room text is
+already ASCII and indexes it directly.
 
 The packed renderer is implemented in `src/overlay.s`. Sprite RAM is cleared
 before the sprites are enabled. The cleared sprites are then positioned and
@@ -624,6 +659,8 @@ The editor enforces the 200 non-actor limit and reports total/non-actor counts.
 The room text editor accepts one string per line and displays the generated
 hexadecimal offsets used by the C API.
 
+Room mode also has enabled/destination controls for all four neighbor links.
+
 The separate Object mode exposes dimensions, hotspot, name, actor flag, and a
 visual grid that automatically follows the selected dimensions. It paints
 selected characters from charset bank 0 with a per-cell color. Character 0 is
@@ -638,7 +675,7 @@ using `make asset-editor`.
 The following are deliberately not hidden behind incomplete contracts:
 
 - persistent storage for modified room object lists across 256 rooms;
-- the edge-neighbor and trigger-destination table format;
+- the trigger-destination table format;
 - collision policy beyond existing tile property bits;
 - scheduling and update cadence for NPCs;
 - flash-save integration and failure recovery;

@@ -1,5 +1,5 @@
-; Constants shared by the platform's assembly modules. Keep these synchronized
-; with the compile-time assertions in platform.c/platform.h.
+; Constants shared by the platform's assembly modules. Keep the serialized
+; layout values synchronized with platform.h.
 
 CPU_DDR             = $00
 CPU_PORT            = $01
@@ -18,11 +18,14 @@ OBJECT_TYPE_SIZE    = 64
 OBJECT_TYPE_CHARS   = 16
 OBJECT_TYPE_COLORS  = 32
 
-ROOM_TILES          = 4
+ROOM_TILES          = 9
 MAP_WIDTH_TILES     = 20
 MAP_HEIGHT_TILES    = 11
 MAP_WIDTH_CHARS     = 40
 MAP_HEIGHT_CHARS    = 22
+ROOM_OBJECTS        = ROOM_TILES + MAP_WIDTH_TILES * MAP_HEIGHT_TILES
+ROOM_TEXT           = ROOM_OBJECTS + 256 * 3
+ROOM_FILE_BYTES     = ROOM_TEXT + 256
 
 EASYFLASH_BANK      = $de00
 EASYFLASH_CONTROL   = $de02

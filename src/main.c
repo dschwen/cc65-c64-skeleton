@@ -2,8 +2,13 @@
 
 #include "platform.h"
 
+#pragma code-name ("HIGHCODE")
+#pragma rodata-name ("HIGHRODATA")
+
 int main(void) {
     uint8_t key;
+    uint8_t looking;
+    uint8_t direction;
 
     platform_init();
     if (platform_storage == PLATFORM_STORAGE_DISK) {
@@ -18,10 +23,39 @@ int main(void) {
         key = platform_input_poll();
     } while (key == 0u);
     platform_overlay_hide();
+    looking = 0u;
 
     for (;;) {
         platform_wait_frame();
         key = platform_input_poll();
+        if (looking) {
+            direction = 0xffu;
+            switch (key) {
+                case PLATFORM_KEY_CURSOR_UP:
+                    direction = PLATFORM_DIRECTION_NORTH;
+                    break;
+                case PLATFORM_KEY_CURSOR_RIGHT:
+                    direction = PLATFORM_DIRECTION_EAST;
+                    break;
+                case PLATFORM_KEY_CURSOR_LEFT:
+                    direction = PLATFORM_DIRECTION_WEST;
+                    break;
+                case PLATFORM_KEY_CURSOR_DOWN:
+                    direction = PLATFORM_DIRECTION_SOUTH;
+                    break;
+                case PLATFORM_KEY_LOOK:
+                    platform_overlay_hide();
+                    looking = 0u;
+                    break;
+            }
+            if (direction != 0xffu) {
+                platform_overlay_hide();
+                (void)platform_look_direction(&platform_room, platform_player,
+                                              direction, 1u);
+                looking = 0u;
+            }
+            continue;
+        }
         switch (key) {
             case PLATFORM_KEY_CURSOR_UP:
                 platform_player_step(0, -1);
@@ -47,6 +81,10 @@ int main(void) {
                 break;
             case PLATFORM_KEY_LIGHTNING:
                 platform_lightning();
+                break;
+            case PLATFORM_KEY_LOOK:
+                (void)platform_overlay_show_text(8u, 16u, "Looking...", 0, 0, 1u);
+                looking = 1u;
                 break;
         }
     }

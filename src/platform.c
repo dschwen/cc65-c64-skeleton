@@ -55,8 +55,11 @@ void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
+void overlay_render_line_text(const char* text, uint8_t line);
 
+#pragma bss-name (push, "ROOMBSS")
 PlatformRoom platform_room;
+#pragma bss-name (pop)
 uint8_t platform_current_room;
 uint8_t platform_player_slot;
 PlatformObject* platform_player;
@@ -151,11 +154,19 @@ static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
 static uint16_t wall_char_offsets[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
+static uint8_t look_counts[PLATFORM_OBJECT_TYPE_COUNT];
+static char look_buffer[81];
 #pragma bss-name (pop)
 static PlatformRoomStoreHook room_store_hook;
 static PlatformRoomRestoreHook room_restore_hook;
+static uint8_t player_spawn_room;
+static uint8_t player_spawn_slot;
+static uint8_t player_spawn_type;
+static uint8_t look_length;
+static uint8_t look_truncated;
 #pragma rodata-name (push, "RODATA")
 static const char hex_digits[] = "0123456789ABCDEF";
+static const char empty_text[] = "";
 #pragma rodata-name (pop)
 
 #pragma code-name (push, "CODE")
@@ -406,6 +417,9 @@ void platform_init(void) {
     platform_current_room = 0;
     platform_player_slot = 0;
     platform_player = &platform_room.objects[platform_player_slot];
+    player_spawn_room = platform_current_room;
+    player_spawn_slot = platform_player_slot;
+    player_spawn_type = platform_player->type;
     raster_irq_install();
 }
 
@@ -435,13 +449,14 @@ void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
     room->width = PLATFORM_MAP_WIDTH;
     room->height = PLATFORM_MAP_HEIGHT;
     room->id = room_id;
-    room->format = 1;
+    room->format = PLATFORM_ROOM_FORMAT;
 }
 #pragma code-name (pop)
 
 static uint8_t room_validate(const PlatformRoom* room, uint8_t room_id) {
     if (room->width != PLATFORM_MAP_WIDTH || room->height != PLATFORM_MAP_HEIGHT ||
-        room->id != room_id || room->format != 1u) {
+        room->id != room_id || room->format != PLATFORM_ROOM_FORMAT ||
+        (room->exit_mask & 0xf0u) != 0u) {
         return PLATFORM_ERR_FORMAT;
     }
     return PLATFORM_OK;
@@ -476,14 +491,15 @@ static uint8_t room_load_easyflash(uint8_t room_id) {
     return PLATFORM_OK;
 }
 
-uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
+static uint8_t room_stage_load(uint8_t room_id) {
     uint8_t status;
-    if (room == 0) return PLATFORM_ERR_ARGUMENT;
-    status = platform_storage == PLATFORM_STORAGE_EASYFLASH ?
-             room_load_easyflash(room_id) : room_load_disk(room_id);
+    status = platform_storage == PLATFORM_STORAGE_EASYFLASH
+                 ? room_load_easyflash(room_id) : room_load_disk(room_id);
     if (status != PLATFORM_OK) return status;
-    status = room_validate(&room_stage, room_id);
-    if (status != PLATFORM_OK) return status;
+    return room_validate(&room_stage, room_id);
+}
+
+static void room_commit(PlatformRoom* room, uint8_t room_id) {
     if (room == rendered_room) {
         rendered_room = 0;
         rendered_player = 0;
@@ -494,6 +510,44 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
         platform_current_room = room_id;
         platform_player = &platform_room.objects[platform_player_slot];
     }
+}
+
+uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
+    uint8_t status;
+    if (room == 0) return PLATFORM_ERR_ARGUMENT;
+    status = room_stage_load(room_id);
+    if (status != PLATFORM_OK) return status;
+    room_commit(room, room_id);
+    return PLATFORM_OK;
+}
+
+uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
+                               uint8_t* room_id) {
+    uint8_t mask;
+    uint8_t neighbor;
+    if (room == 0 || room_id == 0) return PLATFORM_ERR_ARGUMENT;
+    switch (direction) {
+        case PLATFORM_DIRECTION_NORTH:
+            mask = PLATFORM_ROOM_EXIT_NORTH;
+            neighbor = room->north;
+            break;
+        case PLATFORM_DIRECTION_EAST:
+            mask = PLATFORM_ROOM_EXIT_EAST;
+            neighbor = room->east;
+            break;
+        case PLATFORM_DIRECTION_WEST:
+            mask = PLATFORM_ROOM_EXIT_WEST;
+            neighbor = room->west;
+            break;
+        case PLATFORM_DIRECTION_SOUTH:
+            mask = PLATFORM_ROOM_EXIT_SOUTH;
+            neighbor = room->south;
+            break;
+        default:
+            return PLATFORM_ERR_ARGUMENT;
+    }
+    if ((room->exit_mask & mask) == 0u) return PLATFORM_ERR_NOT_FOUND;
+    *room_id = neighbor;
     return PLATFORM_OK;
 }
 
@@ -998,6 +1052,8 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
 uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     int16_t new_x;
     int16_t new_y;
+    uint8_t direction;
+    uint8_t room_id;
     uint8_t tile;
 
     if (platform_player == 0 || platform_player->type == 0u) {
@@ -1005,18 +1061,33 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     }
     new_x = (int16_t)platform_player->x + delta_x;
     new_y = (int16_t)platform_player->y + delta_y;
-    if (new_x < 0 || new_x >= PLATFORM_MAP_CHAR_WIDTH ||
-        new_y < 0 || new_y >= PLATFORM_MAP_CHAR_HEIGHT) {
+    if (new_y < 0) {
+        direction = PLATFORM_DIRECTION_NORTH;
+        new_y = PLATFORM_MAP_CHAR_HEIGHT - 1u;
+    } else if (new_x < 0) {
+        direction = PLATFORM_DIRECTION_WEST;
+        new_x = PLATFORM_MAP_CHAR_WIDTH - 1u;
+    } else if (new_x >= PLATFORM_MAP_CHAR_WIDTH) {
+        direction = PLATFORM_DIRECTION_EAST;
+        new_x = 0;
+    } else if (new_y >= PLATFORM_MAP_CHAR_HEIGHT) {
+        direction = PLATFORM_DIRECTION_SOUTH;
+        new_y = 0;
+    } else {
+        tile = platform_room.tiles[(uint16_t)((uint8_t)new_y >> 1) *
+                                   PLATFORM_MAP_WIDTH + ((uint8_t)new_x >> 1)];
+        if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
+            return PLATFORM_ERR_BLOCKED;
+        }
+        platform_object_move(&platform_room, platform_player,
+                             (uint8_t)new_x, (uint8_t)new_y, platform_player);
+        return PLATFORM_OK;
+    }
+    if (platform_room_neighbor(&platform_room, direction, &room_id) != PLATFORM_OK) {
         return PLATFORM_ERR_BLOCKED;
     }
-    tile = platform_room.tiles[(uint16_t)((uint8_t)new_y >> 1) *
-                               PLATFORM_MAP_WIDTH + ((uint8_t)new_x >> 1)];
-    if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
-        return PLATFORM_ERR_BLOCKED;
-    }
-    platform_object_move(&platform_room, platform_player,
-                         (uint8_t)new_x, (uint8_t)new_y, platform_player);
-    return PLATFORM_OK;
+    return platform_room_enter(room_id, platform_player->type,
+                               (uint8_t)new_x, (uint8_t)new_y);
 }
 
 #pragma code-name (push, "LOWCODE")
@@ -1085,11 +1156,31 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     uint8_t slot;
     uint8_t result;
     uint8_t removed_actor;
-    if (actor_type == 0u) return PLATFORM_ERR_ARGUMENT;
+    uint8_t tile;
+
+    if (actor_type == 0u || new_x >= PLATFORM_MAP_CHAR_WIDTH ||
+        new_y >= PLATFORM_MAP_CHAR_HEIGHT) return PLATFORM_ERR_ARGUMENT;
     actor.type = actor_type;
     actor.x = new_x;
     actor.y = new_y;
     removed_actor = platform_player != 0 && platform_player->type == actor_type;
+
+    result = room_stage_load(room_id);
+    if (result != PLATFORM_OK) return result;
+    if (room_restore_hook != 0) room_restore_hook(&room_stage);
+    if (removed_actor && room_id == player_spawn_room &&
+        room_stage.objects[player_spawn_slot].type == player_spawn_type) {
+        memset(&room_stage.objects[player_spawn_slot], 0, sizeof(PlatformObject));
+    }
+    tile = room_stage.tiles[(uint16_t)(new_y >> 1) * PLATFORM_MAP_WIDTH +
+                            (new_x >> 1)];
+    if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
+        return PLATFORM_ERR_BLOCKED;
+    }
+    result = platform_room_object_add(&room_stage, actor.type,
+                                      actor.x, actor.y, &slot);
+    if (result != PLATFORM_OK) return result;
+
     if (removed_actor) {
         previous_actor = *platform_player;
         platform_player->type = 0;
@@ -1101,18 +1192,8 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
             return result;
         }
     }
-    result = platform_room_load(&platform_room, room_id);
-    if (result != PLATFORM_OK) {
-        if (removed_actor) *platform_player = previous_actor;
-        if (room_store_hook != 0) (void)room_store_hook(&platform_room);
-        return result;
-    }
-    if (room_restore_hook != 0) room_restore_hook(&platform_room);
-    result = platform_room_object_add(&platform_room, actor.type,
-                                      actor.x, actor.y, &slot);
-    if (result != PLATFORM_OK) return result;
-    platform_current_room = room_id;
     platform_player_slot = slot;
+    room_commit(&platform_room, room_id);
     platform_player = &platform_room.objects[slot];
     platform_room_draw(&platform_room, platform_player);
     return PLATFORM_OK;
@@ -1241,12 +1322,134 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
     }
 }
 
-uint8_t platform_overlay_show(const PlatformRoom* room,
-                              uint8_t half_x, uint8_t half_y,
-                              uint8_t line0_offset,
-                              uint8_t line1_offset,
-                              uint8_t line2_offset,
-                              uint8_t sprite_color) {
+static void look_append_char(char ch) {
+    if (look_length < 80u) {
+        look_buffer[look_length++] = ch;
+    } else {
+        look_truncated = 1u;
+    }
+}
+
+static void look_append_string(const char* text) {
+    while (*text != '\0') look_append_char(*text++);
+}
+
+static void look_append_count(uint8_t count) {
+    if (count >= 100u) look_append_char((char)('0' + count / 100u));
+    if (count >= 10u) look_append_char((char)('0' + (count / 10u) % 10u));
+    look_append_char((char)('0' + count % 10u));
+    look_append_char(' ');
+}
+
+static void look_append_type_name(uint8_t type_id) {
+    const PlatformObjectType* type;
+    uint8_t ch;
+    uint8_t i;
+    type = platform_object_type_get(type_id);
+    for (i = 0u; i < sizeof(type->name) && type->name[i] != '\0'; ++i) {
+        ch = (uint8_t)type->name[i];
+        /* Editor assets use ASCII; cc65 C literals use PETSCII. Normalize
+         * names to the latter before platform_text_screen_code(). */
+        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
+        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
+        look_append_char((char)ch);
+    }
+}
+
+static void look_write_buffer(uint8_t color) {
+    uint8_t line;
+    uint8_t column;
+    uint8_t i;
+
+    if (look_truncated) {
+        look_buffer[77] = '.';
+        look_buffer[78] = '.';
+        look_buffer[79] = '.';
+        look_length = 80u;
+    }
+    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+    for (i = 0u; i < look_length; ++i) {
+        line = i >= PLATFORM_MAP_CHAR_WIDTH ? PLATFORM_TEXT_LINE_BOTTOM
+                                             : PLATFORM_TEXT_LINE_TOP;
+        column = i >= PLATFORM_MAP_CHAR_WIDTH ? i - PLATFORM_MAP_CHAR_WIDTH : i;
+        write_screen_cell(column, (uint8_t)(23u + line),
+                          platform_text_screen_code(look_buffer[i]), color);
+    }
+}
+
+uint8_t platform_look_direction(const PlatformRoom* room,
+                                const PlatformObject* viewer,
+                                uint8_t direction, uint8_t color) {
+    static const char* const direction_names[4] = {
+        "North", "East", "West", "South"
+    };
+    int8_t delta_x;
+    int8_t delta_y;
+    int16_t tile_x;
+    int16_t tile_y;
+    uint16_t i;
+    uint16_t limit;
+    uint8_t type_id;
+    uint8_t count;
+    uint8_t found;
+    uint8_t neighbor;
+
+    if (room == 0 || viewer == 0 || viewer->type == 0u || direction > 3u) {
+        return PLATFORM_ERR_ARGUMENT;
+    }
+    delta_x = direction == PLATFORM_DIRECTION_EAST ? 1 :
+              direction == PLATFORM_DIRECTION_WEST ? -1 : 0;
+    delta_y = direction == PLATFORM_DIRECTION_SOUTH ? 1 :
+              direction == PLATFORM_DIRECTION_NORTH ? -1 : 0;
+    tile_x = (int16_t)(viewer->x >> 1) + delta_x;
+    tile_y = (int16_t)(viewer->y >> 1) + delta_y;
+    look_length = 0u;
+    look_truncated = 0u;
+    look_append_string(direction_names[direction]);
+    look_append_string(" you see: ");
+
+    if (tile_x < 0 || tile_x >= PLATFORM_MAP_WIDTH ||
+        tile_y < 0 || tile_y >= PLATFORM_MAP_HEIGHT) {
+        if (platform_room_neighbor(room, direction, &neighbor) == PLATFORM_OK) {
+            look_append_string("an exit.");
+        } else {
+            look_append_string("nothing.");
+        }
+        look_write_buffer(color);
+        return PLATFORM_OK;
+    }
+
+    memset(look_counts, 0, sizeof(look_counts));
+    limit = room == rendered_room ? rendered_object_limit : PLATFORM_ROOM_OBJECT_COUNT;
+    for (i = 0u; i < limit; ++i) {
+        type_id = room->objects[i].type;
+        if (type_id == 0u || &room->objects[i] == viewer ||
+            (room->objects[i].x >> 1) != (uint8_t)tile_x ||
+            (room->objects[i].y >> 1) != (uint8_t)tile_y) continue;
+        if (look_counts[type_id] != 0xffu) ++look_counts[type_id];
+    }
+    found = 0u;
+    for (i = 0u; i < limit; ++i) {
+        type_id = room->objects[i].type;
+        count = look_counts[type_id];
+        if (type_id == 0u || count == 0u || &room->objects[i] == viewer ||
+            (room->objects[i].x >> 1) != (uint8_t)tile_x ||
+            (room->objects[i].y >> 1) != (uint8_t)tile_y) continue;
+        if (found) look_append_string(", ");
+        if (count > 1u) look_append_count(count);
+        look_append_type_name(type_id);
+        look_counts[type_id] = 0u;
+        found = 1u;
+    }
+    if (!found) look_append_string("nothing");
+    look_append_char('.');
+    look_write_buffer(color);
+    return PLATFORM_OK;
+}
+
+static uint8_t overlay_begin(uint8_t half_x, uint8_t half_y,
+                             uint8_t sprite_color) {
     uint8_t x;
     uint8_t y;
     uint8_t i;
@@ -1254,7 +1457,7 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
     uint8_t high_x;
     uint16_t offset;
 
-    if (room == 0 || half_x > 16u || half_y > 19u) return PLATFORM_ERR_ARGUMENT;
+    if (half_x > 16u || half_y > 19u) return PLATFORM_ERR_ARGUMENT;
     platform_overlay_hide();
     memset(P_SPRITE_DATA, 0, 512u);
 
@@ -1285,9 +1488,37 @@ uint8_t platform_overlay_show(const PlatformRoom* room,
     overlay_visible = 1;
     P_VIC(0x15) = 0xff;
 
+    return PLATFORM_OK;
+}
+
+uint8_t platform_overlay_show(const PlatformRoom* room,
+                              uint8_t half_x, uint8_t half_y,
+                              uint8_t line0_offset,
+                              uint8_t line1_offset,
+                              uint8_t line2_offset,
+                              uint8_t sprite_color) {
+    uint8_t result;
+
+    if (room == 0) return PLATFORM_ERR_ARGUMENT;
+    result = overlay_begin(half_x, half_y, sprite_color);
+    if (result != PLATFORM_OK) return result;
+
     overlay_render_line_packed(room, 0, line0_offset);
     overlay_render_line_packed(room, 1, line1_offset);
     overlay_render_line_packed(room, 2, line2_offset);
+    return PLATFORM_OK;
+}
+
+uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
+                                   const char* line0, const char* line1,
+                                   const char* line2, uint8_t sprite_color) {
+    uint8_t result;
+
+    result = overlay_begin(half_x, half_y, sprite_color);
+    if (result != PLATFORM_OK) return result;
+    overlay_render_line_text(line0 != 0 ? line0 : empty_text, 0);
+    overlay_render_line_text(line1 != 0 ? line1 : empty_text, 1);
+    overlay_render_line_text(line2 != 0 ? line2 : empty_text, 2);
     return PLATFORM_OK;
 }
 

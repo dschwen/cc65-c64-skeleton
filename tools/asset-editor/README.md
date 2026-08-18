@@ -112,21 +112,35 @@ Payload part 2: tile properties (`tileCount` bytes)
 
 ### Room file (`00` through `FF`)
 
-Header (4 bytes):
+Header (9 bytes):
 - Byte 0: width in tiles (`20`)
 - Byte 1: height in tiles (`11`)
 - Byte 2: room ID
-- Byte 3: format version (`1`)
+- Byte 3: format version (`2`)
+- Byte 4: valid-exit mask, north/east/west/south in bits 0-3.
+- Byte 5: north room ID.
+- Byte 6: east room ID.
+- Byte 7: west room ID.
+- Byte 8: south room ID.
 
 Payload (`1244` bytes):
 - `220` tile IDs in row-major order.
 - `768` object bytes: 256 slots of type ID, hotspot x, hotspot y.
 - `256` bytes containing zero-terminated room strings addressed by offset.
 
-Total room file size: `1248` bytes.
+Total room file size: `1253` bytes.
 
-Compatibility import accepts the legacy 224-byte 20x11 map format and clears
-the new object/text regions. Export always writes the full room format.
+Compatibility import accepts the legacy 224-byte 20x11 map and 1248-byte
+format-1 room. Missing adjacency/object/text fields are cleared. Export always
+writes format 2.
+
+Existing asset directories can be migrated in place from format 1 and assigned
+links at the same time:
+
+```bash
+python3 tools/migrate_rooms_v2.py assets \
+  --link 00:east:01 --link 01:west:00
+```
 
 ### Object type list (`.cobj`)
 

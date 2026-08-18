@@ -292,6 +292,30 @@ button:hover {
   font-weight: 700;
 }
 
+.room-exits {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(92px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.room-exits label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+}
+
+.room-exits label span {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.room-exits input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+}
+
 .room-editor-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -512,6 +536,10 @@ kbd {
 }
 
 @media (max-width: 640px) {
+  .room-exits {
+    grid-template-columns: repeat(2, minmax(92px, 1fr));
+  }
+
   .shortcut-list div {
     grid-template-columns: 1fr;
     gap: 0.2rem;

@@ -5,13 +5,15 @@
 
 .setcpu "6502"
 
-.import incsp3
+.include "platform.inc"
+
+.import incsp2, incsp3
 .importzp sp, ptr1, ptr2, ptr3
 .export _overlay_render_line_packed
+.export _overlay_render_line_text
 
 SPRITE_DATA = $3a00
 TEXT_CHARSET = $2800
-ROOM_TEXT_OFFSET = $03e0
 
 text_ptr = ptr1
 glyph_ptr = ptr2
@@ -24,11 +26,17 @@ column:         .res 1
 byte_in_sprite: .res 1
 right_nibble:   .res 1
 row:            .res 1
+argument_bytes: .res 1
+text_is_petscii: .res 1
 
 .segment "HIGHCODE"
 
 _overlay_render_line_packed:
     sta text_index
+    ldx #3
+    stx argument_bytes
+    lda #0
+    sta text_is_petscii
     ldy #0
     lda (sp),y                  ; line number
     pha
@@ -40,12 +48,12 @@ _overlay_render_line_packed:
     tay
     txa
 
-    ; text_ptr = room + ROOM_TEXT_OFFSET + text_index
+    ; text_ptr = room + ROOM_TEXT + text_index
     clc
-    adc #<ROOM_TEXT_OFFSET
+    adc #<ROOM_TEXT
     sta text_ptr
     tya
-    adc #>ROOM_TEXT_OFFSET
+    adc #>ROOM_TEXT
     sta text_ptr+1
     clc
     lda text_ptr
@@ -54,6 +62,25 @@ _overlay_render_line_packed:
     bcc :+
     inc text_ptr+1
 :
+
+    jmp overlay_render_line_common
+
+; C signature: overlay_render_line_text(const char* text, uint8_t line).
+; The line arrives in A and the text pointer occupies two C stack bytes.
+_overlay_render_line_text:
+    ldx #2
+    stx argument_bytes
+    pha
+    lda #1
+    sta text_is_petscii
+    ldy #0
+    lda (sp),y
+    sta text_ptr
+    iny
+    lda (sp),y
+    sta text_ptr+1
+
+overlay_render_line_common:
     ; sprite_base = SPRITE_DATA + line * 21
     pla
     beq @line_zero
@@ -183,10 +210,33 @@ _overlay_render_line_packed:
     beq @done
     jmp @character
 @done:
+    lda argument_bytes
+    cmp #2
+    beq @done_text
     jmp incsp3
+@done_text:
+    jmp incsp2
 
-; A = ASCII byte, returns A = charset character index or zero for blank.
+; A = ASCII room byte or cc65 PETSCII C-string byte, depending on the entry
+; point used. Returns A = charset character index or zero for blank.
 map_glyph:
+    ldx text_is_petscii
+    beq @ascii
+    cmp #$c1                       ; cc65 literal 'A'
+    bcc @petscii_lower
+    cmp #$db
+    bcs @unsupported
+    sec
+    sbc #$80                       ; PETSCII upper case -> ASCII upper case
+    bne @ascii
+@petscii_lower:
+    cmp #$41                       ; cc65 literal 'a'
+    bcc @ascii                     ; punctuation is already ASCII-compatible
+    cmp #$5b
+    bcs @ascii
+    clc
+    adc #$20                       ; PETSCII lower case -> ASCII lower case
+@ascii:
     cmp #128
     bcs @unsupported
     tax

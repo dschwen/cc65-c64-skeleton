@@ -11,7 +11,7 @@ SEGMENT = re.compile(
     r"^([A-Z][A-Z0-9_]*)\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+"
 )
 LOAD_ADDRESS = 0x0801
-LAST_FILE_ADDRESS = 0x5FFF
+NON_FILE_SEGMENTS = {"ZEROPAGE", "BSS", "ROOMBSS", "WORKBSS", "OBJECTTYPES"}
 
 
 def linked_last_address(map_text: str) -> int:
@@ -26,9 +26,10 @@ def linked_last_address(map_text: str) -> int:
         match = SEGMENT.match(line)
         if not match:
             continue
+        name = match.group(1)
         start = int(match.group(2), 16)
         end = int(match.group(3), 16)
-        if LOAD_ADDRESS <= start <= LAST_FILE_ADDRESS:
+        if name not in NON_FILE_SEGMENTS and start >= LOAD_ADDRESS:
             last = max(last, end)
     if last < LOAD_ADDRESS:
         raise ValueError("no loadable PRG segments found in linker map")

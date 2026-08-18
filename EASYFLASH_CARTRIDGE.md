@@ -156,6 +156,8 @@ would introduce several new requirements:
 - `BSS` and the cc65 software stack must remain in RAM;
 - `WORKBSS` at `$A000-$BFFF` is underlying RAM and requires EasyFlash ROMH and
   BASIC ROM to be disabled before gameplay accesses it;
+- the current room at `$8000-$84E4` is temporarily hidden by ROML, so room
+  loads copy into `$A000` staging RAM and commit only after disabling the cart;
 - code executing inside a banked window cannot switch away its own bank;
 - ROML/ROMH hide RAM or BASIC ROM beneath their CPU windows;
 - VIC-visible assets still need a deliberate RAM/VIC-bank strategy.
@@ -164,7 +166,7 @@ The current cartridge instead treats the working PRG as its payload:
 
 1. The normal `make` build produces `build/game.prg`.
 2. `ef_boot.s` embeds the PRG excluding its two-byte load address, placing the
-   first `$3000` bytes in bank 0 and the remainder in bank 1.
+   first `$3200` bytes in bank 0 and the remainder in bank 1.
 3. The bootstrap initializes CPU port registers `$01` and `$00`.
 4. It selects EasyFlash bank 0 and 16 KiB mode.
 5. It calls KERNAL `IOINIT`, `RAMTAS`, `RESTOR`, and `CINT`.
@@ -192,16 +194,16 @@ during normal gameplay.
 | Range | Segment | Current use |
 |---|---|---|
 | `$8000-$8008` | `CART_HEADER` | Vectors and `CBM80` signature |
-| `$8009-$807D` | `BOOT` | RAM initialization and copy loader |
-| `$807E-$80FF` | fill | `$FF` padding |
-| bank 0 `$8200-$B1FF` | `PAYLOAD0` | first `$3000` PRG payload bytes |
+| `$8009-$811B` | `BOOT` | RAM initialization and copy loader |
+| `$811C-$81FF` | fill | `$FF` padding |
+| bank 0 `$8200-$B3FF` | `PAYLOAD0` | first `$3200` PRG payload bytes |
 | remaining bank 0 space | fill | `$FF` padding |
 | `$BFFA-$BFFF` | `VECTORS` | Ultimax NMI, RESET, and IRQ vectors |
 | bank 1 `$8000+` | `PAYLOAD1` | remaining PRG payload bytes |
 | remainder of bank 1 | fill | `$FF` padding |
 
 The first payload starts at `$8200` to leave room for the bootstrap. The
-assembler asserts a full `$3000`-byte first chunk, a nonempty second chunk,
+assembler asserts a full `$3200`-byte first chunk, a nonempty second chunk,
 and that the remainder fits in bank 1.
 
 The current bootstrap has two intentional hard-coded couplings to the PRG
@@ -283,9 +285,9 @@ The final six bytes should contain three `$8009` vectors:
 Verify both embedded chunks against the PRG excluding its load address:
 
 ```bash
-cmp -i 256:2 -n 12288 build/game-ef.bin build/game.prg
-payload1_size=$(( $(wc -c < build/game.prg) - 2 - 0x3000 ))
-cmp -i 16384:12290 -n "$payload1_size" build/game-ef.bin build/game.prg
+cmp -i 512:2 -n 12800 build/game-ef.bin build/game.prg
+payload1_size=$(( $(wc -c < build/game.prg) - 2 - 0x3200 ))
+cmp -i 16384:12802 -n "$payload1_size" build/game-ef.bin build/game.prg
 ```
 
 The second byte count is computed from the current PRG size and changes with
@@ -313,9 +315,8 @@ The CRT first copies the common PRG to RAM and disables EasyFlash. During
 gameplay the storage backend temporarily selects 8 KiB mode to copy rooms and
 object types from runtime ROML asset banks.
 
-This must change before rooms can be entered dynamically during cartridge
-gameplay. The intended platform contract is one logical room-loading operation
-with two storage implementations:
+The implemented runtime presents one logical room-loading operation with two
+storage implementations:
 
 ```c
 typedef enum PlatformStorage {
@@ -328,26 +329,26 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 ```
 
 The disk backend retains the current two-hex-digit filename and `cbm_read()`
-behavior. The EasyFlash backend obtains the same 1,248-byte record from an
+behavior. The EasyFlash backend obtains the same 1,253-byte record from an
 asset bank. Game and rendering code must not care which backend supplied it.
 The boot loader can leave a signature byte in reserved RAM so the common PRG
 can select the EasyFlash backend when it was launched from a CRT.
 
-Only the current room needs to be resident for drawing. On a transition the
-runtime must preserve the moving actor record, persist or journal any changes
-to the leaving room, load the destination record into `platform_room`, insert
-the actor in its first permitted empty slot, update `platform_player_slot` and
-`platform_player`, and redraw. The existing `platform_room_object_transfer()`
-requires two resident room buffers and therefore is a useful primitive for
-tools or a two-buffer implementation, but it is not by itself the final
-single-buffer transition operation.
+Only the current room is resident for drawing. `platform_room_enter()` stages
+and validates the destination, invokes the optional restore hook, checks the
+arrival tile and target capacity, then invokes the optional store hook for the
+leaving room. It commits only after those operations succeed, inserts the
+actor in the first permitted empty slot, updates `platform_player_slot` and
+`platform_player`, and redraws. `platform_room_object_transfer()` remains a
+useful primitive for tools or code that deliberately keeps two room buffers.
 
 Cartridge room records are immutable base data. Any object that moves between
-rooms makes the room state differ from that base. Dynamic loading therefore
-also requires a mutable-state policy: save modified rooms to disk/flash, keep a
-compact delta journal, or impose a bounded cache and define eviction. Reloading
-the original cartridge record without such a layer would resurrect removed
-objects and discard newly inserted ones.
+rooms makes the room state differ from that base. Register store/restore hooks
+with `platform_room_state_hooks()` to supply the chosen mutable-state policy:
+disk/flash saves, a compact delta journal, or a bounded cache with defined
+eviction. Without hooks, reloading base data discards general room mutations;
+the platform only suppresses the original baked player spawn so returning to
+room `00` does not duplicate the player.
 
 ### Asset packing
 
@@ -357,10 +358,10 @@ overlapping ld65 memory areas.
 
 Runtime reads should normally use EasyFlash 8 KiB mode (`$DE02 = $06`), which
 exposes ROML at `$8000-$9FFF` without exposing ROMH over `$A000-$BFFF`. Six
-1,248-byte rooms fit in one ROML page:
+1,253-byte rooms fit in one ROML page:
 
 ```text
-6 * 1,248 = 7,488 bytes, leaving 704 bytes per 8 KiB page
+6 * 1,253 = 7,518 bytes, leaving 674 bytes per 8 KiB page
 ```
 
 The 256 rooms therefore need 43 ROML pages. Together with 16 KiB of object
@@ -456,7 +457,7 @@ custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
 Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
 ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
 changing its mode. Copy time must remain bounded so raster deadlines are not
-missed; a 1,248-byte room copy may need to be scheduled during a blanked screen
+missed; a 1,253-byte room copy may need to be scheduled during a blanked screen
 or loading transition rather than during active display.
 
 For larger projects, generate each physical bank in deterministic order:
@@ -547,7 +548,7 @@ space. This was the cause of the first black-screen cartridge build.
 ## Current limitations
 
 - Runtime room banks are fixed at 2-44; type pages are banks 45-46.
-- The complete PRG payload must fit in `$3000` bytes of bank 0 plus one full
+- The complete PRG payload must fit in `$3200` bytes of bank 0 plus one full
   16 KiB bank 1.
 - PRG load and entry addresses are hard-coded in the bootstrap.
 - EasyFlash remains off except during bounded runtime asset copies.

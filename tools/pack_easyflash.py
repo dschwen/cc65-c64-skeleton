@@ -8,7 +8,7 @@ from pathlib import Path
 
 BANK_BYTES = 0x4000
 ROML_BYTES = 0x2000
-ROOM_BYTES = 1248
+ROOM_BYTES = 1253
 ROOMS_PER_BANK = 6
 FIRST_ROOM_BANK = 2
 ROOM_BANKS = 43
@@ -24,7 +24,7 @@ def load_room(asset_dir: Path, room_id: int) -> bytes:
     data = path.read_bytes()
     if len(data) != ROOM_BYTES:
         raise ValueError(f"{path}: expected {ROOM_BYTES} bytes, got {len(data)}")
-    if data[:4] != bytes((20, 11, room_id, 1)):
+    if data[:4] != bytes((20, 11, room_id, 2)):
         raise ValueError(f"{path}: invalid room header {data[:4].hex()}")
     return data
 

@@ -276,10 +276,11 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
 | `$3A00-$3BFF` | eight runtime sprite-overlay bitmap slots |
-| `$3C00-$6EF0` | platform code and read-only tables (current extent) |
-| `$7000-$7805` | current room and ordinary platform BSS |
-| `$7806-$7FFF` | cc65 software-stack headroom |
-| `$A000-$B37E` | gameplay work BSS beneath BASIC ROM |
+| `$3C00-$796D` | platform code and read-only tables (current extent) |
+| `$79E0-$7D0C` | ordinary platform BSS |
+| `$7D0D-$7FFF` | cc65 software-stack headroom |
+| `$8000-$84E4` | current 1,253-byte room |
+| `$A000-$B4D4` | gameplay work BSS beneath BASIC ROM |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
@@ -322,10 +323,12 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current linker layout reserves resident platform code through `$6FFF` and
-starts ordinary BSS at `$7000`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the
-cc65 software stack top is unchanged. The current BSS ends at `$7805`, leaving
-just under 2 KiB of software-stack headroom.
+The current linker layout reserves resident platform code through `$79DF` and
+starts ordinary BSS at `$79E0`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the
+cc65 software stack top is unchanged. The current BSS ends at `$7D0C`, leaving
+755 bytes of software-stack headroom. The current room starts at `$8000`; it is
+visible during normal gameplay and KERNAL disk access, and is temporarily
+shadowed only while EasyFlash ROML is selected to copy a room into staging RAM.
 
 `WORKBSS` uses `$A000-$BFFF` RAM beneath BASIC ROM for the base-color and
 brightness buffers, room-load staging, and the viewer-quadrant wall-light

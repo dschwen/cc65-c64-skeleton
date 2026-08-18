@@ -276,11 +276,16 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
 | `$3A00-$3BFF` | eight runtime sprite-overlay bitmap slots |
-| `$3C00-$796D` | platform code and read-only tables (current extent) |
-| `$79E0-$7D0C` | ordinary platform BSS |
-| `$7D0D-$7FFF` | cc65 software-stack headroom |
-| `$8000-$84E4` | current 1,253-byte room |
-| `$A000-$B4D4` | gameplay work BSS beneath BASIC ROM |
+| `$3C00-$7FFF` | resident platform code and read-only tables |
+| `$8000-$84E8` | current 1,257-byte room |
+| `$84E9-$85FF` | fixed resident `GameState` region |
+| `$8A00-$8EFF` | resident upper code |
+| `$9200-$9FFF` | active room-specific code overlay |
+| `$A000-$A4E8` | destination-room staging |
+| `$A4E9-$B4D8` | rebuildable rendering/lighting work RAM and code staging |
+| `$B500-$B848` | ordinary platform BSS |
+| `$B900-$BBFF` | cc65 software stack |
+| `$C000-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
@@ -309,7 +314,7 @@ RAM are unavailable in that mapping.
 ### EasyFlash cartridge build
 
 `make cartridge` builds the normal PRG first, splits its payload across
-EasyFlash banks 0 and 1, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
+EasyFlash banks 0-2, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
 both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
 six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
 KERNAL, copies the PRG to its linked RAM layout, and disables the
@@ -323,23 +328,22 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current linker layout reserves resident platform code through `$79DF` and
-starts ordinary BSS at `$79E0`. `MAIN_START + MAIN_SIZE` remains `$8000`, so the
-cc65 software stack top is unchanged. The current BSS ends at `$7D0C`, leaving
-755 bytes of software-stack headroom. The current room starts at `$8000`; it is
-visible during normal gameplay and KERNAL disk access, and is temporarily
-shadowed only while EasyFlash ROML is selected to copy a room into staging RAM.
+The current room and `GameState` occupy `$8000-$85FF`. Resident upper code is
+loaded at `$8A00`; the independently linked room overlay runs at `$9200`.
+Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at `$B500`
+and `$B900`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
+visible while leaving BASIC hidden and these regions readable.
 
-`WORKBSS` uses `$A000-$BFFF` RAM beneath BASIC ROM for the base-color and
-brightness buffers, room-load staging, and the viewer-quadrant wall-light
-cache. Gameplay mapping `$35` exposes this RAM. KERNAL disk intervals map `$37`
-and temporarily expose BASIC ROM instead; CPU writes still reach the underlying
-RAM, and platform code restores `$35` before validating or consuming staged
-data. Check both `__BSS_SIZE__` and the `WORKBSS` end in `build/game.map` when
-adding fixed buffers.
+`WORKBSS` uses `$A4E9-$B4D8` for base colors, brightness/visibility buffers,
+and caches. Room-code staging deliberately overwrites a prefix of this
+rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
+room-code copies are implemented in assembly because ROMH temporarily hides
+both the C stack and BSS. Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
+the overlay map files whenever adding fixed buffers or resident APIs.
 
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, and sprite dialogs.
+See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and overlay constraints.
 
 ### VIC‑II
 - **VIC register base**: `$D000` (mirrored through `$D3FF`)

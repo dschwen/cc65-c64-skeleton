@@ -11,7 +11,10 @@ SEGMENT = re.compile(
     r"^([A-Z][A-Z0-9_]*)\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+"
 )
 LOAD_ADDRESS = 0x0801
-NON_FILE_SEGMENTS = {"ZEROPAGE", "BSS", "ROOMBSS", "WORKBSS", "OBJECTTYPES"}
+NON_FILE_SEGMENTS = {
+    "ZEROPAGE", "BSS", "ROOMBSS", "GAMESTATE", "ROOMSTAGE", "WORKBSS",
+    "OBJECTTYPES",
+}
 
 
 def linked_last_address(map_text: str) -> int:

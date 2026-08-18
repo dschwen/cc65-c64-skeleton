@@ -37,15 +37,20 @@ room-transition logic even when a graphic extends in several directions.
 | `$3000-$38FF` | tiles and tile properties |
 | `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots |
-| `$3C00-$79DF` | platform code and read-only tables |
-| `$79E0-$7FFF` | ordinary BSS and cc65 software stack |
-| `$8000-$84E4` | current room RAM |
-| `$A000-$BFFF` | gameplay work RAM beneath BASIC ROM |
+| `$3C00-$7FFF` | platform code and read-only tables |
+| `$8000-$84E8` | current 1,257-byte room RAM |
+| `$84E9-$85FF` | fixed `GameState` region |
+| `$8A00-$8EFF` | resident upper code |
+| `$9200-$9FFF` | active room-code overlay |
+| `$A000-$A4E8` | destination-room staging |
+| `$A4E9-$B4D8` | rebuildable render/lighting work RAM and room-code staging |
+| `$B500-$B848` | ordinary resident BSS |
+| `$B900-$BBFF` | cc65 software stack |
 | `$C000-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
 
-- one 1,253-byte `PlatformRoom`;
+- one 1,257-byte `PlatformRoom`;
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
 - 256 object-type records, 16 KiB total;
@@ -57,22 +62,26 @@ No API allocates heap memory.
 ## Room file format
 
 Room files are named by the uppercase two-digit hexadecimal room ID: `00`
-through `FF`. Each file is exactly 1,253 bytes.
+through `FF`. Each file is exactly 1,257 bytes.
 
 | Offset | Size | Content |
 |---:|---:|---|
 | `0` | 1 | width, always 20 |
 | `1` | 1 | height, always 11 |
 | `2` | 1 | room ID |
-| `3` | 1 | format version, currently 2 |
+| `3` | 1 | format version, currently 3 |
 | `4` | 1 | valid-exit mask: north/east/west/south in bits 0-3 |
 | `5` | 1 | north neighbor room ID |
 | `6` | 1 | east neighbor room ID |
 | `7` | 1 | west neighbor room ID |
 | `8` | 1 | south neighbor room ID |
-| `9` | 220 | tile IDs, 20x11 row-major |
-| `229` | 768 | 256 three-byte object slots |
-| `997` | 256 | zero-terminated room-text pool |
+| `9` | 1 | north exit-description text offset |
+| `10` | 1 | east exit-description text offset |
+| `11` | 1 | west exit-description text offset |
+| `12` | 1 | south exit-description text offset |
+| `13` | 220 | tile IDs, 20x11 row-major |
+| `233` | 768 | 256 three-byte object slots |
+| `1001` | 256 | zero-terminated room-text pool |
 
 An object slot is:
 
@@ -87,9 +96,10 @@ Offset 0 is conventionally kept as a zero byte so callers can select an empty
 line without a separate sentinel value.
 
 The exit mask is separate because every byte value, including room `FF`, is a
-valid destination. Links may be one-way. The editor imports old 224-byte maps
-and 1,248-byte format-1 rooms with disabled exits, and exports format 2.
-`tools/migrate_rooms_v2.py` provides the equivalent asset migration.
+valid destination. Links may be one-way. A description offset of zero means
+"use the generic `an exit.` text". The editor imports legacy, format-1, and
+format-2 rooms and exports format 3. Use `tools/migrate_rooms_v2.py` and then
+`tools/migrate_rooms_v3.py` for batch migration.
 
 ## Object-type file format
 
@@ -126,6 +136,8 @@ void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
+const char* platform_room_exit_description(const PlatformRoom* room,
+                                           uint8_t direction);
 uint8_t platform_object_types_load(const char* filename, uint8_t device);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
@@ -150,7 +162,7 @@ copy. The current asset defines it as actor type 1, "The Hero".
 
 `platform_room_load()` dispatches through `platform_storage`. The disk backend
 opens the two-digit filename; the EasyFlash backend selects the fixed ROML bank
-and offset. Both read into staging RAM, validate the 1,253-byte record, and only
+and offset. Both read into staging RAM, validate the 1,257-byte record, and only
 then commit it to the caller's room.
 Loading into the global `platform_room` also updates `platform_current_room`
 and rebinds `platform_player` to `platform_player_slot`.
@@ -201,6 +213,8 @@ transition case.
 
 The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
+Room-specific handlers, `GameState`, and the overlay ABI are specified in
+`ROOM_CODE_API.md`.
 
 For disk gameplay, the room files must be present on the generated D64. The
 default `make d64` rule adds `res/*`, hexadecimal room files from `assets/`, and
@@ -459,13 +473,19 @@ returns one of:
 An in-room result writes the proposed hotspot's tile ID to `stepped_tile` when
 that pointer is non-NULL. Trigger detection uses tile property bit 4.
 
-Format 2 stores the four edge destinations. `platform_room_neighbor()` returns
+Format 3 stores the four edge destinations and descriptions.
+`platform_room_neighbor()` returns
 `PLATFORM_ERR_NOT_FOUND` when a direction is disabled. Before committing an
 edge transition, `platform_room_enter()` loads and validates the destination,
 applies its restore hook, suppresses the baked player spawn when returning
 home, checks arrival land, and allocates a destination object slot. Only then
 does it remove/store the old player and commit the staged room. Any earlier
 failure leaves the current room intact.
+
+`platform_room_exit_description()` returns the selected zero-terminated room
+text string, or `NULL` when the direction is invalid or has no description.
+The generic look command uses it only when looking beyond a map edge; it never
+loads the neighboring room.
 
 Trigger destinations remain game-defined. Game code resolves:
 
@@ -515,7 +535,8 @@ platform_text_write_room_line(&platform_room,
 `platform_look_direction()` describes the adjacent hotspot tile across both
 rows. Repeated type IDs are grouped (`5 Gold`), names come from the 14-byte
 object-type name, and output fills the two rows and clips at 80 characters. An
-enabled room edge is reported as an exit without loading the neighbor.
+enabled room edge is reported using its description without loading the
+neighbor; an undescribed edge falls back to `an exit.`.
 
 The sample loop enters look mode on `L`, displays `Looking...` in the sprite
 overlay, and waits for a cursor direction. A direction hides the overlay and

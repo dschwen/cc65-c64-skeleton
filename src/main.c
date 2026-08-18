@@ -1,9 +1,10 @@
 #include <stdint.h>
 
 #include "platform.h"
+#include "game.h"
 
-#pragma code-name ("HIGHCODE")
-#pragma rodata-name ("HIGHRODATA")
+#pragma code-name ("UPPERCODE")
+#pragma rodata-name ("UPPERRODATA")
 
 int main(void) {
     uint8_t key;
@@ -14,6 +15,8 @@ int main(void) {
     if (platform_storage == PLATFORM_STORAGE_DISK) {
         (void)platform_object_types_load("OBJECTS.COBJ", platform_storage_device);
     }
+    game_state_init();
+    (void)game_room_code_load_current();
     platform_room_draw(&platform_room, platform_player);
     platform_overlay_show(&platform_room, 8, 16,
                           0x01, 0x16, 0x36, 1);
@@ -23,10 +26,12 @@ int main(void) {
         key = platform_input_poll();
     } while (key == 0u);
     platform_overlay_hide();
+    game_enter_tile();
     looking = 0u;
 
     for (;;) {
         platform_wait_frame();
+        (void)game_process_pending_transition();
         key = platform_input_poll();
         if (looking) {
             direction = 0xffu;
@@ -50,24 +55,26 @@ int main(void) {
             }
             if (direction != 0xffu) {
                 platform_overlay_hide();
-                (void)platform_look_direction(&platform_room, platform_player,
-                                              direction, 1u);
+                if (game_look_at(direction) == GAME_LOOK_DEFAULT) {
+                    (void)platform_look_direction(&platform_room, platform_player,
+                                                  direction, 1u);
+                }
                 looking = 0u;
             }
             continue;
         }
         switch (key) {
             case PLATFORM_KEY_CURSOR_UP:
-                platform_player_step(0, -1);
+                game_player_step(0, -1);
                 break;
             case PLATFORM_KEY_CURSOR_DOWN:
-                platform_player_step(0, 1);
+                game_player_step(0, 1);
                 break;
             case PLATFORM_KEY_CURSOR_LEFT:
-                platform_player_step(-1, 0);
+                game_player_step(-1, 0);
                 break;
             case PLATFORM_KEY_CURSOR_RIGHT:
-                platform_player_step(1, 0);
+                game_player_step(1, 0);
                 break;
             case PLATFORM_KEY_LIGHT_DOWN:
                 if (platform_global_light > PLATFORM_LIGHT_NONE) {

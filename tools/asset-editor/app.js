@@ -10,7 +10,9 @@
   const ROOM_OBJECT_BYTES = ROOM_OBJECT_COUNT * 3;
   const ROOM_TEXT_BYTES = 256;
   const ROOM_V1_FILE_BYTES = 4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_TEXT_BYTES;
-  const ROOM_HEADER_BYTES = 9;
+  const ROOM_V2_HEADER_BYTES = 9;
+  const ROOM_V2_FILE_BYTES = ROOM_V2_HEADER_BYTES + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_TEXT_BYTES;
+  const ROOM_HEADER_BYTES = 13;
   const ROOM_FILE_BYTES = ROOM_HEADER_BYTES + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_TEXT_BYTES;
   const ROOM_EXIT_NORTH = 0x01;
   const ROOM_EXIT_EAST = 0x02;
@@ -20,7 +22,7 @@
   const OBJECT_TYPE_BYTES = 64;
   const OBJECT_TYPE_FILE_BYTES = OBJECT_TYPE_COUNT * OBJECT_TYPE_BYTES;
   const STORAGE_KEY = "c64-asset-editor-state-v1";
-  const STORAGE_VERSION = 4;
+  const STORAGE_VERSION = 5;
 
   const C64_COLORS = [
     "#000000", "#ffffff", "#813338", "#75cec8",
@@ -53,12 +55,16 @@
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
       id: 0,
-      reserved: 2,
+      reserved: 3,
       exitMask: 0,
       north: 0,
       east: 0,
       west: 0,
       south: 0,
+      northText: 0,
+      eastText: 0,
+      westText: 0,
+      southText: 0,
       data: new Uint8Array(MAP_TILE_COUNT),
       objects: new Uint8Array(ROOM_OBJECT_BYTES),
       text: new Uint8Array(ROOM_TEXT_BYTES),
@@ -158,6 +164,10 @@
     roomNeighborEast: document.getElementById("room-neighbor-east"),
     roomNeighborWest: document.getElementById("room-neighbor-west"),
     roomNeighborSouth: document.getElementById("room-neighbor-south"),
+    roomExitTextNorth: document.getElementById("room-exit-text-north"),
+    roomExitTextEast: document.getElementById("room-exit-text-east"),
+    roomExitTextWest: document.getElementById("room-exit-text-west"),
+    roomExitTextSouth: document.getElementById("room-exit-text-south"),
     mapToolTile: document.getElementById("map-tool-tile"),
     mapToolObject: document.getElementById("map-tool-object"),
     roomObjectType: document.getElementById("room-object-type"),
@@ -288,6 +298,10 @@
           east: state.map.east,
           west: state.map.west,
           south: state.map.south,
+          northText: state.map.northText,
+          eastText: state.map.eastText,
+          westText: state.map.westText,
+          southText: state.map.southText,
           data: Array.from(state.map.data),
           objects: Array.from(state.map.objects),
           text: Array.from(state.map.text),
@@ -335,7 +349,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
-      if (!parsed || ![1, 2, 3, STORAGE_VERSION].includes(parsed.version)) return false;
+      if (!parsed || ![1, 2, 3, 4, STORAGE_VERSION].includes(parsed.version)) return false;
 
       if (Array.isArray(parsed.charset) && parsed.charset.length === state.charset.length) {
         state.charset.set(parsed.charset.map(clampByte));
@@ -384,12 +398,16 @@
           state.map.width = MAP_WIDTH;
           state.map.height = MAP_HEIGHT;
           state.map.id = clampByte(parsed.map.id);
-          state.map.reserved = 2;
+          state.map.reserved = 3;
           state.map.exitMask = clampByte(parsed.map.exitMask ?? 0) & 0x0f;
           state.map.north = clampByte(parsed.map.north ?? 0);
           state.map.east = clampByte(parsed.map.east ?? 0);
           state.map.west = clampByte(parsed.map.west ?? 0);
           state.map.south = clampByte(parsed.map.south ?? 0);
+          state.map.northText = clampByte(parsed.map.northText ?? 0);
+          state.map.eastText = clampByte(parsed.map.eastText ?? 0);
+          state.map.westText = clampByte(parsed.map.westText ?? 0);
+          state.map.southText = clampByte(parsed.map.southText ?? 0);
           state.map.data = fixed;
           if (Array.isArray(parsed.map.objects) && parsed.map.objects.length === ROOM_OBJECT_BYTES) {
             state.map.objects.set(parsed.map.objects.map(clampByte));
@@ -960,7 +978,45 @@
     if (updateState) state.map.text = bytes;
     ui.roomTextOffsets.textContent = offsets.join("\n");
     if (updateState && truncated) setStatus("Room text exceeded 256 bytes and was truncated.", true);
+    renderExitTextOptions(bytes);
     return bytes;
+  }
+
+  function renderExitTextOptions(bytes) {
+    const entries = [[0, "00: generic exit text"]];
+    let cursor = 1;
+    while (cursor < ROOM_TEXT_BYTES) {
+      while (cursor < ROOM_TEXT_BYTES && bytes[cursor] === 0) cursor += 1;
+      if (cursor >= ROOM_TEXT_BYTES) break;
+      const start = cursor;
+      let text = "";
+      while (cursor < ROOM_TEXT_BYTES && bytes[cursor] !== 0) {
+        text += String.fromCharCode(bytes[cursor++]);
+      }
+      entries.push([start, `${start.toString(16).padStart(2, "0").toUpperCase()}: ${text}`]);
+    }
+    [
+      [ui.roomExitTextNorth, "northText"],
+      [ui.roomExitTextEast, "eastText"],
+      [ui.roomExitTextWest, "westText"],
+      [ui.roomExitTextSouth, "southText"]
+    ].forEach(([select, field]) => {
+      const selected = state.map[field];
+      select.innerHTML = "";
+      entries.forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = String(value);
+        option.textContent = label;
+        select.appendChild(option);
+      });
+      if (!entries.some(([value]) => value === selected)) {
+        const option = document.createElement("option");
+        option.value = String(selected);
+        option.textContent = `${selected.toString(16).padStart(2, "0").toUpperCase()}: invalid offset`;
+        select.appendChild(option);
+      }
+      select.value = String(selected);
+    });
   }
 
   function decodeRoomText(bytes) {
@@ -1057,13 +1113,14 @@
     ui.roomTextSource.value = state.map.textSource;
     encodeRoomTextSource(state.map.textSource, false);
     [
-      [ui.roomExitNorth, ui.roomNeighborNorth, ROOM_EXIT_NORTH, state.map.north],
-      [ui.roomExitEast, ui.roomNeighborEast, ROOM_EXIT_EAST, state.map.east],
-      [ui.roomExitWest, ui.roomNeighborWest, ROOM_EXIT_WEST, state.map.west],
-      [ui.roomExitSouth, ui.roomNeighborSouth, ROOM_EXIT_SOUTH, state.map.south]
-    ].forEach(([checkbox, input, bit, value]) => {
+      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, state.map.north],
+      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, state.map.east],
+      [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, state.map.west],
+      [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, state.map.south]
+    ].forEach(([checkbox, input, textInput, bit, value]) => {
       checkbox.checked = (state.map.exitMask & bit) !== 0;
       input.disabled = !checkbox.checked;
+      textInput.disabled = !checkbox.checked;
       input.value = String(value);
     });
   }
@@ -1558,12 +1615,16 @@
     out[0] = MAP_WIDTH;
     out[1] = MAP_HEIGHT;
     out[2] = state.map.id & 0xff;
-    out[3] = 2;
+    out[3] = 3;
     out[4] = state.map.exitMask & 0x0f;
     out[5] = state.map.north;
     out[6] = state.map.east;
     out[7] = state.map.west;
     out[8] = state.map.south;
+    out[9] = state.map.northText;
+    out[10] = state.map.eastText;
+    out[11] = state.map.westText;
+    out[12] = state.map.southText;
     out.set(state.map.data, ROOM_HEADER_BYTES);
     out.set(state.map.objects, ROOM_HEADER_BYTES + MAP_TILE_COUNT);
     out.set(state.map.text, ROOM_HEADER_BYTES + MAP_TILE_COUNT + ROOM_OBJECT_BYTES);
@@ -1766,12 +1827,13 @@
     }
 
     if (data.length !== 4 + MAP_TILE_COUNT && data.length !== ROOM_V1_FILE_BYTES &&
-        data.length !== ROOM_FILE_BYTES) {
-      setStatus(`Room must be legacy 224, v1 ${ROOM_V1_FILE_BYTES}, or v2 ${ROOM_FILE_BYTES} bytes.`, true);
+        data.length !== ROOM_V2_FILE_BYTES && data.length !== ROOM_FILE_BYTES) {
+      setStatus(`Room must be legacy 224, v1 ${ROOM_V1_FILE_BYTES}, v2 ${ROOM_V2_FILE_BYTES}, or v3 ${ROOM_FILE_BYTES} bytes.`, true);
       return;
     }
     if ((data.length === ROOM_V1_FILE_BYTES && data[3] !== 1) ||
-        (data.length === ROOM_FILE_BYTES && data[3] !== 2)) {
+        (data.length === ROOM_V2_FILE_BYTES && data[3] !== 2) ||
+        (data.length === ROOM_FILE_BYTES && data[3] !== 3)) {
       setStatus(`Unsupported room format ${data[3]}.`, true);
       return;
     }
@@ -1779,24 +1841,36 @@
     state.map.width = MAP_WIDTH;
     state.map.height = MAP_HEIGHT;
     state.map.id = id;
-    state.map.reserved = 2;
+    state.map.reserved = 3;
     state.map.exitMask = 0;
     state.map.north = 0;
     state.map.east = 0;
     state.map.west = 0;
     state.map.south = 0;
-    const headerBytes = data.length === ROOM_FILE_BYTES ? ROOM_HEADER_BYTES : 4;
-    if (data.length === ROOM_FILE_BYTES) {
+    state.map.northText = 0;
+    state.map.eastText = 0;
+    state.map.westText = 0;
+    state.map.southText = 0;
+    const headerBytes = data.length === ROOM_FILE_BYTES ? ROOM_HEADER_BYTES :
+      data.length === ROOM_V2_FILE_BYTES ? ROOM_V2_HEADER_BYTES : 4;
+    if (data.length === ROOM_V2_FILE_BYTES || data.length === ROOM_FILE_BYTES) {
       state.map.exitMask = data[4] & 0x0f;
       state.map.north = data[5];
       state.map.east = data[6];
       state.map.west = data[7];
       state.map.south = data[8];
     }
+    if (data.length === ROOM_FILE_BYTES) {
+      state.map.northText = data[9];
+      state.map.eastText = data[10];
+      state.map.westText = data[11];
+      state.map.southText = data[12];
+    }
     state.map.data = data.slice(headerBytes, headerBytes + MAP_TILE_COUNT);
     state.map.objects.fill(0);
     state.map.text.fill(0);
-    if (data.length === ROOM_V1_FILE_BYTES || data.length === ROOM_FILE_BYTES) {
+    if (data.length === ROOM_V1_FILE_BYTES || data.length === ROOM_V2_FILE_BYTES ||
+        data.length === ROOM_FILE_BYTES) {
       state.map.objects.set(data.subarray(headerBytes + MAP_TILE_COUNT,
         headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
       state.map.text.set(data.subarray(headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
@@ -1879,7 +1953,7 @@
     if (bytes.length === 256 * CHAR_BYTES || bytes.length === 512 * CHAR_BYTES) kinds.add("charset");
     if (bytes.length >= 4 && bytes[0] === MAP_WIDTH && bytes[1] === MAP_HEIGHT &&
         (bytes.length === 4 + MAP_TILE_COUNT || bytes.length === ROOM_V1_FILE_BYTES ||
-         bytes.length === ROOM_FILE_BYTES)) {
+         bytes.length === ROOM_V2_FILE_BYTES || bytes.length === ROOM_FILE_BYTES)) {
       kinds.add("map");
     }
     if (bytes.length === OBJECT_TYPE_FILE_BYTES) kinds.add("objecttypes");
@@ -2352,20 +2426,25 @@
     });
 
     [
-      [ui.roomExitNorth, ui.roomNeighborNorth, ROOM_EXIT_NORTH, "north"],
-      [ui.roomExitEast, ui.roomNeighborEast, ROOM_EXIT_EAST, "east"],
-      [ui.roomExitWest, ui.roomNeighborWest, ROOM_EXIT_WEST, "west"],
-      [ui.roomExitSouth, ui.roomNeighborSouth, ROOM_EXIT_SOUTH, "south"]
-    ].forEach(([checkbox, input, bit, field]) => {
+      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, "north", "northText"],
+      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, "east", "eastText"],
+      [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, "west", "westText"],
+      [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, "south", "southText"]
+    ].forEach(([checkbox, input, textInput, bit, field, textField]) => {
       checkbox.addEventListener("change", () => {
         if (checkbox.checked) state.map.exitMask |= bit;
         else state.map.exitMask &= ~bit;
         input.disabled = !checkbox.checked;
+        textInput.disabled = !checkbox.checked;
         schedulePersist();
       });
       input.addEventListener("change", () => {
         state.map[field] = clampByte(Number(input.value));
         input.value = String(state.map[field]);
+        schedulePersist();
+      });
+      textInput.addEventListener("change", () => {
+        state.map[textField] = clampByte(Number(textInput.value));
         schedulePersist();
       });
     });

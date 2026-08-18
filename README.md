@@ -41,10 +41,12 @@ make cartridge
 
 See `EASYFLASH_CARTRIDGE.md` for the boot process, linker layout, CRT format,
 validation steps, multi-bank expansion guidance, and flash-save constraints.
+See `ROOM_CODE_API.md` for per-room C handlers, `GameState`, and the overlay
+ABI.
 
 Output:
 - `build/game.crt`
-- `build/game-ef-base.bin` (raw executable banks 0 and 1)
+- `build/game-ef-base.bin` (raw executable banks 0-2)
 - `build/game-ef.bin` (packed executable and runtime asset banks)
 
 ## Run

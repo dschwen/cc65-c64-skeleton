@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "platform.h"
+#include "game.h"
 
 #pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
@@ -16,10 +17,10 @@
 #define DIRTY_CELL_LIMIT   32u
 #define ROOM_LFN           2u
 #define INITIAL_OBJECT_TYPE_COUNT 2u
-#define EF_FIRST_ROOM_BANK 2u
+#define EF_FIRST_ROOM_BANK 3u
 #define EF_ROOMS_PER_BANK  6u
-#define EF_TYPE_BANK_0     45u
-#define EF_TYPE_BANK_1     46u
+#define EF_TYPE_BANK_0     46u
+#define EF_TYPE_BANK_1     47u
 #define WALL_CACHE_QUADRANT_NW 0x01u
 #define WALL_CACHE_QUADRANT_NE 0x02u
 #define WALL_CACHE_QUADRANT_SW 0x04u
@@ -145,8 +146,10 @@ static uint8_t overlay_saved_colors[72];
 static uint8_t overlay_visible;
 static uint8_t overlay_x;
 static uint8_t overlay_y;
-#pragma bss-name (push, "WORKBSS")
+#pragma bss-name (push, "ROOMSTAGE")
 static PlatformRoom room_stage;
+#pragma bss-name (pop)
+#pragma bss-name (push, "WORKBSS")
 static uint8_t wall_light_cache[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
@@ -1180,6 +1183,11 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     result = platform_room_object_add(&room_stage, actor.type,
                                       actor.x, actor.y, &slot);
     if (result != PLATFORM_OK) return result;
+    result = game_room_code_prepare(room_id);
+    if (result != PLATFORM_OK) {
+        platform_room_draw(&platform_room, platform_player);
+        return result;
+    }
 
     if (removed_actor) {
         previous_actor = *platform_player;
@@ -1189,12 +1197,14 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
         result = room_store_hook(&platform_room);
         if (result != PLATFORM_OK) {
             if (removed_actor) *platform_player = previous_actor;
+            platform_room_draw(&platform_room, platform_player);
             return result;
         }
     }
     platform_player_slot = slot;
     room_commit(&platform_room, room_id);
     platform_player = &platform_room.objects[slot];
+    game_room_code_activate();
     platform_room_draw(&platform_room, platform_player);
     return PLATFORM_OK;
 }
@@ -1356,6 +1366,36 @@ static void look_append_type_name(uint8_t type_id) {
     }
 }
 
+static void look_append_room_text(const PlatformRoom* room, uint8_t text_offset) {
+    uint16_t offset;
+    uint8_t ch;
+    offset = text_offset;
+    while (offset < PLATFORM_ROOM_TEXT_BYTES && room->text[offset] != 0u) {
+        ch = room->text[offset++];
+        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
+        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
+        look_append_char((char)ch);
+    }
+}
+
+static uint8_t room_exit_text(const PlatformRoom* room, uint8_t direction) {
+    switch (direction) {
+        case PLATFORM_DIRECTION_NORTH: return room->north_text;
+        case PLATFORM_DIRECTION_EAST: return room->east_text;
+        case PLATFORM_DIRECTION_WEST: return room->west_text;
+        default: return room->south_text;
+    }
+}
+
+const char* platform_room_exit_description(const PlatformRoom* room,
+                                           uint8_t direction) {
+    uint8_t offset;
+    if (room == 0 || direction > PLATFORM_DIRECTION_SOUTH) return 0;
+    offset = room_exit_text(room, direction);
+    if (offset == 0u || room->text[offset] == 0u) return 0;
+    return (const char*)&room->text[offset];
+}
+
 static void look_write_buffer(uint8_t color) {
     uint8_t line;
     uint8_t column;
@@ -1412,7 +1452,12 @@ uint8_t platform_look_direction(const PlatformRoom* room,
     if (tile_x < 0 || tile_x >= PLATFORM_MAP_WIDTH ||
         tile_y < 0 || tile_y >= PLATFORM_MAP_HEIGHT) {
         if (platform_room_neighbor(room, direction, &neighbor) == PLATFORM_OK) {
-            look_append_string("an exit.");
+            type_id = room_exit_text(room, direction);
+            if (type_id != 0u) {
+                look_append_room_text(room, type_id);
+            } else {
+                look_append_string("an exit.");
+            }
         } else {
             look_append_string("nothing.");
         }

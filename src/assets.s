@@ -19,6 +19,6 @@ _tile_properties:
 ; Disk and EasyFlash builds load the complete object table at runtime.
 .segment "RODATA"
 _initial_room_data:
-    .incbin "assets/00", 0, 1253
+    .incbin "assets/00", 0, 1257
 _initial_object_type_data:
     .incbin "assets/objects.cobj", 0, 128

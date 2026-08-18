@@ -235,13 +235,13 @@
         <div class="inline-controls">
           <span class="fixed-size">20 x 11 tiles / 40 x 22 half-tiles</span>
           <label>Room ID <input id="map-id" type="number" min="0" max="255" value="0"></label>
-          <span>Format 2</span>
+          <span>Format 3</span>
         </div>
         <div class="room-exits" aria-label="Adjacent rooms">
-          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled></label>
-          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled></label>
-          <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled></label>
-          <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled></label>
+          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-north" disabled aria-label="North exit description"></select></label>
+          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-east" disabled aria-label="East exit description"></select></label>
+          <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-west" disabled aria-label="West exit description"></select></label>
+          <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-south" disabled aria-label="South exit description"></select></label>
         </div>
         <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
           <button id="map-tool-tile" class="active">Tile paint</button>

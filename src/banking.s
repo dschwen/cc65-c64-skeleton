@@ -7,13 +7,29 @@
 .export _platform_memory_all_ram
 .export _platform_object_type_stage
 .export _platform_easyflash_enable
+.export _platform_easyflash_enable_16
 .export _platform_easyflash_disable
+.export _platform_easyflash_copy_romh
+.export _platform_ef_copy_bank
+.export _platform_ef_copy_offset
+.export _platform_ef_copy_destination
+.export _platform_ef_copy_size
 .export _platform_irq_save_disable
 .export _platform_irq_restore
 .export _platform_object_types_clear
 .export _platform_boot_is_easyflash
 
 .import _platform_object_type_scratch
+
+.segment "DATA"
+_platform_ef_copy_bank:
+    .byte 0
+_platform_ef_copy_offset:
+    .word 0
+_platform_ef_copy_destination:
+    .word 0
+_platform_ef_copy_size:
+    .word 0
 
 .segment "LOWCODE"
 
@@ -49,11 +65,27 @@ _platform_easyflash_enable:
     sei
     lda CPU_PORT
     and #$f8
-    ora #CPU_MAP_CART
+    ora #CPU_MAP_CART_8K
     sta CPU_PORT
     txa
     sta EASYFLASH_BANK
     lda #EASYFLASH_8K
+    sta EASYFLASH_CONTROL
+    plp
+    rts
+
+; fastcall: A = EasyFlash bank, exposing both ROML and ROMH.
+_platform_easyflash_enable_16:
+    tax
+    php
+    sei
+    lda CPU_PORT
+    and #$f8
+    ora #CPU_MAP_CART_16K
+    sta CPU_PORT
+    txa
+    sta EASYFLASH_BANK
+    lda #EASYFLASH_16K
     sta EASYFLASH_CONTROL
     plp
     rts
@@ -69,6 +101,68 @@ _platform_easyflash_disable:
     sta CPU_PORT
     plp
     rts
+
+; Copy ROMH into underlying RAM without touching C stack or BSS while the
+; 16 KiB cartridge mapping hides $8000-$BFFF.
+.segment "HIGHCODE"
+_platform_easyflash_copy_romh:
+    php
+    sei
+    lda CPU_PORT
+    pha
+    and #$f8
+    ora #CPU_MAP_CART_16K
+    sta CPU_PORT
+
+    lda _platform_ef_copy_offset
+    sta $fb
+    lda _platform_ef_copy_offset+1
+    clc
+    adc #$a0
+    sta $fc
+    lda _platform_ef_copy_destination
+    sta $fd
+    lda _platform_ef_copy_destination+1
+    sta $fe
+
+    lda _platform_ef_copy_bank
+    sta EASYFLASH_BANK
+    lda #EASYFLASH_16K
+    sta EASYFLASH_CONTROL
+
+    lda _platform_ef_copy_size
+    ora _platform_ef_copy_size+1
+    beq @romh_done
+@romh_byte:
+    ldy #0
+    lda ($fb),y
+    sta ($fd),y
+    inc $fb
+    bne @romh_source_ok
+    inc $fc
+@romh_source_ok:
+    inc $fd
+    bne @romh_destination_ok
+    inc $fe
+@romh_destination_ok:
+    lda _platform_ef_copy_size
+    bne @romh_decrement_low
+    dec _platform_ef_copy_size+1
+@romh_decrement_low:
+    dec _platform_ef_copy_size
+    lda _platform_ef_copy_size
+    ora _platform_ef_copy_size+1
+    bne @romh_byte
+
+@romh_done:
+    lda #EASYFLASH_OFF
+    sta EASYFLASH_CONTROL
+    pla
+    sta CPU_PORT
+    plp
+    rts
+
+.segment "LOWCODE"
 
 ; Return the previous status byte in A, then leave IRQs disabled.
 _platform_irq_save_disable:

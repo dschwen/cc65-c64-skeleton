@@ -20,11 +20,13 @@ CINT   = $ff81
 COPY_SRC = $fb
 COPY_DST = $fd
 COPY_LEN = $f9
+COPY_MORE_BANKS = $f8
 PRG_START = $0801
 CC65_START = $080d
 TRAMPOLINE = $0400
 BANK_STAGE = $c000
-PAYLOAD0_BYTES = $3200
+PAYLOAD0_BYTES = $3d00
+PAYLOAD1_BYTES = $4000
 
 .segment "CART_HEADER"
     .word cold_start
@@ -85,6 +87,8 @@ cold_start:
 ; execution address differ.
 bank1_stage:
     lda #1
+    sta COPY_MORE_BANKS
+    lda #1
     sta EASYFLASH_BANK
     lda #<prg_payload1
     sta COPY_SRC
@@ -124,6 +128,26 @@ bank1_stage:
     bne @stage_copy_byte
 
 @stage_copy_done:
+    dec COPY_MORE_BANKS
+    bmi @all_payload_copied
+
+    lda #2
+    sta EASYFLASH_BANK
+    lda #<prg_payload2
+    sta COPY_SRC
+    lda #>prg_payload2
+    sta COPY_SRC+1
+    lda #<(PRG_START+PAYLOAD0_BYTES+PAYLOAD1_BYTES)
+    sta COPY_DST
+    lda #>(PRG_START+PAYLOAD0_BYTES+PAYLOAD1_BYTES)
+    sta COPY_DST+1
+    lda #<PAYLOAD2_SIZE
+    sta COPY_LEN
+    lda #>PAYLOAD2_SIZE
+    sta COPY_LEN+1
+    bne @stage_copy_byte
+
+@all_payload_copied:
     ; Disabling the cartridge must execute from RAM because ROML disappears
     ; as soon as $DE02 is written.
     lda #$a9                ; lda #$EF
@@ -206,14 +230,22 @@ PAYLOAD0_SIZE = prg_payload0_end - prg_payload0
 
 .segment "PAYLOAD1"
 prg_payload1:
-    .incbin "build/game.prg", 2 + PAYLOAD0_BYTES
+    .incbin "build/game.prg", 2 + PAYLOAD0_BYTES, PAYLOAD1_BYTES
 prg_payload1_end:
 
 PAYLOAD1_SIZE = prg_payload1_end - prg_payload1
 
+.segment "PAYLOAD2"
+prg_payload2:
+    .incbin "build/game.prg", 2 + PAYLOAD0_BYTES + PAYLOAD1_BYTES
+prg_payload2_end:
+
+PAYLOAD2_SIZE = prg_payload2_end - prg_payload2
+
 .assert PAYLOAD0_SIZE = PAYLOAD0_BYTES, error, "PRG payload is too small"
-.assert PAYLOAD1_SIZE > 0, error, "second payload bank is empty"
-.assert prg_payload1_end <= $c000, error, "PRG payload exceeds two banks"
+.assert PAYLOAD1_SIZE = PAYLOAD1_BYTES, error, "second payload bank is incomplete"
+.assert PAYLOAD2_SIZE > 0, error, "third payload bank is empty"
+.assert prg_payload2_end <= $c000, error, "PRG payload exceeds three banks"
 
 .segment "VECTORS"
     .word cold_start        ; NMI at $FFFA in Ultimax mode

@@ -30,7 +30,7 @@ Outputs:
 | File | Purpose |
 |---|---|
 | `build/game.prg` | Normal disk/loadable game, built first |
-| `build/game-ef-base.bin` | Raw executable banks 0 and 1 |
+| `build/game-ef-base.bin` | Raw executable banks 0-2 |
 | `build/game-ef.bin` | Packed executable and runtime asset banks |
 | `build/game-ef.map` | Cartridge bootstrap linker map |
 | `build/game.crt` | EasyFlash CRT image for emulators or EasyProg |
@@ -97,7 +97,8 @@ that its own ROM window may disappear immediately.
 
 A `.crt` is not a raw memory dump. It has a cartridge header followed by CHIP
 packets. Each CHIP packet identifies a bank, CPU load window, and 8 KiB data
-payload. For this project's two-bank image, `cartconv -f` reports:
+payload. For this project's executable image, `cartconv -f` reports the
+populated ROML/ROMH chips:
 
 ```text
 CHIP FLASH #000 $8000 $2000
@@ -106,7 +107,7 @@ CHIP FLASH #001 $8000 $2000
 CHIP FLASH #001 $a000 $2000
 ```
 
-These are ROML and ROMH for banks 0 and 1. `cartconv` omits erased banks, so
+These begin with ROML and ROMH for banks 0-2. `cartconv` omits erased banks, so
 the CRT contains 32 KiB of flash data even though EasyFlash has a logical 1 MiB
 capacity. Missing banks represent erased `$FF` data.
 
@@ -156,7 +157,7 @@ would introduce several new requirements:
 - `BSS` and the cc65 software stack must remain in RAM;
 - `WORKBSS` at `$A000-$BFFF` is underlying RAM and requires EasyFlash ROMH and
   BASIC ROM to be disabled before gameplay accesses it;
-- the current room at `$8000-$84E4` is temporarily hidden by ROML, so room
+- the current room at `$8000-$84E8` is temporarily hidden by ROML, so room
   loads copy into `$A000` staging RAM and commit only after disabling the cart;
 - code executing inside a banked window cannot switch away its own bank;
 - ROML/ROMH hide RAM or BASIC ROM beneath their CPU windows;
@@ -165,23 +166,23 @@ would introduce several new requirements:
 The current cartridge instead treats the working PRG as its payload:
 
 1. The normal `make` build produces `build/game.prg`.
-2. `ef_boot.s` embeds the PRG excluding its two-byte load address, placing the
-   first `$3200` bytes in bank 0 and the remainder in bank 1.
+2. `ef_boot.s` embeds the PRG excluding its two-byte load address, placing
+   `$3D00` bytes in bank 0, `$4000` in bank 1, and the remainder in bank 2.
 3. The bootstrap initializes CPU port registers `$01` and `$00`.
 4. It selects EasyFlash bank 0 and 16 KiB mode.
 5. It calls KERNAL `IOINIT`, `RAMTAS`, `RESTOR`, and `CINT`.
 6. It copies the bank 0 chunk into RAM beginning at `$0801`.
 7. It copies a position-independent second-stage loader to `$C000` and jumps
    there before selecting bank 1 through `$DE00`.
-8. The RAM stage copies the bank 1 remainder into contiguous destination RAM.
+8. The RAM stage copies banks 1 and 2 into contiguous destination RAM.
 9. It writes a small disable-and-jump trampoline into screen RAM at `$0400`.
 10. The trampoline disables EasyFlash and jumps to cc65 startup at `$080D`.
 11. The game clears screen RAM during its normal initialization.
 
 The trampoline is necessary because an instruction following `sta $DE02`
 could no longer be fetched from ROML after the cartridge is disabled.
-The `$C000` stage is necessary for the same reason when `$DE00` selects bank
-1: bank 0 ROML, including the first-stage loader, disappears immediately.
+The `$C000` stage is necessary for the same reason when `$DE00` selects later
+banks: bank 0 ROML, including the first-stage loader, disappears immediately.
 
 This design keeps the PRG and cartridge builds behaviorally aligned and makes
 the cartridge a fast, self-contained loader. The cartridge is not banked in
@@ -189,22 +190,23 @@ during normal gameplay.
 
 ## Current bank layout
 
-`cfg/easyflash.cfg` creates two filled 16 KiB raw banks:
+`cfg/easyflash.cfg` creates three filled 16 KiB raw banks:
 
 | Range | Segment | Current use |
 |---|---|---|
 | `$8000-$8008` | `CART_HEADER` | Vectors and `CBM80` signature |
 | `$8009-$811B` | `BOOT` | RAM initialization and copy loader |
 | `$811C-$81FF` | fill | `$FF` padding |
-| bank 0 `$8200-$B3FF` | `PAYLOAD0` | first `$3200` PRG payload bytes |
+| bank 0 `$8200-$BEFF` | `PAYLOAD0` | first `$3D00` PRG payload bytes |
 | remaining bank 0 space | fill | `$FF` padding |
 | `$BFFA-$BFFF` | `VECTORS` | Ultimax NMI, RESET, and IRQ vectors |
-| bank 1 `$8000+` | `PAYLOAD1` | remaining PRG payload bytes |
-| remainder of bank 1 | fill | `$FF` padding |
+| bank 1 `$8000-$BFFF` | `PAYLOAD1` | next `$4000` PRG payload bytes |
+| bank 2 `$8000+` | `PAYLOAD2` | remaining PRG payload bytes |
+| remainder of bank 2 | fill | `$FF` padding |
 
 The first payload starts at `$8200` to leave room for the bootstrap. The
-assembler asserts a full `$3200`-byte first chunk, a nonempty second chunk,
-and that the remainder fits in bank 1.
+assembler asserts full `$3D00` and `$4000` chunks, a nonempty third chunk, and
+that the remainder fits in bank 2.
 
 The current bootstrap has two intentional hard-coded couplings to the PRG
 linker layout:
@@ -213,7 +215,7 @@ linker layout:
 - cc65 startup entry: `$080D`
 
 If `cfg/myc64.cfg` changes either value, update `PRG_START` and `CC65_START`
-in `cart/ef_boot.s`. Also verify the payload still fits across banks 0 and 1.
+in `cart/ef_boot.s`. Also verify the payload still fits across banks 0-2.
 
 ## Linker and `cartconv` pipeline
 
@@ -282,22 +284,22 @@ The final six bytes should contain three `$8009` vectors:
 09 80 09 80 09 80
 ```
 
-Verify both embedded chunks against the PRG excluding its load address:
+Verify all embedded chunks against the PRG excluding its load address:
 
 ```bash
-cmp -i 512:2 -n 12800 build/game-ef.bin build/game.prg
-payload1_size=$(( $(wc -c < build/game.prg) - 2 - 0x3200 ))
-cmp -i 16384:12802 -n "$payload1_size" build/game-ef.bin build/game.prg
+cmp -i 512:2 -n $((0x3d00)) build/game-ef.bin build/game.prg
+cmp -i 16384:$((2 + 0x3d00)) -n $((0x4000)) build/game-ef.bin build/game.prg
+payload2_size=$(( $(wc -c < build/game.prg) - 2 - 0x7d00 ))
+cmp -i 32768:$((2 + 0x7d00)) -n "$payload2_size" build/game-ef.bin build/game.prg
 ```
 
-The second byte count is computed from the current PRG size and changes with
-the game. The linked `PAYLOAD0`/`PAYLOAD1` sizes are also recorded in
+The third byte count is computed from the current PRG size and changes with
+the game. The linked `PAYLOAD0`/`PAYLOAD1`/`PAYLOAD2` sizes are recorded in
 `build/game-ef.map`.
 
 Structural checks do not replace a cold-boot test in VICE and, ideally, on
-real EasyFlash hardware. In the development environment used to add this
-target, both installed VICE executables exited with status 139 during host
-video initialization, so runtime testing could not be completed there.
+real EasyFlash hardware. This headless repository runs VICE through
+`xvfb-run -a x64sc ...`; bounded cold boots are part of verification.
 
 VICE also warns when an EasyFlash CRT does not contain the optional EasyAPI
 signature in bank 0 ROMH. That warning is expected for this read-only game and
@@ -306,8 +308,9 @@ a real, current EasyAPI only when flash writing is implemented.
 
 The reserved EasyAPI location is bank 0 ROMH offset `$1800`, written in the
 EasyFlash guide as `00:1:1800`. In this linker's physical ROMH address space it
-is `$B800-$BBFF`. A valid image begins there with lowercase `eapi` bytes and
-contains the actual flash driver. This project's range remains erased `$FF`.
+is `$B800-$BBFF`. A writable-flash image begins there with lowercase `eapi`
+bytes and contains the actual flash driver. This read-only build uses that
+space for `PAYLOAD0`, so it intentionally has no EasyAPI signature.
 
 ## Runtime room loading
 
@@ -329,7 +332,7 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 ```
 
 The disk backend retains the current two-hex-digit filename and `cbm_read()`
-behavior. The EasyFlash backend obtains the same 1,253-byte record from an
+behavior. The EasyFlash backend obtains the same 1,257-byte record from an
 asset bank. Game and rendering code must not care which backend supplied it.
 The boot loader can leave a signature byte in reserved RAM so the common PRG
 can select the EasyFlash backend when it was launched from a CRT.
@@ -352,28 +355,29 @@ room `00` does not duplicate the player.
 
 ### Asset packing
 
-Reserve EasyFlash banks 0 and 1 for the executable and begin runtime assets in
-bank 2. Prefer generated bank images and an index/manifest over dozens of
+Reserve EasyFlash banks 0-2 for the executable and begin runtime assets in
+bank 3. Prefer generated bank images and an index/manifest over dozens of
 overlapping ld65 memory areas.
 
 Runtime reads should normally use EasyFlash 8 KiB mode (`$DE02 = $06`), which
 exposes ROML at `$8000-$9FFF` without exposing ROMH over `$A000-$BFFF`. Six
-1,253-byte rooms fit in one ROML page:
+1,257-byte rooms fit in one ROML page:
 
 ```text
-6 * 1,253 = 7,518 bytes, leaving 674 bytes per 8 KiB page
+6 * 1,257 = 7,542 bytes, leaving 650 bytes per 8 KiB page
 ```
 
 The 256 rooms therefore need 43 ROML pages. Together with 16 KiB of object
-types and the two executable banks, this fits in the 64 available EasyFlash
+types and the three executable banks, this fits in the 64 available EasyFlash
 banks when asset data is deliberately placed in ROML pages. A fixed layout can
 derive `bank = first_room_bank + room_id / 6`; a generated directory is more
 flexible if compression or additional assets are introduced later.
 
 The 8 KiB choice is deliberate. Selecting 16 KiB mode (`$07`) would make ROMH
-hide `$A000-$BFFF`. Runtime reads temporarily select CPU mapping `$37` because
-8 KiB cartridge ROML requires `LORAM=HIRAM=1`, expose ROML only, then restore gameplay
-mapping `$35` when the cartridge is disabled. Code and room staging remain
+hide `$A000-$BFFF`. Runtime ROML reads use CPU mapping `$36`: KERNAL and I/O
+remain available, BASIC stays hidden, and the resident C stack at `$B900`
+remains RAM. Gameplay mapping `$35` is restored when the cartridge is disabled.
+Code and room staging remain
 available throughout the copy. The copy path:
 
 1. disable IRQs and remember the previous interrupt state;
@@ -387,6 +391,12 @@ available throughout the copy. The copy path:
 For failure safety, copy into a staging room when RAM permits and replace the
 current room only after validation. At minimum, do not update current-room and
 player globals until the complete record has been read and validated.
+
+Room-specific code is stored separately in ROMH. Bank 3 ROMH begins with a
+256-entry directory; each populated eight-byte entry names a ROMH bank,
+offset, size, and checksum. A native assembly routine maps 16 KiB mode and
+copies the selected `CXX` overlay to staging without touching the C stack or
+BSS, both of which ROMH temporarily hides. See `ROOM_CODE_API.md`.
 
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
@@ -457,7 +467,7 @@ custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
 Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
 ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
 changing its mode. Copy time must remain bounded so raster deadlines are not
-missed; a 1,253-byte room copy may need to be scheduled during a blanked screen
+missed; a 1,257-byte room copy may need to be scheduled during a blanked screen
 or loading transition rather than during active display.
 
 For larger projects, generate each physical bank in deterministic order:
@@ -547,9 +557,9 @@ space. This was the cause of the first black-screen cartridge build.
 
 ## Current limitations
 
-- Runtime room banks are fixed at 2-44; type pages are banks 45-46.
-- The complete PRG payload must fit in `$3200` bytes of bank 0 plus one full
-  16 KiB bank 1.
+- Runtime room banks are fixed at 3-45; type pages are banks 46-47.
+- The complete PRG payload must fit in `$3D00` bytes of bank 0, bank 1, and
+  the available portion of bank 2.
 - PRG load and entry addresses are hard-coded in the bootstrap.
 - EasyFlash remains off except during bounded runtime asset copies.
 - There is no flash-save implementation.

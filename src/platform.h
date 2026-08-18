@@ -11,8 +11,8 @@
 #define PLATFORM_ROOM_OBJECT_COUNT    256u
 #define PLATFORM_ROOM_OBJECT_BYTES    768u
 #define PLATFORM_ROOM_TEXT_BYTES      256u
-#define PLATFORM_ROOM_FILE_BYTES      1253u
-#define PLATFORM_ROOM_FORMAT          2u
+#define PLATFORM_ROOM_FILE_BYTES      1257u
+#define PLATFORM_ROOM_FORMAT          3u
 #define PLATFORM_OBJECT_TYPE_COUNT    256u
 #define PLATFORM_OBJECT_TYPE_BYTES    64u
 #define PLATFORM_OBJECT_CELL_COUNT    16u
@@ -103,8 +103,8 @@ typedef struct PlatformObjectType {
 } PlatformObjectType;
 
 /*
- * Exact 1,253-byte room file. Files are named 00 through FF.
- * width/height must be 20/11. format is currently 2. exit_mask indicates
+ * Exact 1,257-byte room file. Files are named 00 through FF.
+ * width/height must be 20/11. format is currently 3. exit_mask indicates
  * which of the four neighbor bytes are valid, since every byte value is a
  * usable room ID.
  * text is a pool of zero-terminated strings addressed by byte offset.
@@ -119,6 +119,10 @@ typedef struct PlatformRoom {
     uint8_t east;
     uint8_t west;
     uint8_t south;
+    uint8_t north_text;
+    uint8_t east_text;
+    uint8_t west_text;
+    uint8_t south_text;
     uint8_t tiles[PLATFORM_MAP_TILE_COUNT];
     PlatformObject objects[PLATFORM_ROOM_OBJECT_COUNT];
     uint8_t text[PLATFORM_ROOM_TEXT_BYTES];
@@ -169,6 +173,9 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 /* Resolve one enabled cardinal neighbor; returns PLATFORM_ERR_NOT_FOUND otherwise. */
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
+/* Return a room-text exit description, or NULL for an absent/invalid one. */
+const char* platform_room_exit_description(const PlatformRoom* room,
+                                           uint8_t direction);
 
 /* Load all 256 fixed-size object types from a sequential file. */
 uint8_t platform_object_types_load(const char* filename, uint8_t device);

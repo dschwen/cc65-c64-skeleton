@@ -1,5 +1,7 @@
 #include "sid.h"
 
+#pragma code-name (push, "HIGHCODE")
+
 void sid_set_volume(uint8_t vol0_15) {
     /* Keep only low 4 bits; leave filter bits at 0 */
     SID(SID_VOL_FILT) = (vol0_15 & 0x0F);
@@ -24,3 +26,5 @@ void sid_voice1_gate_square(uint8_t on) {
         SID(SID_V1_CTRL) = 0x00;
     }
 }
+
+#pragma code-name (pop)

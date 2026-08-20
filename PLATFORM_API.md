@@ -40,12 +40,15 @@ room-transition logic even when a graphic extends in several directions.
 | `$3C00-$7FFF` | platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room RAM |
 | `$84E9-$85FF` | fixed `GameState` region |
-| `$8A00-$8EFF` | resident upper code |
-| `$9200-$9FFF` | active room-code overlay |
+| `$8600-$8B47` | resident world-state code |
+| `$8B48-$98FF` | resident game/main and shared room-API code |
+| `$9900-$9CFF` | active 1 KiB room-code overlay |
+| `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
 | `$A4E9-$B4D8` | rebuildable render/lighting work RAM and room-code staging |
 | `$B500-$B848` | ordinary resident BSS |
 | `$B900-$BBFF` | cc65 software stack |
+| `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
@@ -144,6 +147,11 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
 ```
 
+Both state hooks return a platform status. The store hook runs while the
+leaving-room baseline is current; the restore hook runs on the staged
+destination and may reject it before commit. Any non-`PLATFORM_OK` result
+aborts the transition without removing the current player.
+
 Call `platform_init()` once before other platform APIs. It selects VIC bank 0,
 sets border/background black, selects the tile charset, installs the raster IRQ,
 and initializes the platform. Room `00` and types 0-1 provide the standalone
@@ -195,21 +203,23 @@ EasyFlash backend. EasyFlash rooms are immutable base records copied
 from banked ROM into the single resident `platform_room`; disk rooms retain the
 same `00`-`FF` names and binary format.
 
-A room transition using one resident buffer must follow this order:
+A room transition using one resident buffer follows this order:
 
 1. retain the transitioning player/NPC record outside the room buffer;
-2. record modifications to the leaving room in the selected persistence layer;
-3. load and validate the destination room;
-4. insert the actor into the first valid empty destination slot;
-5. update `platform_current_room`, `platform_player_slot`, and
+2. load and validate the destination immutable room;
+3. remove its baked startup-player record when applicable;
+4. collision-check the arrival tile and prepare the destination room overlay;
+5. capture modifications to the leaving room while its baseline is current;
+6. preflight an actor slot, establish the destination baseline, and apply deltas;
+7. insert the actor into the first valid empty slot;
+8. update `platform_current_room`, `platform_player_slot`, and
    `platform_player` only after success;
-6. draw tiles, objects, and the player.
+9. activate the room overlay and draw tiles, objects, and the player.
 
-Because cartridge assets are read-only, moving persistent objects between rooms
-requires a mutable delta/save policy. Otherwise returning to a room would reload
-its original object list. The current `platform_room_object_transfer()` expects
-both rooms in RAM and does not itself solve persistence or the single-buffer
-transition case.
+`src/world.c` supplies that mutable policy with exact-slot deltas against the
+immutable asset. The current `platform_room_object_transfer()` still expects
+both rooms in RAM and is a low-level primitive; use save-aware game APIs for
+single-buffer gameplay. See `SAVE_GAME.md` for invariants and capacity.
 
 The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
@@ -250,7 +260,9 @@ implementation detail: the map blitter streams the 220 tile IDs and writes
 screen RAM plus the offscreen base-color buffer; the object blitter draws one
 clipped, transparent object at a time. A final native pass translates base
 colors through the 40x22 brightness buffer into Color RAM. Room ordering and
-transition policy remain in C.
+transition policy remain in C. A full room draw also clears screen and Color
+RAM rows 22-24 before rendering, preventing separator/status text from the
+previous room or a full-screen text view from surviving the transition.
 
 ## Lighting
 
@@ -427,6 +439,8 @@ It returns zero when no event is available. Cursor-key values are exposed as:
 | Up | `PLATFORM_KEY_CURSOR_UP` | 145 |
 | Left | `PLATFORM_KEY_CURSOR_LEFT` | 157 |
 | Look | `PLATFORM_KEY_LOOK` | 76 (`L`) |
+| Take | `PLATFORM_KEY_TAKE` | 84 (`T`) |
+| Inventory | `PLATFORM_KEY_INVENTORY` | 73 (`I`) |
 
 `platform_player_step()` proposes a signed half-tile delta. An in-room
 destination must have `PLATFORM_TILE_SOLID_LAND` (`$04`) set. Crossing an edge
@@ -477,10 +491,12 @@ Format 3 stores the four edge destinations and descriptions.
 `platform_room_neighbor()` returns
 `PLATFORM_ERR_NOT_FOUND` when a direction is disabled. Before committing an
 edge transition, `platform_room_enter()` loads and validates the destination,
-applies its restore hook, suppresses the baked player spawn when returning
-home, checks arrival land, and allocates a destination object slot. Only then
-does it remove/store the old player and commit the staged room. Any earlier
-failure leaves the current room intact.
+suppresses the baked player spawn when returning home, checks arrival land,
+prepares its room code, stores the leaving room, and applies the destination
+restore hook. The restore hook reserves an actor slot before changing its
+baseline. Only then does the platform insert the actor and commit the staged
+room. Any failure leaves the current room and player intact; a successful
+leaving-room capture is harmless and idempotent if a later preflight fails.
 
 `platform_room_exit_description()` returns the selected zero-terminated room
 text string, or `NULL` when the direction is invalid or has no description.
@@ -501,6 +517,8 @@ to a destination room and hotspot before calling `platform_room_enter()`.
 
 ```c
 uint8_t platform_text_screen_code(char ch);
+void platform_text_screen_enter(void);
+void platform_text_screen_leave(void);
 void platform_text_clear_line(uint8_t line);
 void platform_text_write_line(uint8_t line, uint8_t column,
                               const char* text, uint8_t color);
@@ -514,6 +532,12 @@ uint8_t platform_look_direction(const PlatformRoom* room,
 
 Line 0 is screen row 23; line 1 is row 24. Strings are clipped at column 40.
 The raster IRQ has already selected charset bank 1 for these rows.
+
+`platform_text_screen_enter()` tells the assembly raster IRQ to keep charset
+bank 1 selected at raster line zero, making all 25 rows text rows.
+`platform_text_screen_leave()` restores the normal tile-map/text-line split.
+These calls only select the charset; a full-screen UI owns clearing, drawing,
+and restoring screen and Color RAM while the mode is active.
 
 The editor's text charset convention is preserved:
 
@@ -648,6 +672,10 @@ block, and each successive glyph row advances three bytes within that block.
 The complete raster interrupt implementation is assembly in `src/irq.s`. It
 switches from tile charset bank 0 to text charset bank 1 immediately below the
 map, restores bank 0 at raster line 0, and acknowledges the VIC interrupt.
+Because EasyFlash copies run with interrupts disabled, the handler accepts late
+entry and derives the correct phase from `$D011` bit 7 plus `$D012`; the copy
+routine explicitly resynchronizes `$D018` and the next compare before restoring
+interrupts.
 
 The gameplay handler is entered directly through RAM `$FFFE/$FFFF`, saves and
 restores A/X/Y, and ends in `RTI`. A second `$0314` entry supports KERNAL-mapped
@@ -695,7 +723,7 @@ using `make asset-editor`.
 
 The following are deliberately not hidden behind incomplete contracts:
 
-- persistent storage for modified room object lists across 256 rooms;
+- disk A/B save-file I/O and native EasyFlash EAPI persistence;
 - the trigger-destination table format;
 - collision policy beyond existing tile property bits;
 - scheduling and update cadence for NPCs;

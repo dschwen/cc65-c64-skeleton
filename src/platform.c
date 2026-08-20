@@ -12,6 +12,7 @@
 #define P_COLOR_RAM        ((volatile uint8_t*)0xd800)
 #define P_SPRITE_POINTERS  ((uint8_t*)0x07f8)
 #define P_SPRITE_DATA      ((uint8_t*)0x3a00)
+#define P_OBJECT_TYPE_STAGE ((uint8_t*)0xa4e9)
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
 #define DIRTY_BYTES        110u
 #define DIRTY_CELL_LIMIT   32u
@@ -41,8 +42,11 @@ void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
 void __fastcall__ platform_object_type_stage(uint8_t type_id);
-void __fastcall__ platform_easyflash_enable(uint8_t bank);
-void platform_easyflash_disable(void);
+void platform_easyflash_copy_roml(void);
+extern uint8_t platform_ef_copy_bank;
+extern uint16_t platform_ef_copy_offset;
+extern uint16_t platform_ef_copy_destination;
+extern uint16_t platform_ef_copy_size;
 uint8_t platform_irq_save_disable(void);
 void __fastcall__ platform_irq_restore(uint8_t status);
 void platform_object_types_clear(void);
@@ -54,6 +58,7 @@ void platform_lightning_native(void);
 void platform_light_source_apply_native(void);
 void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
+void platform_text_area_clear_native(void);
 void overlay_render_line_packed(const PlatformRoom* room,
                                 uint8_t line, uint8_t text_offset);
 void overlay_render_line_text(const char* text, uint8_t line);
@@ -484,13 +489,13 @@ static uint8_t room_load_disk(uint8_t room_id) {
 }
 
 static uint8_t room_load_easyflash(uint8_t room_id) {
-    uint8_t bank;
-    uint16_t offset;
-    bank = (uint8_t)(EF_FIRST_ROOM_BANK + room_id / EF_ROOMS_PER_BANK);
-    offset = (uint16_t)(room_id % EF_ROOMS_PER_BANK) * PLATFORM_ROOM_FILE_BYTES;
-    platform_easyflash_enable(bank);
-    memcpy(&room_stage, (const void*)(0x8000u + offset), sizeof(room_stage));
-    platform_easyflash_disable();
+    platform_ef_copy_bank =
+        (uint8_t)(EF_FIRST_ROOM_BANK + room_id / EF_ROOMS_PER_BANK);
+    platform_ef_copy_offset =
+        (uint16_t)(room_id % EF_ROOMS_PER_BANK) * PLATFORM_ROOM_FILE_BYTES;
+    platform_ef_copy_destination = (uint16_t)&room_stage;
+    platform_ef_copy_size = sizeof(room_stage);
+    platform_easyflash_copy_roml();
     return PLATFORM_OK;
 }
 
@@ -555,30 +560,29 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 }
 
 static uint8_t object_types_load_easyflash(void) {
-    uint8_t i;
     uint8_t irq_status;
-    const uint8_t* source;
 
-    platform_easyflash_enable(EF_TYPE_BANK_0);
-    memcpy(&platform_object_types[0], (const void*)0x8000, 4096u);
-    source = (const uint8_t*)0x9000;
-    for (i = 64u; i < 128u; ++i) {
-        memcpy(&platform_object_type_scratch, source, sizeof(platform_object_type_scratch));
-        source += sizeof(platform_object_type_scratch);
-        platform_easyflash_disable();
-        irq_status = platform_irq_save_disable();
-        platform_memory_all_ram();
-        memcpy(&platform_object_types[i], &platform_object_type_scratch,
-               sizeof(platform_object_type_scratch));
-        platform_memory_game();
-        platform_irq_restore(irq_status);
-        platform_easyflash_enable(EF_TYPE_BANK_0);
-    }
-    platform_easyflash_disable();
+    platform_ef_copy_bank = EF_TYPE_BANK_0;
+    platform_ef_copy_offset = 0u;
+    platform_ef_copy_destination = 0xc000u;
+    platform_ef_copy_size = 4096u;
+    platform_easyflash_copy_roml();
 
-    platform_easyflash_enable(EF_TYPE_BANK_1);
-    memcpy(&platform_object_types[128], (const void*)0x8000, 8192u);
-    platform_easyflash_disable();
+    platform_ef_copy_offset = 4096u;
+    platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
+    platform_ef_copy_size = 4096u;
+    platform_easyflash_copy_roml();
+    irq_status = platform_irq_save_disable();
+    platform_memory_all_ram();
+    memcpy(&platform_object_types[64], P_OBJECT_TYPE_STAGE, 4096u);
+    platform_memory_game();
+    platform_irq_restore(irq_status);
+
+    platform_ef_copy_bank = EF_TYPE_BANK_1;
+    platform_ef_copy_offset = 0u;
+    platform_ef_copy_destination = 0xe000u;
+    platform_ef_copy_size = 8192u;
+    platform_easyflash_copy_roml();
     raster_irq_vectors_restore();
     return PLATFORM_OK;
 }
@@ -976,6 +980,7 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
         --rendered_object_limit;
     }
     if (overlay_visible) platform_overlay_hide();
+    platform_text_area_clear_native();
     platform_color_clear_native();
     platform_map_draw_native(room);
     for (i = 0; i < rendered_object_limit; ++i) {
@@ -1155,7 +1160,6 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y) {
     PlatformObject actor;
-    PlatformObject previous_actor;
     uint8_t slot;
     uint8_t result;
     uint8_t removed_actor;
@@ -1170,7 +1174,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 
     result = room_stage_load(room_id);
     if (result != PLATFORM_OK) return result;
-    if (room_restore_hook != 0) room_restore_hook(&room_stage);
     if (removed_actor && room_id == player_spawn_room &&
         room_stage.objects[player_spawn_slot].type == player_spawn_type) {
         memset(&room_stage.objects[player_spawn_slot], 0, sizeof(PlatformObject));
@@ -1180,26 +1183,34 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
         return PLATFORM_ERR_BLOCKED;
     }
+    result = game_room_code_prepare(room_id);
+    if (result != PLATFORM_OK) {
+        platform_room_draw(&platform_room, platform_player);
+        return result;
+    }
+    if (room_store_hook != 0) {
+        result = room_store_hook(&platform_room);
+        if (result != PLATFORM_OK) {
+            platform_room_draw(&platform_room, platform_player);
+            return result;
+        }
+    }
+    if (room_restore_hook != 0) {
+        result = room_restore_hook(&room_stage);
+        if (result != PLATFORM_OK) {
+            platform_room_draw(&platform_room, platform_player);
+            return result;
+        }
+    }
     result = platform_room_object_add(&room_stage, actor.type,
                                       actor.x, actor.y, &slot);
-    if (result != PLATFORM_OK) return result;
-    result = game_room_code_prepare(room_id);
     if (result != PLATFORM_OK) {
         platform_room_draw(&platform_room, platform_player);
         return result;
     }
 
     if (removed_actor) {
-        previous_actor = *platform_player;
         platform_player->type = 0;
-    }
-    if (room_store_hook != 0) {
-        result = room_store_hook(&platform_room);
-        if (result != PLATFORM_OK) {
-            if (removed_actor) *platform_player = previous_actor;
-            platform_room_draw(&platform_room, platform_player);
-            return result;
-        }
     }
     platform_player_slot = slot;
     room_commit(&platform_room, room_id);

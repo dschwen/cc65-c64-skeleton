@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "world.h"
 
 void game_room_enter_tile_native(void);
 uint8_t __fastcall__ game_room_look_at_native(uint8_t direction);
@@ -9,11 +10,14 @@ uint8_t __fastcall__ game_room_look_at_native(uint8_t direction);
 GameState game_state;
 #pragma bss-name (pop)
 
+uint8_t game_entry_reason;
+
 #pragma code-name (push, "UPPERCODE")
 
 void game_player_sync_from_platform(void) {
     game_state.current_room = platform_current_room;
     if (platform_player != 0) {
+        game_state.player_type = platform_player->type;
         game_state.player_x = platform_player->x;
         game_state.player_y = platform_player->y;
     }
@@ -25,6 +29,7 @@ void game_state_init(void) {
     game_state.maximum_health = 100u;
     game_state.mana = 20u;
     game_state.maximum_mana = 20u;
+    game_entry_reason = GAME_ENTRY_STARTUP;
     game_player_sync_from_platform();
 }
 
@@ -59,6 +64,8 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {
     if (old_room != game_state.current_room ||
         old_tile_x != (game_state.player_x >> 1) ||
         old_tile_y != (game_state.player_y >> 1)) {
+        game_entry_reason = old_room == game_state.current_room
+                                ? GAME_ENTRY_MOVEMENT : GAME_ENTRY_TRANSITION;
         game_enter_tile();
     }
     return PLATFORM_OK;
@@ -82,6 +89,7 @@ uint8_t game_process_pending_transition(void) {
     result = platform_room_enter(room, platform_player->type, x, y);
     if (result == PLATFORM_OK) {
         game_player_sync_from_platform();
+        game_entry_reason = GAME_ENTRY_TRANSITION;
         game_enter_tile();
     }
     return result;

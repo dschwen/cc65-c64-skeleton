@@ -9,6 +9,7 @@
 .export _platform_easyflash_enable
 .export _platform_easyflash_enable_16
 .export _platform_easyflash_disable
+.export _platform_easyflash_copy_roml
 .export _platform_easyflash_copy_romh
 .export _platform_ef_copy_bank
 .export _platform_ef_copy_offset
@@ -20,6 +21,7 @@
 .export _platform_boot_is_easyflash
 
 .import _platform_object_type_scratch
+.import _raster_irq_resync
 
 .segment "DATA"
 _platform_ef_copy_bank:
@@ -102,10 +104,17 @@ _platform_easyflash_disable:
     plp
     rts
 
-; Copy ROMH into underlying RAM without touching C stack or BSS while the
-; 16 KiB cartridge mapping hides $8000-$BFFF.
+; Copy ROML/ROMH into underlying RAM without touching C stack or BSS while the
+; cartridge mapping hides $8000-$BFFF.
 .segment "HIGHCODE"
+_platform_easyflash_copy_roml:
+    lda #$80
+    bne easyflash_copy_window
+
 _platform_easyflash_copy_romh:
+    lda #$a0
+easyflash_copy_window:
+    sta $f8
     php
     sei
     lda CPU_PORT
@@ -118,7 +127,7 @@ _platform_easyflash_copy_romh:
     sta $fb
     lda _platform_ef_copy_offset+1
     clc
-    adc #$a0
+    adc $f8
     sta $fc
     lda _platform_ef_copy_destination
     sta $fd
@@ -159,6 +168,7 @@ _platform_easyflash_copy_romh:
     sta EASYFLASH_CONTROL
     pla
     sta CPU_PORT
+    jsr _raster_irq_resync
     plp
     rts
 

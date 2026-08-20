@@ -4,9 +4,9 @@
 
 #include "game.h"
 
-#define ROOM_CODE_BASE             0x9200u
+#define ROOM_CODE_BASE             0x9900u
 #define ROOM_CODE_STAGE            ((uint8_t*)0xa4e9)
-#define ROOM_CODE_MAX_BYTES        0x0e00u
+#define ROOM_CODE_MAX_BYTES        0x0400u
 #define ROOM_CODE_HEADER_BYTES     20u
 #define ROOM_CODE_ABI              1u
 #define ROOM_CODE_DIRECTORY_BANK   3u

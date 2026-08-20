@@ -338,12 +338,13 @@ The boot loader can leave a signature byte in reserved RAM so the common PRG
 can select the EasyFlash backend when it was launched from a CRT.
 
 Only the current room is resident for drawing. `platform_room_enter()` stages
-and validates the destination, invokes the optional restore hook, checks the
-arrival tile and target capacity, then invokes the optional store hook for the
-leaving room. It commits only after those operations succeed, inserts the
-actor in the first permitted empty slot, updates `platform_player_slot` and
-`platform_player`, and redraws. `platform_room_object_transfer()` remains a
-useful primitive for tools or code that deliberately keeps two room buffers.
+and validates the destination, checks the arrival tile, prepares its overlay,
+then invokes the store hook while the leaving-room baseline is still current.
+The restore hook preflights target capacity before replacing that baseline and
+applying destination deltas. The platform then inserts the actor, commits,
+updates `platform_player_slot` and `platform_player`, and redraws.
+`platform_room_object_transfer()` remains a useful primitive for tools or code
+that deliberately keeps two room buffers.
 
 Cartridge room records are immutable base data. Any object that moves between
 rooms makes the room state differ from that base. Register store/restore hooks
@@ -373,17 +374,22 @@ banks when asset data is deliberately placed in ROML pages. A fixed layout can
 derive `bank = first_room_bank + room_id / 6`; a generated directory is more
 flexible if compression or additional assets are introduced later.
 
-The 8 KiB choice is deliberate. Selecting 16 KiB mode (`$07`) would make ROMH
-hide `$A000-$BFFF`. Runtime ROML reads use CPU mapping `$36`: KERNAL and I/O
-remain available, BASIC stays hidden, and the resident C stack at `$B900`
-remains RAM. Gameplay mapping `$35` is restored when the cartridge is disabled.
-Code and room staging remain
-available throughout the copy. The copy path:
+The 8 KiB choice prevents cartridge ROMH from occupying `$A000-$BFFF`, but
+ROML still requires the normal CPU mapping `$37`. Mapping `$36` leaves
+underlying RAM visible at `$8000-$9FFF`; using it silently copies the current
+room or `GameState` instead of cartridge assets. With `$37`, BASIC ROM hides
+the C stack and BSS at `$A000-$BFFF`, so runtime ROML copying is a stackless
+assembly operation using only the hardware stack, zero page, and low DATA.
+Writes through BASIC or KERNAL ROM reach underlying RAM. The `$D000-$DFFF`
+object-type quarter is first staged at `$A4E9`, then copied with all RAM mapped
+through `$B4E8`, then copied with all RAM mapped so I/O registers are not
+written. Gameplay mapping `$35` is restored after
+the cartridge is disabled. The copy path:
 
 1. disable IRQs and remember the previous interrupt state;
 2. write the asset bank to `$DE00`;
 3. select 8 KiB mode with `$DE02 = $06`;
-4. copy the requested bytes from `$8000-$9FFF` to unshadowed RAM;
+4. set CPU mapping `$37` and copy from `$8000-$9FFF` to underlying RAM;
 5. disable the cartridge with `$DE02 = $04`;
 6. restore the interrupt state;
 7. validate the room header before committing it as the current room.
@@ -396,7 +402,8 @@ Room-specific code is stored separately in ROMH. Bank 3 ROMH begins with a
 256-entry directory; each populated eight-byte entry names a ROMH bank,
 offset, size, and checksum. A native assembly routine maps 16 KiB mode and
 copies the selected `CXX` overlay to staging without touching the C stack or
-BSS, both of which ROMH temporarily hides. See `ROOM_CODE_API.md`.
+BSS, both of which ROMH temporarily hides. ROML room and object-type assets use
+the same native copier with an `$8000` source base. See `ROOM_CODE_API.md`.
 
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
@@ -466,9 +473,18 @@ custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
 
 Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
 ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
-changing its mode. Copy time must remain bounded so raster deadlines are not
-missed; a 1,257-byte room copy may need to be scheduled during a blanked screen
-or loading transition rather than during active display.
+changing its mode. A room or room-code copy can cross one or both split-screen
+raster deadlines. Before restoring the caller's interrupt flag, the copy
+primitive therefore resynchronizes `$D018` and the next raster compare from the
+VIC's current 9-bit raster position and acknowledges any pending raster IRQ.
+The IRQ itself also treats late entry on lines 1-225 as a missed top event and
+lines 227-311 as a bottom event, rather than waiting almost a complete frame.
+
+VICE can persist EasyFlash modifications back into the attached CRT on exit.
+Do not leave an emulator attached to `build/game.crt` while rebuilding it: a
+previous instance can overwrite the new image when it shuts down. Automated
+tests should copy the CRT to a disposable path under `/tmp` and attach that
+copy.
 
 For larger projects, generate each physical bank in deterministic order:
 bank 0 ROML, bank 0 ROMH, bank 1 ROML, bank 1 ROMH, and so on. Then combine the
@@ -480,6 +496,12 @@ Full room rendering uses an assembly blitter instead of 880 individual C cell
 writes. It streams room tile IDs, indexes eight-byte definitions at `$3000`,
 and write the four characters and colors directly to `$0400` and `$D800` while
 maintaining pointers to two adjacent screen rows.
+
+Those destinations are self-modifying operands. Both the left and right
+character/color operands must be reset at the start of every full draw; the
+previous call leaves them advanced beyond row 21. Resetting only the left
+operands makes every other character of the next room overwrite row 22 and
+also writes beyond the offscreen base-color buffer.
 
 Object policy remains in C: slot order, player-last ordering, actor
 ownership, room limits, and transitions. A native single-object renderer

@@ -279,22 +279,30 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3C00-$7FFF` | resident platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room |
 | `$84E9-$85FF` | fixed resident `GameState` region |
-| `$8A00-$8EFF` | resident upper code |
-| `$9200-$9FFF` | active room-specific code overlay |
+| `$8600-$8B47` | resident world-state code |
+| `$8B48-$98FF` | resident game/main and shared room-API code |
+| `$9900-$9CFF` | active 1 KiB room-specific code overlay |
+| `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
 | `$A4E9-$B4D8` | rebuildable rendering/lighting work RAM and code staging |
 | `$B500-$B848` | ordinary platform BSS |
 | `$B900-$BBFF` | cc65 software stack |
+| `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
+Long interrupt-disabled cartridge copies can pass either raster deadline, so
+their epilogue resynchronizes the split before reenabling IRQs. The handler also
+uses `$D011` bit 7 with `$D012`: `$D012` alone wraps at raster line 256 and is
+not enough to distinguish vertical blank from the top of the next frame.
 The IRQ is implemented entirely in `src/irq.s`. Its bottom-of-map branch also
 rotates charset character 14 (`$2070-$2077`) left every second frame to animate
 the character shared by the water tiles (25 Hz PAL, 30 Hz NTSC). The rotation
 happens only after the VIC has switched away from the tile charset, avoiding
 visible partial writes.
-Row 22 is left blank as spacing above the text on rows 23-24.
+Row 22 is left blank as spacing above the text on rows 23-24. A full room draw
+clears all three rows in both screen and Color RAM before drawing the new room.
 It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
 the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
 other CIA1 interrupt services.
@@ -320,7 +328,8 @@ six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
 KERNAL, copies the PRG to its linked RAM layout, and disables the
 cartridge before entering the cc65 startup at `$080D`.
 
-The game does not currently write save data to flash. EasyFlash programming
+The game now maintains a backend-neutral sparse room-object journal in RAM but
+does not yet write save data to flash. EasyFlash programming
 requires RAM-resident driver code, sector erase handling, and correct polling;
 ordinary C stores to banked ROM are not sufficient.
 
@@ -328,8 +337,11 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current room and `GameState` occupy `$8000-$85FF`. Resident upper code is
-loaded at `$8A00`; the independently linked room overlay runs at `$9200`.
+The current room and `GameState` occupy `$8000-$85FF`. Resident world-state
+code is loaded at `$8600`; game/main and the shared room API occupy
+`$8B48-$98FF`. Independently linked room code has a 1 KiB window at
+`$9900-$9CFF`, and the current-room pristine object baseline occupies
+`$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
 Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at `$B500`
 and `$B900`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
 visible while leaving BASIC hidden and these regions readable.
@@ -341,9 +353,20 @@ room-code copies are implemented in assembly because ROMH temporarily hides
 both the C stack and BSS. Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
+Generic room-callable functions live in resident `src/game_support.c` and are
+resolved by address when each room is linked. Room binaries contain only their
+header, `enter_tile()`, `look_at()`, private helpers, strings, and BSS. This
+keeps the 1 KiB overlay available for room-specific behavior without repeating
+inventory, text, transition, or save-aware object code in every room file.
+
+ROML asset reads are also native assembly. ROML requires CPU mapping `$37`;
+mapping `$36` exposes underlying RAM instead. Because `$37` hides the C stack
+under BASIC ROM, C `memcpy()` must not run while the cartridge window is live.
+
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, and sprite dialogs.
 See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and overlay constraints.
+See `SAVE_GAME.md` for the room-delta invariants and versioned save record.
 
 ### VIC‑II
 - **VIC register base**: `$D000` (mirrored through `$D3FF`)

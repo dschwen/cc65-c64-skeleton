@@ -64,7 +64,7 @@ typedef struct GameState {
     uint32_t turn;
     uint16_t day;
     uint8_t hour, minute;
-    uint8_t current_room, player_x, player_y;
+    uint8_t current_room, player_type, player_x, player_y;
     uint8_t health, maximum_health, mana, maximum_mana;
     uint8_t pending_transition, pending_room, pending_x, pending_y;
     GameInventorySlot inventory[32];
@@ -72,16 +72,19 @@ typedef struct GameState {
 } GameState;
 ```
 
-The engine synchronizes room and player coordinates after movement and room
-transitions. `turn` increments after each successful player half-step. Time
-fields are reserved but are not advanced yet. Room code may use `flags` for
-small persistent facts; a future save system must serialize `game_state` plus
-mutable room deltas.
+The engine synchronizes room, player type, and player coordinates after movement
+and room transitions. `turn` increments after each successful player half-step.
+Time fields are reserved but are not advanced yet. `game_entry_reason` reports
+`GAME_ENTRY_STARTUP`, `GAME_ENTRY_MOVEMENT`, `GAME_ENTRY_TRANSITION`, or
+`GAME_ENTRY_LOAD` to `enter_tile()` without becoming persistent state. Room
+code may use `flags` for small persistent facts. See `SAVE_GAME.md` for the
+implemented sparse room-object journal and serialized save format.
 
 ## Room-callable API
 
-The following functions are implemented in `rooms/room_support.c` and linked
-into every overlay:
+The following functions are implemented by resident `src/game_support.c`.
+Room overlays import them through the generated resolver; they are not copied
+into every room binary:
 
 ```c
 uint8_t game_inventory_count(uint8_t type);
@@ -102,6 +105,9 @@ void game_dialog_show(const char* line0, const char* line1,
 void game_dialog_show_room(uint8_t line0, uint8_t line1,
                            uint8_t line2, uint8_t color);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
+uint8_t game_take_object(uint8_t slot);
+uint8_t game_take_direction(uint8_t direction);
+void game_inventory_show(void);
 ```
 
 Inventory type 0 is invalid. Adds saturate a matching slot at 255 and otherwise
@@ -119,6 +125,17 @@ processes the request on the next frame, calls `platform_room_enter()`, loads
 the destination overlay, synchronizes `game_state`, and calls its
 `enter_tile()`. Coordinates are half-tile coordinates and must be within
 `40x22`.
+
+`game_take_object()` is a transactional persistent mutation. It accepts a
+non-actor object slot, adds one item of that type to inventory, removes the map
+object, and captures the room's sparse delta. Journal-capacity or inventory
+failure restores both the object and inventory before returning an error.
+
+`game_take_direction()` examines the adjacent map tile in a cardinal
+direction, skips actors, and takes the first eligible object by room slot.
+`game_inventory_show()` blanks the VIC while preparing a 40x25 text screen,
+lists all 32 inventory slots in two columns, waits for a fresh keypress, then
+restores the charset split and redraws the current room.
 
 All public platform APIs in `platform.h` are also callable when the generated
 resolver finds a resident symbol. A missing import is a build error, not a
@@ -140,7 +157,7 @@ the corresponding exit is enabled. It falls back to `an exit.`.
 
 ## Overlay ABI and memory
 
-Room code runs at `$9200-$9FFF`, a maximum of `$0E00` bytes including BSS. The
+Room code runs at `$9900-$9CFF`, a maximum of `$0400` bytes including BSS. The
 first 20 file bytes are:
 
 | Offset | Content |
@@ -151,7 +168,7 @@ first 20 file bytes are:
 | 8 | ABI version, currently 1 |
 | 9 | room ID |
 | 10 | loaded file size, little-endian |
-| 12 | BSS offset from `$9200` |
+| 12 | BSS offset from `$9900` |
 | 14 | BSS size |
 | 16 | 16-bit sum of bytes 20 through end |
 | 18 | reserved |
@@ -163,7 +180,7 @@ the ABI.
 Disk loading uses KERNAL I/O with BASIC hidden (`$01 = $36`), staging the file
 at `$A4E9`. EasyFlash uses a small assembly copier while 16 KiB ROM is visible;
 it touches only hardware stack, zero page, and low DATA until the cartridge is
-disabled. Activation copies the validated overlay to `$9200` and zeros its BSS.
+disabled. Activation copies the validated overlay to `$9900` and zeros its BSS.
 
 Room-code staging reuses rebuildable render/lighting work RAM. Therefore a
 failed room-code prepare redraws the current room, and a successful room change
@@ -174,9 +191,9 @@ activates the overlay before the normal room draw rebuilds those buffers.
 1. Create/export `assets/XX` in Room mode.
 2. Add `rooms/XX.c` with both required handlers.
 3. Run `make d64 cartridge`.
-4. Check `build/rooms/room-XX.map` if the `$0E00` window overflows or an import
+4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
    cannot be resolved.
 
 Do not keep pointers into an old room overlay or its BSS across a transition.
-Store persistent values in `game_state` or in the eventual room-state storage
-layer.
+Store persistent values in `game_state` or mutate objects through the
+save-aware APIs described in `SAVE_GAME.md`.

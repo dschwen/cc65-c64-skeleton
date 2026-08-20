@@ -68,9 +68,6 @@ $(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
 	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
 	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
 
-$(ROOM_OUTDIR)/room_support.o: rooms/room_support.c src/game.h src/platform.h | $(ROOM_OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
-
 $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
@@ -78,19 +75,19 @@ $(ROOM_OUTDIR)/header-%.o: rooms/room_header.s | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) --asm-define ROOM_ID=0x$* -c -o $@ $<
 
 $(ROOM_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ROOM_OUTDIR)/room-%.o \
-		$(ROOM_OUTDIR)/room_support.o $(ROOM_OUTDIR)/header-%.o \
+		$(ROOM_OUTDIR)/header-%.o \
 		tools/generate_room_resolver.py | $(ROOM_OUTDIR)
 	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(ROOM_OUTDIR)/room-$*.o $(ROOM_OUTDIR)/room_support.o $(ROOM_OUTDIR)/header-$*.o
+		$(ROOM_OUTDIR)/room-$*.o $(ROOM_OUTDIR)/header-$*.o
 
 $(ROOM_OUTDIR)/resolver-%.o: $(ROOM_OUTDIR)/resolver-%.s
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
 $(ROOM_OUTDIR)/room-%.raw: $(ROOM_OUTDIR)/header-%.o $(ROOM_OUTDIR)/room-%.o \
-		$(ROOM_OUTDIR)/room_support.o $(ROOM_OUTDIR)/resolver-%.o $(ROOM_CFG)
+		$(ROOM_OUTDIR)/resolver-%.o $(ROOM_CFG)
 	$(LD65) -C $(ROOM_CFG) -m $(ROOM_OUTDIR)/room-$*.map -o $@ \
 		$(ROOM_OUTDIR)/header-$*.o $(ROOM_OUTDIR)/room-$*.o \
-		$(ROOM_OUTDIR)/room_support.o $(ROOM_OUTDIR)/resolver-$*.o
+		$(ROOM_OUTDIR)/resolver-$*.o
 
 $(ROOM_OUTDIR)/C%: $(ROOM_OUTDIR)/room-%.raw tools/finalize_room_code.py
 	python3 tools/finalize_room_code.py --input $< \

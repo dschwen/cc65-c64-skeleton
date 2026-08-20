@@ -12,8 +12,8 @@ from pathlib import Path
 SEGMENT = re.compile(
     r"^(BSS)\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+"
 )
-BASE = 0x9200
-MAX_BYTES = 0x0E00
+BASE = 0x9900
+MAX_BYTES = 0x0400
 HEADER_BYTES = 20
 
 

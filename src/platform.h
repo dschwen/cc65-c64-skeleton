@@ -40,6 +40,8 @@
 #define PLATFORM_KEY_LIGHT_UP         43u
 #define PLATFORM_KEY_LIGHTNING        70u
 #define PLATFORM_KEY_LOOK             76u
+#define PLATFORM_KEY_TAKE             84u
+#define PLATFORM_KEY_INVENTORY        73u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -129,7 +131,7 @@ typedef struct PlatformRoom {
 } PlatformRoom;
 
 typedef uint8_t (*PlatformRoomStoreHook)(const PlatformRoom* room);
-typedef void (*PlatformRoomRestoreHook)(PlatformRoom* room);
+typedef uint8_t (*PlatformRoomRestoreHook)(PlatformRoom* room);
 
 extern PlatformRoom platform_room;
 /* Current room ID and player ownership inside platform_room.objects. */
@@ -160,7 +162,7 @@ void platform_init(void);
 /* Select the backend used by subsequent room loads. */
 void platform_storage_init(PlatformStorage storage, uint8_t device);
 
-/* Optional in-session/save backend hooks around single-buffer room loads. */
+/* Optional transition hooks; either may reject a transition with an error. */
 void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
                                PlatformRoomRestoreHook restore_hook);
 
@@ -238,6 +240,10 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
 /* Wait for the next bottom-of-map IRQ, then scan/read one keyboard event. */
 void platform_wait_frame(void);
 uint8_t platform_input_poll(void);
+
+/* Select the text charset for the whole screen, or restore the map split. */
+void platform_text_screen_enter(void);
+void platform_text_screen_leave(void);
 
 /* Add at the first empty slot. out_slot may be NULL. */
 uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,

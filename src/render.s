@@ -9,6 +9,7 @@
 .export _platform_light_source_apply_native
 .export _platform_visibility_build_native
 .export _platform_color_clear_native
+.export _platform_text_area_clear_native
 
 .import _native_object_type
 .import _native_object_source
@@ -49,20 +50,28 @@ _platform_map_draw_native:
 
     lda #<SCREEN_RAM
     sta @screen_top+1
+    sta @screen_top_right+1
     lda #>SCREEN_RAM
     sta @screen_top+2
+    sta @screen_top_right+2
     lda #<(SCREEN_RAM+MAP_WIDTH_CHARS)
     sta @screen_bottom+1
+    sta @screen_bottom_right+1
     lda #>(SCREEN_RAM+MAP_WIDTH_CHARS)
     sta @screen_bottom+2
+    sta @screen_bottom_right+2
     lda #<_platform_base_colors
     sta @color_top+1
+    sta @color_top_right+1
     lda #>_platform_base_colors
     sta @color_top+2
+    sta @color_top_right+2
     lda #<(_platform_base_colors+MAP_WIDTH_CHARS)
     sta @color_bottom+1
+    sta @color_bottom_right+1
     lda #>(_platform_base_colors+MAP_WIDTH_CHARS)
     sta @color_bottom+2
+    sta @color_bottom_right+2
 
     lda #MAP_HEIGHT_TILES
     sta @row_count+1
@@ -116,8 +125,6 @@ _platform_map_draw_native:
     bne :+
     inc @char_0+2
 :
-@color_0:
-    lda TILE_DATA+1
     ; Patch color reads from the already calculated character addresses.
     lda @char_0+1
     sta @color_read_0+1
@@ -639,6 +646,7 @@ _platform_lighting_apply_native:
     .byte 0
 
 ; Clear exactly the 40x22 map Color RAM region, preserving both status rows.
+.segment "HIGHCODE"
 _platform_color_clear_native:
     lda #0
     ldy #0
@@ -658,6 +666,7 @@ _platform_color_clear_native:
 
 ; Produce a short VIC flash without modifying screen RAM or either offscreen
 ; lighting buffer. The bottom two text rows are outside the affected range.
+.segment "LOWCODE"
 _platform_lightning_native:
     lda #1
     sta $d020
@@ -675,6 +684,30 @@ _platform_lightning_native:
     sta $d020
     sta $d021
     jmp _platform_lighting_apply_native
+
+.segment "UPPERCODE"
+
+; Room tiles occupy rows 0-21. Clear the separator and both status rows on a
+; full room redraw so bytes left by the previous room or a text screen cannot
+; leak into the split-screen text area.
+_platform_text_area_clear_native:
+    ldx #39
+    lda #$20
+@text_area_screen:
+    sta SCREEN_RAM+22*40,x
+    sta SCREEN_RAM+23*40,x
+    sta SCREEN_RAM+24*40,x
+    dex
+    bpl @text_area_screen
+    ldx #39
+    lda #0
+@text_area_color:
+    sta COLOR_RAM+22*40,x
+    sta COLOR_RAM+23*40,x
+    sta COLOR_RAM+24*40,x
+    dex
+    bpl @text_area_color
+    rts
 
 .segment "HIGHCODE"
 

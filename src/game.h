@@ -11,6 +11,11 @@
 #define GAME_LOOK_DEFAULT    0u
 #define GAME_LOOK_HANDLED    1u
 
+#define GAME_ENTRY_STARTUP    0u
+#define GAME_ENTRY_MOVEMENT   1u
+#define GAME_ENTRY_TRANSITION 2u
+#define GAME_ENTRY_LOAD       3u
+
 typedef struct GameInventorySlot {
     uint8_t type;
     uint8_t quantity;
@@ -24,6 +29,7 @@ typedef struct GameState {
     uint8_t minute;
 
     uint8_t current_room;
+    uint8_t player_type;
     uint8_t player_x;
     uint8_t player_y;
 
@@ -42,6 +48,7 @@ typedef struct GameState {
 } GameState;
 
 extern GameState game_state;
+extern uint8_t game_entry_reason;
 
 /* Resident engine API. Room handlers normally use the room-overlay API below. */
 void game_state_init(void);
@@ -57,7 +64,7 @@ void game_room_code_activate(void);
 uint8_t game_room_code_load_current(void);
 extern uint8_t game_room_code_active;
 
-/* Room-overlay inventory API. Type 0 is reserved and never inventory. */
+/* Resident inventory API, callable by main and room overlays. Type 0 is invalid. */
 uint8_t game_inventory_count(uint8_t type);
 uint8_t game_inventory_has(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_add(uint8_t type, uint8_t quantity);
@@ -79,6 +86,12 @@ void game_dialog_show_room(uint8_t line0, uint8_t line1,
                            uint8_t line2, uint8_t color);
 /* Queue an overlay-safe room change. x/y are half-tile coordinates. */
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
+/* Add a non-actor room object to inventory and remove it from the room. */
+uint8_t game_take_object(uint8_t slot);
+/* Take the first non-actor object on the adjacent tile. */
+uint8_t game_take_direction(uint8_t direction);
+/* Show all inventory slots on a temporary full-screen text display. */
+void game_inventory_show(void);
 
 /* Implemented independently by every rooms/XX.c. Read coordinates from state. */
 void enter_tile(void);

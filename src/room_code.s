@@ -5,8 +5,8 @@
 
 .import _game_room_code_active
 
-ROOM_ENTER_TILE = $9200
-ROOM_LOOK_AT    = $9203
+ROOM_ENTER_TILE = $9900
+ROOM_LOOK_AT    = $9903
 
 .segment "HIGHCODE"
 

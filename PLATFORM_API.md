@@ -99,6 +99,10 @@ Text strings are addressed by their byte offset in the 256-byte text pool.
 Offset 0 is conventionally kept as a zero byte so callers can select an empty
 line without a separate sentinel value.
 
+Editor room files store text as ASCII. `tools/prepare_c64_assets.py` converts
+the text pool to PETSCII in `build/assets/`; only those prepared copies are
+embedded in the PRG or packaged into D64/EasyFlash images.
+
 The exit mask is separate because every byte value, including room `FF`, is a
 valid destination. Links may be one-way. A description offset of zero means
 "use the generic `an exit.` text". The editor imports legacy, format-1, and
@@ -120,6 +124,9 @@ the record index. Type 0 is reserved for an empty object slot.
 | 48 | 1 | flags; bit 0 means PC/NPC actor |
 | 49 | 1 | emitted light amount; 0 means no light |
 | 50 | 14 | reserved, must be preserved |
+
+The editor stores names as ASCII. The same build preparation step converts the
+14-byte name fields to PETSCII before the game loads them.
 
 Width and height are each limited to 1-15, and `width * height` must not
 exceed 16. Only the first `width * height` character/color entries are used.
@@ -233,8 +240,8 @@ Room-specific handlers, `GameState`, and the room-code ABI are specified in
 `ROOM_CODE_API.md`.
 
 For disk gameplay, the room files must be present on the generated D64. The
-default `make d64` rule adds `res/*`, hexadecimal room files from `assets/`, and
-`assets/objects.cobj`. Embedding startup room `00` in the PRG does not make the
+default `make d64` rule adds `res/*` plus the prepared hexadecimal rooms and
+`objects.cobj` from `build/assets/`. Embedding startup room `00` in the PRG does not make the
 remaining rooms available to KERNAL I/O.
 
 ## Map and room drawing
@@ -544,6 +551,7 @@ uint8_t platform_look_tile(const PlatformRoom* room,
 uint8_t platform_object_intersects_tile(const PlatformObject* object,
                                         uint8_t tile_x, uint8_t tile_y);
 void platform_object_take_prompt(uint8_t type_id, uint8_t color);
+void platform_object_taken_message(uint8_t type_id, uint8_t color);
 ```
 
 Line 0 is screen row 23; line 1 is row 24. The raster IRQ has already selected
@@ -567,7 +575,7 @@ bank 1 selected at raster line zero, making all 25 rows text rows.
 These calls only select the charset; a full-screen UI owns clearing, drawing,
 and restoring screen and Color RAM while the mode is active.
 
-The editor's text charset convention is preserved:
+For C string literals, the text charset convention is:
 
 - lowercase ASCII `a-z` maps to screen codes 1-26;
 - uppercase ASCII `A-Z` maps to screen codes 65-90;
@@ -606,8 +614,9 @@ current edge tile. An enabled exit then displays its room-text description, or
 
 `platform_object_intersects_tile()` exposes the same rendered-footprint test
 for commands such as Take. Transparent object characters do not count.
-`platform_object_take_prompt()` renders the selected type's editor-authored
-ASCII name through the platform's PETSCII normalization and bottom pager.
+`platform_object_take_prompt()` renders the selected type's build-prepared
+PETSCII name through the bottom pager. `platform_object_taken_message()`
+renders the same name followed by `" taken."`.
 
 ## Look cursor
 

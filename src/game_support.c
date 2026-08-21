@@ -59,6 +59,7 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
     uint8_t slot;
     uint8_t key;
     uint8_t result;
+    uint8_t taken_type;
 
     if (tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
         return PLATFORM_ERR_ARGUMENT;
@@ -97,10 +98,13 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
         (void)take_object_find(tile_x, tile_y, selected, &slot);
     }
 
+    taken_type = platform_room.objects[slot].type;
     result = game_take_object(slot);
-    game_text_write(PLATFORM_TEXT_LINE_TOP,
-                    result == PLATFORM_OK ? "Taken."
-                                          : "You cannot take that.", 1u);
+    if (result == PLATFORM_OK) {
+        platform_object_taken_message(taken_type, 1u);
+    } else {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "You cannot take that.", 1u);
+    }
     return result;
 }
 

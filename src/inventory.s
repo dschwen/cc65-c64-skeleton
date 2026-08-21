@@ -106,20 +106,21 @@ _game_inventory_draw_item_native:
 @name:
     lda (ptr1),y
     beq @done
-    ; Asset names are ASCII. Convert them to the screen-code convention used
-    ; by platform_text_screen_code(): upper case $41-$5A, lower case $01-$1A.
+    ; Build-prepared names are PETSCII. Convert letters to screen codes.
     cmp #$41
     bcc @put_name
     cmp #$5b
-    bcs @lower_case
+    bcs @upper_case
+    sec
+    sbc #$40
     bne @put_name
-@lower_case:
-    cmp #$61
+@upper_case:
+    cmp #$c1
     bcc @put_name
-    cmp #$7b
+    cmp #$db
     bcs @put_name
     sec
-    sbc #$60
+    sbc #$80
 @put_name:
     jsr put_char
     iny

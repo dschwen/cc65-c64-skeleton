@@ -1,10 +1,11 @@
 #include "game.h"
+#include "story.h"
 
 void enter_room(void) {
 }
 
 void enter_tile(void) {
-    ++game_state.flags[0];
+    ++game_state.flags[STORY_STATE_ROOM_00_TILE_ENTRY_COUNT];
 }
 
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {

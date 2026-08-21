@@ -94,8 +94,10 @@ implemented sparse room-object journal and serialized save format.
 
 ### Game flags
 
-`game_state.flags` contains 32 persistent bytes. Prefer named indices in a
-shared header instead of unexplained numeric offsets:
+`game_state.flags` contains 32 persistent bytes. Put story-specific flag
+indices, masks, room IDs, and object IDs in `src/story.h`; keep reusable engine
+contracts in `game.h` and `platform.h`. Prefer named indices instead of
+unexplained numeric offsets:
 
 ```c
 #define GAME_FLAG_LIGHTHOUSE_LIT  3u
@@ -156,8 +158,8 @@ returns `PLATFORM_ERR_NOT_FOUND` without changing inventory.
 
 `game_text_write*()` uses the two-line bottom pager. Text wraps at word
 boundaries, does not begin the second line with whitespace, and pauses before
-continuing when output exceeds two lines. The `_room` variant reads an ASCII
-string from the current room's 256-byte text pool.
+continuing when output exceeds two lines. The `_room` variant reads a
+build-prepared PETSCII string from the current room's 256-byte text pool.
 
 `game_transition_request()` queues a transition because a room-code overlay
 must not replace itself while one of its functions is executing. The resident

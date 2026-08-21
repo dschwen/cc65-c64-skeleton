@@ -38,7 +38,8 @@ make d64
 Output:
 - `build/game.d64`
 - `build/disk-boot.prg` (the first-file loader stored as `GAME`)
-- plus `res/*`, hexadecimal room assets, and `assets/objects.cobj`
+- plus `res/*` and build-prepared PETSCII copies of the hexadecimal room and
+  object-type assets
 
 The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
 address, loads `TEXT` at `$B880`, and then enters cc65 startup at `$080D`.

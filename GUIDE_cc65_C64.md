@@ -391,6 +391,8 @@ under BASIC ROM, C `memcpy()` must not run while the cartridge window is live.
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, lighting, and the Look
 cursor.
+Editor-authored room text and object names remain ASCII in `assets/`; the build
+stages PETSCII copies in `build/assets/` for the PRG, D64, and EasyFlash image.
 See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and room-code overlay
 constraints.
 See `SAVE_GAME.md` for the room-delta invariants and versioned save record.

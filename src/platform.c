@@ -177,6 +177,7 @@ static const char hex_digits[] = "0123456789ABCDEF";
 #pragma rodata-name (push, "UPPERRODATA")
 static const char take_prompt_prefix[] = "Take: ";
 static const char take_prompt_arrows[] = "   < >";
+static const char taken_suffix[] = " taken.";
 #pragma rodata-name (pop)
 
 #pragma code-name (push, "CODE")
@@ -1345,16 +1346,10 @@ static void look_append_count(uint8_t count) {
 
 static void look_append_type_name(uint8_t type_id) {
     const PlatformObjectType* type;
-    uint8_t ch;
     uint8_t i;
     type = platform_object_type_get(type_id);
     for (i = 0u; i < sizeof(type->name) && type->name[i] != '\0'; ++i) {
-        ch = (uint8_t)type->name[i];
-        /* Editor assets use ASCII; cc65 C literals use PETSCII. Normalize
-         * names to the latter before platform_text_screen_code(). */
-        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
-        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
-        look_append_char((char)ch);
+        look_append_char(type->name[i]);
     }
 }
 
@@ -1479,18 +1474,6 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
 }
 
 #pragma code-name (push, "UPPERCODE")
-static void look_append_room_text(const PlatformRoom* room,
-                                  uint8_t text_offset) {
-    uint8_t ch;
-    do {
-        ch = room->text[text_offset++];
-        if (ch == 0u) break;
-        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
-        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
-        look_append_char((char)ch);
-    } while (text_offset != 0u);
-}
-
 uint8_t platform_look_exit(const PlatformRoom* room,
                            const PlatformObject* viewer,
                            uint8_t edge_x, uint8_t edge_y,
@@ -1511,7 +1494,7 @@ uint8_t platform_look_exit(const PlatformRoom* room,
     look_truncated = 0u;
     text_offset = room_exit_text(room, direction);
     if (text_offset != 0u && room->text[text_offset] != 0u) {
-        look_append_room_text(room, text_offset);
+        look_append_string((const char*)&room->text[text_offset]);
     } else {
         look_append_string("An exit.");
     }
@@ -1525,6 +1508,14 @@ void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
     look_append_string(take_prompt_prefix);
     look_append_type_name(type_id);
     look_append_string(take_prompt_arrows);
+    look_write_buffer(color);
+}
+
+void platform_object_taken_message(uint8_t type_id, uint8_t color) {
+    look_length = 0u;
+    look_truncated = 0u;
+    look_append_type_name(type_id);
+    look_append_string(taken_suffix);
     look_write_buffer(color);
 }
 #pragma code-name (pop)

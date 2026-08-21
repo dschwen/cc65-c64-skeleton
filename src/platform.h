@@ -94,6 +94,7 @@ typedef struct PlatformObject {
  * colors:     row-major C64 colors corresponding to chars.
  * reserved[0] stores PLATFORM_OBJECT_FLAG_* bits.
  * reserved[1] stores emitted light; 0 means the object emits no light.
+ * Editor names are ASCII; build-prepared records contain PETSCII names.
  * Width * height must be <= PLATFORM_OBJECT_CELL_COUNT.
  */
 typedef struct PlatformObjectType {
@@ -315,8 +316,10 @@ uint8_t platform_look_tile(const PlatformRoom* room,
 uint8_t platform_object_intersects_tile(const PlatformObject* object,
                                         uint8_t tile_x, uint8_t tile_y);
 
-/* Display one editor-authored ASCII object name in the Take selector. */
+/* Display one build-prepared PETSCII object name in the Take selector. */
 void platform_object_take_prompt(uint8_t type_id, uint8_t color);
+/* Display "<object name> taken.". */
+void platform_object_taken_message(uint8_t type_id, uint8_t color);
 
 /* Sprite-0 18x18 tile cursor. Other sprite registers/bits are preserved. */
 uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y);

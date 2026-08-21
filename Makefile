@@ -21,8 +21,11 @@ ROOM_SOURCES := $(wildcard rooms/[0-9A-F][0-9A-F].c)
 ROOM_IDS := $(notdir $(ROOM_ASSETS))
 ROOM_OUTDIR := $(OUTDIR)/rooms
 ROOM_CODES := $(addprefix $(ROOM_OUTDIR)/C,$(ROOM_IDS))
+C64_ASSET_OUTDIR := $(OUTDIR)/assets
+C64_ROOM_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/,$(ROOM_IDS))
+C64_OBJECT_TYPES := $(C64_ASSET_OUTDIR)/objects.cobj
 ROOM_CFG := cfg/room_overlay.cfg
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(ROOM_ASSETS) assets/objects.cobj $(ROOM_CODES)
+DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
@@ -32,7 +35,7 @@ LDFLAGS := -C $(CFG)
 
 SOURCES_C := $(wildcard src/*.c)
 SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
-ASSETS := assets/charset.cchr assets/tiles.ctil assets/00 assets/objects.cobj
+ASSETS := assets/charset.cchr assets/tiles.ctil $(C64_ASSET_OUTDIR)/00 $(C64_OBJECT_TYPES)
 OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
            $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
 
@@ -64,6 +67,15 @@ $(OUTDIR):
 
 $(ROOM_OUTDIR):
 	mkdir -p $(ROOM_OUTDIR)
+
+$(C64_ASSET_OUTDIR):
+	mkdir -p $(C64_ASSET_OUTDIR)
+
+$(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
+	python3 tools/prepare_c64_assets.py objects $< $@
+
+$(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
+	python3 tools/prepare_c64_assets.py room $< $@
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
@@ -102,7 +114,7 @@ $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
 $(DISK_BOOT_PRG): $(DISK_BOOT_OBJ) $(DISK_BOOT_CFG)
 	$(LD65) -C $(DISK_BOOT_CFG) -m $(OUTDIR)/disk-boot.map -o $@ $<
 
-$(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h | $(ROOM_OUTDIR)
+$(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
 $(ROOM_OUTDIR)/header-%.o: rooms/room_header.s | $(ROOM_OUTDIR)
@@ -134,9 +146,9 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) tools/pack_easyflash.py \
-		$(ROOM_ASSETS) assets/objects.cobj $(ROOM_CODES)
-	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets assets \
-		--objects assets/objects.cobj --room-code $(ROOM_OUTDIR) --output $@
+		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES)
+	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
+		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) --output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"

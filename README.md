@@ -50,7 +50,7 @@ make cartridge
 
 See `EASYFLASH_CARTRIDGE.md` for the boot process, linker layout, CRT format,
 validation steps, multi-bank expansion guidance, and flash-save constraints.
-See `ROOM_CODE_API.md` for per-room C handlers, `GameState`, and the overlay
+See `ROOM_CODE_API.md` for per-room C handlers, `GameState`, and the room-code
 ABI.
 
 Output:

@@ -11,7 +11,7 @@
     jmp _enter_tile
     jmp _look_at
     .byte $52, $43             ; RC
-    .byte 1, ROOM_ID           ; ABI, room ID
+    .byte 2, ROOM_ID           ; ABI, room ID
     .word 0                    ; patched load size
     .word 0                    ; patched BSS offset
     .word 0                    ; patched BSS size

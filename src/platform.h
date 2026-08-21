@@ -42,6 +42,7 @@
 #define PLATFORM_KEY_LOOK             76u
 #define PLATFORM_KEY_TAKE             84u
 #define PLATFORM_KEY_INVENTORY        73u
+#define PLATFORM_KEY_ENTER            13u
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u
@@ -291,41 +292,23 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
                                    uint8_t color);
 
 /*
- * Describe the adjacent hotspot tile in the two bottom lines. Repeated object
- * types are grouped as a count plus their 14-byte type name. Looking beyond
- * an enabled room edge reports an exit without loading the neighbor.
+ * Reject a tile hidden by line of sight or beyond the provisional range for
+ * its brightest character-cell light level. A rejection writes the reason to
+ * the bottom pager, so room-specific look hooks must only run after success.
  */
-uint8_t platform_look_direction(const PlatformRoom* room,
-                                const PlatformObject* viewer,
-                                uint8_t direction, uint8_t color);
+uint8_t platform_look_tile_check(const PlatformRoom* room,
+                                 const PlatformObject* viewer,
+                                 uint8_t tile_x, uint8_t tile_y,
+                                 uint8_t color);
 
-/*
- * Show three 48-character 4x7 text lines using all eight hardware sprites.
- * half_x/half_y are character-cell coordinates; valid origins are x<=16 and
- * y<=19. line offsets address zero-terminated strings in room.text; offset 0
- * is conventionally empty. The sprites start one pixel below the character
- * row, and the 24x3 underlying color cells are darkened/desaturated.
- * Glyphs come from the high nibble of charset bank 1: A-Z at 193-218,
- * ($)- at 219-222, a-z at 225-250, and .,!?: at 251-255.
- */
-uint8_t platform_overlay_show(const PlatformRoom* room,
-                              uint8_t half_x, uint8_t half_y,
-                              uint8_t line0_offset,
-                              uint8_t line1_offset,
-                              uint8_t line2_offset,
-                              uint8_t sprite_color);
+/* List every object with a nonzero rendered character intersecting a tile. */
+uint8_t platform_look_tile(const PlatformRoom* room,
+                           uint8_t tile_x, uint8_t tile_y, uint8_t color);
 
-/* Show three dynamic zero-terminated strings with the same sprite renderer. */
-uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
-                                   const char* line0, const char* line1,
-                                   const char* line2, uint8_t sprite_color);
-
-/* Disable overlay sprites and restore the original 24x3 color cells. */
-void platform_overlay_hide(void);
-
-uint8_t platform_overlay_is_visible(void);
-
-/* C64 color index -> darker desaturated C64 color index. */
-extern const uint8_t platform_overlay_gray[16];
+/* Sprite-0 18x18 tile cursor. Other sprite registers/bits are preserved. */
+uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y);
+uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y);
+void platform_look_cursor_tick(void);
+void platform_look_cursor_hide(void);
 
 #endif

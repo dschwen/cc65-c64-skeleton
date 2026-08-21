@@ -4,7 +4,7 @@
 #include "world.h"
 
 void game_room_enter_tile_native(void);
-uint8_t __fastcall__ game_room_look_at_native(uint8_t direction);
+uint8_t __fastcall__ game_room_look_at_native(uint8_t tile_x, uint8_t tile_y);
 
 #pragma bss-name (push, "GAMESTATE")
 GameState game_state;
@@ -37,8 +37,8 @@ void game_enter_tile(void) {
     game_room_enter_tile_native();
 }
 
-uint8_t game_look_at(uint8_t direction) {
-    return game_room_look_at_native(direction);
+uint8_t __fastcall__ game_look_at(uint8_t tile_x, uint8_t tile_y) {
+    return game_room_look_at_native(tile_x, tile_y);
 }
 
 uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {

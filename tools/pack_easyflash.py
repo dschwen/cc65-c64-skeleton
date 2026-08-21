@@ -17,6 +17,7 @@ TYPE_BANK_1 = 47
 OUTPUT_BANKS = 48
 ROOM_CODE_HEADER_BYTES = 20
 ROOM_CODE_MAX_BYTES = 0x0400
+ROOM_CODE_ABI = 2
 ROOM_CODE_DIRECTORY_BANK = 3
 ROOM_CODE_DIRECTORY_BYTES = 0x800
 ROOM_CODE_FIRST_BANK = 3
@@ -42,7 +43,8 @@ def load_room_code(code_dir: Path, room_id: int) -> bytes | None:
     data = path.read_bytes()
     if not ROOM_CODE_HEADER_BYTES <= len(data) <= ROOM_CODE_MAX_BYTES:
         raise ValueError(f"{path}: invalid room-code size {len(data)}")
-    if data[0] != 0x4C or data[3] != 0x4C or data[6:10] != bytes((0x52, 0x43, 1, room_id)):
+    if (data[0] != 0x4C or data[3] != 0x4C or
+            data[6:10] != bytes((0x52, 0x43, ROOM_CODE_ABI, room_id))):
         raise ValueError(f"{path}: invalid room-code header")
     if int.from_bytes(data[10:12], "little") != len(data):
         raise ValueError(f"{path}: header size does not match file")

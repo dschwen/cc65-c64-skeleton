@@ -4,6 +4,7 @@
 .export _game_room_look_at_native
 
 .import _game_room_code_active
+.import incsp1
 
 ROOM_ENTER_TILE = $9900
 ROOM_LOOK_AT    = $9903
@@ -17,7 +18,8 @@ _game_room_enter_tile_native:
 @enter_done:
     rts
 
-; fastcall: A = cardinal direction. Return A=0/1 and X=0.
+; fastcall: A = tile y, tile x is on the C stack. The active room handler has
+; the same signature and therefore consumes the stacked byte itself.
 _game_room_look_at_native:
     ldx _game_room_code_active
     beq @look_default
@@ -27,4 +29,4 @@ _game_room_look_at_native:
 @look_default:
     lda #0
     tax
-    rts
+    jmp incsp1

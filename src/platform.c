@@ -61,9 +61,9 @@ void platform_light_source_apply_native(void);
 void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
 void platform_text_area_clear_native(void);
-void overlay_render_line_packed(const PlatformRoom* room,
-                                uint8_t line, uint8_t text_offset);
-void overlay_render_line_text(const char* text, uint8_t line);
+void __fastcall__ platform_text_output_native(const char* text);
+extern uint8_t platform_text_output_color;
+extern uint8_t platform_text_output_line;
 
 #pragma bss-name (push, "ROOMBSS")
 PlatformRoom platform_room;
@@ -136,9 +136,9 @@ const uint8_t platform_light_distance[16u * 16u] = {
     14, 15, 15, 15, 15, 15, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255,
     15, 16, 16, 16, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
 };
-const uint8_t platform_overlay_gray[16] = {
-    0, 12, 11, 12, 11, 11, 0, 12,
-    11, 11, 11, 0, 11, 12, 11, 11
+static const uint8_t look_cursor_colors[8] = {0, 11, 12, 15, 1, 15, 12, 11};
+static const uint8_t look_range_by_light[PLATFORM_LIGHT_LEVEL_COUNT] = {
+    0, 2, 6, 0xff
 };
 #pragma rodata-name (pop)
 
@@ -149,10 +149,7 @@ static uint8_t dirty_count;
 static const PlatformRoom* rendered_room;
 static const PlatformObject* rendered_player;
 static uint16_t rendered_object_limit;
-static uint8_t overlay_saved_colors[72];
-static uint8_t overlay_visible;
-static uint8_t overlay_x;
-static uint8_t overlay_y;
+static uint8_t look_cursor_visible;
 #pragma bss-name (push, "ROOMSTAGE")
 static PlatformRoom room_stage;
 #pragma bss-name (pop)
@@ -176,14 +173,12 @@ static uint8_t look_length;
 static uint8_t look_truncated;
 #pragma rodata-name (push, "RODATA")
 static const char hex_digits[] = "0123456789ABCDEF";
-static const char empty_text[] = "";
 #pragma rodata-name (pop)
 
 #pragma code-name (push, "CODE")
 static void write_screen_cell(uint8_t x, uint8_t y,
                               uint8_t ch, uint8_t color) {
     uint16_t offset;
-    uint8_t saved_offset;
 
     if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= 25u) return;
     offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
@@ -197,14 +192,7 @@ static void write_screen_cell(uint8_t x, uint8_t y,
                                 (x >> 1)] == 0u) color = 0u;
     }
 
-    if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
-        y >= overlay_y && y < overlay_y + 3u) {
-        saved_offset = (uint8_t)((y - overlay_y) * 24u + (x - overlay_x));
-        overlay_saved_colors[saved_offset] = color;
-        P_COLOR_RAM[offset] = platform_overlay_gray[color];
-    } else {
-        P_COLOR_RAM[offset] = color;
-    }
+    P_COLOR_RAM[offset] = color;
 }
 #pragma code-name (pop)
 
@@ -383,11 +371,6 @@ static void redraw_dirty(const PlatformRoom* room,
             ((platform_brightness[offset] & 0x03u) << 4) | (color & 0x0fu)];
         if (platform_view_tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH +
                                 (x >> 1)] == 0u) visible_color = 0u;
-        if (overlay_visible && x >= overlay_x && x < overlay_x + 24u &&
-            y >= overlay_y && y < overlay_y + 3u) {
-            overlay_saved_colors[(y - overlay_y) * 24u + (x - overlay_x)] = visible_color;
-            visible_color = platform_overlay_gray[visible_color];
-        }
         if (P_SCREEN_RAM[offset] != ch) P_SCREEN_RAM[offset] = ch;
         if (P_COLOR_RAM[offset] != visible_color) P_COLOR_RAM[offset] = visible_color;
     }
@@ -401,7 +384,7 @@ void platform_init(void) {
     P_VIC(0x20) = 0;
     P_VIC(0x21) = 0;
     P_VIC(0x18) = 0x18;
-    overlay_visible = 0;
+    look_cursor_visible = 0;
     P_VIC(0x15) = 0;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
@@ -638,7 +621,7 @@ void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y) {
 
 void platform_map_draw(const PlatformRoom* room) {
     if (room == 0) return;
-    if (overlay_visible) platform_overlay_hide();
+    platform_look_cursor_hide();
     platform_map_draw_native(room);
     platform_lighting_rebuild(room, room == rendered_room ? rendered_player : 0);
 }
@@ -679,7 +662,7 @@ static void object_draw_base(const PlatformObject* object) {
 }
 
 void platform_object_draw(const PlatformObject* object) {
-    if (overlay_visible) platform_overlay_hide();
+    platform_look_cursor_hide();
     object_draw_base(object);
     platform_lighting_apply();
 }
@@ -981,7 +964,7 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
            room->objects[rendered_object_limit - 1u].type == 0u) {
         --rendered_object_limit;
     }
-    if (overlay_visible) platform_overlay_hide();
+    platform_look_cursor_hide();
     platform_text_area_clear_native();
     platform_color_clear_native();
     platform_map_draw_native(room);
@@ -994,24 +977,8 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
     platform_lighting_rebuild(room, player);
 }
 
-static void overlay_refresh_lighting(void) {
-    uint8_t x;
-    uint8_t y;
-    uint16_t offset;
-
-    if (!overlay_visible) return;
-    for (y = 0; y < 3u; ++y) {
-        for (x = 0; x < 24u; ++x) {
-            offset = (uint16_t)(overlay_y + y) * PLATFORM_MAP_CHAR_WIDTH + overlay_x + x;
-            overlay_saved_colors[(uint16_t)y * 24u + x] = P_COLOR_RAM[offset] & 0x0f;
-            P_COLOR_RAM[offset] = platform_overlay_gray[P_COLOR_RAM[offset] & 0x0f];
-        }
-    }
-}
-
 void platform_lighting_apply(void) {
     platform_lighting_apply_native();
-    overlay_refresh_lighting();
 }
 
 void platform_lighting_set_global(uint8_t level) {
@@ -1022,7 +989,6 @@ void platform_lighting_set_global(uint8_t level) {
 
 void platform_lightning(void) {
     platform_lightning_native();
-    overlay_refresh_lighting();
 }
 
 void platform_object_move(PlatformRoom* room, PlatformObject* object,
@@ -1384,18 +1350,6 @@ static void look_append_type_name(uint8_t type_id) {
     }
 }
 
-static void look_append_room_text(const PlatformRoom* room, uint8_t text_offset) {
-    uint16_t offset;
-    uint8_t ch;
-    offset = text_offset;
-    while (offset < PLATFORM_ROOM_TEXT_BYTES && room->text[offset] != 0u) {
-        ch = room->text[offset++];
-        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
-        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
-        look_append_char((char)ch);
-    }
-}
-
 static uint8_t room_exit_text(const PlatformRoom* room, uint8_t direction) {
     switch (direction) {
         case PLATFORM_DIRECTION_NORTH: return room->north_text;
@@ -1415,90 +1369,137 @@ const char* platform_room_exit_description(const PlatformRoom* room,
 }
 
 static void look_write_buffer(uint8_t color) {
-    uint8_t line;
-    uint8_t column;
-    uint8_t i;
-
     if (look_truncated) {
         look_buffer[77] = '.';
         look_buffer[78] = '.';
         look_buffer[79] = '.';
         look_length = 80u;
     }
-    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
-    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-    for (i = 0u; i < look_length; ++i) {
-        line = i >= PLATFORM_MAP_CHAR_WIDTH ? PLATFORM_TEXT_LINE_BOTTOM
-                                             : PLATFORM_TEXT_LINE_TOP;
-        column = i >= PLATFORM_MAP_CHAR_WIDTH ? i - PLATFORM_MAP_CHAR_WIDTH : i;
-        write_screen_cell(column, (uint8_t)(23u + line),
-                          platform_text_screen_code(look_buffer[i]), color);
-    }
+    look_buffer[look_length] = '\0';
+    platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
+    platform_text_output_color = color & 0x0fu;
+    platform_text_output_native(look_buffer);
 }
 
-uint8_t platform_look_direction(const PlatformRoom* room,
-                                const PlatformObject* viewer,
-                                uint8_t direction, uint8_t color) {
-    static const char* const direction_names[4] = {
-        "North", "East", "West", "South"
-    };
-    int8_t delta_x;
-    int8_t delta_y;
-    int16_t tile_x;
-    int16_t tile_y;
+static uint8_t object_intersects_tile(const PlatformObject* object,
+                                      uint8_t tile_x, uint8_t tile_y) {
+    const PlatformObjectType* type;
+    int16_t left;
+    int16_t top;
+    int16_t world_x;
+    int16_t world_y;
+    uint8_t x;
+    uint8_t y;
+    uint8_t index;
+    uint8_t tile_left;
+    uint8_t tile_top;
+
+    if (object == 0 || object->type == 0u) return 0u;
+    type = platform_object_type_get(object->type);
+    if (!object_type_is_valid(type)) return 0u;
+    left = (int16_t)object->x - HOTSPOT_X(type);
+    top = (int16_t)object->y - HOTSPOT_Y(type);
+    tile_left = tile_x << 1;
+    tile_top = tile_y << 1;
+    index = 0u;
+    for (y = 0u; y < OBJECT_HEIGHT(type); ++y) {
+        world_y = top + y;
+        if (world_y < tile_top || world_y > (int16_t)(tile_top + 1u)) {
+            index += OBJECT_WIDTH(type);
+            continue;
+        }
+        for (x = 0u; x < OBJECT_WIDTH(type); ++x, ++index) {
+            world_x = left + x;
+            if (type->chars[index] != 0u && world_x >= tile_left &&
+                world_x <= (int16_t)(tile_left + 1u)) return 1u;
+        }
+    }
+    return 0u;
+}
+
+static void look_write_message(const char* text, uint8_t color) {
+    look_length = 0u;
+    look_truncated = 0u;
+    look_append_string(text);
+    look_write_buffer(color);
+}
+
+uint8_t platform_look_tile_check(const PlatformRoom* room,
+                                 const PlatformObject* viewer,
+                                 uint8_t tile_x, uint8_t tile_y,
+                                 uint8_t color) {
+    uint16_t offset;
+    uint8_t light;
+    uint8_t value;
+    uint8_t distance_x;
+    uint8_t distance_y;
+    uint8_t distance;
+
+    if (room == 0 || room != rendered_room || viewer == 0 ||
+        tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
+        return PLATFORM_ERR_ARGUMENT;
+    }
+    offset = (uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x;
+    if (platform_view_tiles[offset] == 0u) {
+        look_write_message("I cannot see that.", color);
+        return PLATFORM_ERR_BLOCKED;
+    }
+
+    offset = (uint16_t)(tile_y << 1) * PLATFORM_MAP_CHAR_WIDTH +
+             (tile_x << 1);
+    light = platform_brightness[offset] & 0x03u;
+    value = platform_brightness[offset + 1u] & 0x03u;
+    if (value > light) light = value;
+    value = platform_brightness[offset + PLATFORM_MAP_CHAR_WIDTH] & 0x03u;
+    if (value > light) light = value;
+    value = platform_brightness[offset + PLATFORM_MAP_CHAR_WIDTH + 1u] & 0x03u;
+    if (value > light) light = value;
+
+    distance_x = (viewer->x >> 1) > tile_x
+                     ? (uint8_t)((viewer->x >> 1) - tile_x)
+                     : (uint8_t)(tile_x - (viewer->x >> 1));
+    distance_y = (viewer->y >> 1) > tile_y
+                     ? (uint8_t)((viewer->y >> 1) - tile_y)
+                     : (uint8_t)(tile_y - (viewer->y >> 1));
+    distance = distance_x > distance_y ? distance_x : distance_y;
+    if (light == PLATFORM_LIGHT_NONE || distance > look_range_by_light[light]) {
+        look_write_message(
+            "It is too dark to make anything out. I need to get closer!", color);
+        return PLATFORM_ERR_BLOCKED;
+    }
+    return PLATFORM_OK;
+}
+
+uint8_t platform_look_tile(const PlatformRoom* room,
+                           uint8_t tile_x, uint8_t tile_y, uint8_t color) {
     uint16_t i;
     uint16_t limit;
     uint8_t type_id;
     uint8_t count;
     uint8_t found;
-    uint8_t neighbor;
 
-    if (room == 0 || viewer == 0 || viewer->type == 0u || direction > 3u) {
+    if (room == 0 || tile_x >= PLATFORM_MAP_WIDTH ||
+        tile_y >= PLATFORM_MAP_HEIGHT) {
         return PLATFORM_ERR_ARGUMENT;
     }
-    delta_x = direction == PLATFORM_DIRECTION_EAST ? 1 :
-              direction == PLATFORM_DIRECTION_WEST ? -1 : 0;
-    delta_y = direction == PLATFORM_DIRECTION_SOUTH ? 1 :
-              direction == PLATFORM_DIRECTION_NORTH ? -1 : 0;
-    tile_x = (int16_t)(viewer->x >> 1) + delta_x;
-    tile_y = (int16_t)(viewer->y >> 1) + delta_y;
     look_length = 0u;
     look_truncated = 0u;
-    look_append_string(direction_names[direction]);
-    look_append_string(" you see: ");
-
-    if (tile_x < 0 || tile_x >= PLATFORM_MAP_WIDTH ||
-        tile_y < 0 || tile_y >= PLATFORM_MAP_HEIGHT) {
-        if (platform_room_neighbor(room, direction, &neighbor) == PLATFORM_OK) {
-            type_id = room_exit_text(room, direction);
-            if (type_id != 0u) {
-                look_append_room_text(room, type_id);
-            } else {
-                look_append_string("an exit.");
-            }
-        } else {
-            look_append_string("nothing.");
-        }
-        look_write_buffer(color);
-        return PLATFORM_OK;
-    }
+    look_append_string("You see: ");
 
     memset(look_counts, 0, sizeof(look_counts));
     limit = room == rendered_room ? rendered_object_limit : PLATFORM_ROOM_OBJECT_COUNT;
     for (i = 0u; i < limit; ++i) {
         type_id = room->objects[i].type;
-        if (type_id == 0u || &room->objects[i] == viewer ||
-            (room->objects[i].x >> 1) != (uint8_t)tile_x ||
-            (room->objects[i].y >> 1) != (uint8_t)tile_y) continue;
+        if (type_id == 0u ||
+            !object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
         if (look_counts[type_id] != 0xffu) ++look_counts[type_id];
     }
     found = 0u;
     for (i = 0u; i < limit; ++i) {
         type_id = room->objects[i].type;
         count = look_counts[type_id];
-        if (type_id == 0u || count == 0u || &room->objects[i] == viewer ||
-            (room->objects[i].x >> 1) != (uint8_t)tile_x ||
-            (room->objects[i].y >> 1) != (uint8_t)tile_y) continue;
+        if (type_id == 0u || count == 0u ||
+            !object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
         if (found) look_append_string(", ");
         if (count > 1u) look_append_count(count);
         look_append_type_name(type_id);
@@ -1511,97 +1512,59 @@ uint8_t platform_look_direction(const PlatformRoom* room,
     return PLATFORM_OK;
 }
 
-static uint8_t overlay_begin(uint8_t half_x, uint8_t half_y,
-                             uint8_t sprite_color) {
-    uint8_t x;
-    uint8_t y;
-    uint8_t i;
+static void look_cursor_position(uint8_t tile_x, uint8_t tile_y) {
     uint16_t sprite_x;
-    uint8_t high_x;
-    uint16_t offset;
 
-    if (half_x > 16u || half_y > 19u) return PLATFORM_ERR_ARGUMENT;
-    platform_overlay_hide();
-    memset(P_SPRITE_DATA, 0, 512u);
+    sprite_x = 23u + (uint16_t)tile_x * 16u;
+    P_VIC(0x00) = (uint8_t)sprite_x;
+    P_VIC(0x01) = (uint8_t)(49u + (uint16_t)tile_y * 16u);
+    if (sprite_x & 0x100u) P_VIC(0x10) |= 0x01u;
+    else P_VIC(0x10) &= 0xfeu;
+}
 
-    overlay_x = half_x;
-    overlay_y = half_y;
-    high_x = 0;
-    for (y = 0; y < 3u; ++y) {
-        for (x = 0; x < 24u; ++x) {
-            offset = (uint16_t)(half_y + y) * PLATFORM_MAP_CHAR_WIDTH + half_x + x;
-            overlay_saved_colors[(uint16_t)y * 24u + x] = P_COLOR_RAM[offset] & 0x0f;
-            P_COLOR_RAM[offset] = platform_overlay_gray[P_COLOR_RAM[offset] & 0x0f];
-        }
+uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
+    uint8_t row;
+
+    if (tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
+        return PLATFORM_ERR_ARGUMENT;
     }
-
-    for (i = 0; i < 8u; ++i) {
-        P_SPRITE_POINTERS[i] = (uint8_t)(0x3a00u / 64u + i);
-        sprite_x = (uint16_t)24u + (uint16_t)half_x * 8u + (uint16_t)i * 24u;
-        P_VIC(i << 1) = (uint8_t)sprite_x;
-        if (sprite_x & 0x100u) high_x |= (uint8_t)(1u << i);
-        P_VIC((i << 1) + 1u) = (uint8_t)(51u + (uint16_t)half_y * 8u);
-        P_VIC(0x27u + i) = sprite_color & 0x0f;
+    memset(P_SPRITE_DATA, 0, 64u);
+    P_SPRITE_DATA[0] = 0xffu;
+    P_SPRITE_DATA[1] = 0xffu;
+    P_SPRITE_DATA[2] = 0xc0u;
+    P_SPRITE_DATA[51] = 0xffu;
+    P_SPRITE_DATA[52] = 0xffu;
+    P_SPRITE_DATA[53] = 0xc0u;
+    for (row = 1u; row < 17u; ++row) {
+        P_SPRITE_DATA[(uint8_t)(row * 3u)] = 0x80u;
+        P_SPRITE_DATA[(uint8_t)(row * 3u + 2u)] = 0x40u;
     }
-    P_VIC(0x10) = high_x;
-    P_VIC(0x17) = 0;
-    P_VIC(0x1b) = 0;
-    P_VIC(0x1c) = 0;
-    P_VIC(0x1d) = 0;
-    overlay_visible = 1;
-    P_VIC(0x15) = 0xff;
-
+    P_SPRITE_POINTERS[0] = (uint8_t)(0x3a00u / 64u);
+    look_cursor_position(tile_x, tile_y);
+    P_VIC(0x17) &= 0xfeu;
+    P_VIC(0x1b) &= 0xfeu;
+    P_VIC(0x1c) &= 0xfeu;
+    P_VIC(0x1d) &= 0xfeu;
+    look_cursor_visible = 1u;
+    P_VIC(0x15) |= 0x01u;
+    platform_look_cursor_tick();
     return PLATFORM_OK;
 }
 
-uint8_t platform_overlay_show(const PlatformRoom* room,
-                              uint8_t half_x, uint8_t half_y,
-                              uint8_t line0_offset,
-                              uint8_t line1_offset,
-                              uint8_t line2_offset,
-                              uint8_t sprite_color) {
-    uint8_t result;
-
-    if (room == 0) return PLATFORM_ERR_ARGUMENT;
-    result = overlay_begin(half_x, half_y, sprite_color);
-    if (result != PLATFORM_OK) return result;
-
-    overlay_render_line_packed(room, 0, line0_offset);
-    overlay_render_line_packed(room, 1, line1_offset);
-    overlay_render_line_packed(room, 2, line2_offset);
+uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y) {
+    if (!look_cursor_visible || tile_x >= PLATFORM_MAP_WIDTH ||
+        tile_y >= PLATFORM_MAP_HEIGHT) return PLATFORM_ERR_ARGUMENT;
+    look_cursor_position(tile_x, tile_y);
     return PLATFORM_OK;
 }
 
-uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
-                                   const char* line0, const char* line1,
-                                   const char* line2, uint8_t sprite_color) {
-    uint8_t result;
-
-    result = overlay_begin(half_x, half_y, sprite_color);
-    if (result != PLATFORM_OK) return result;
-    overlay_render_line_text(line0 != 0 ? line0 : empty_text, 0);
-    overlay_render_line_text(line1 != 0 ? line1 : empty_text, 1);
-    overlay_render_line_text(line2 != 0 ? line2 : empty_text, 2);
-    return PLATFORM_OK;
-}
-
-void platform_overlay_hide(void) {
-    uint8_t x;
-    uint8_t y;
-    uint16_t offset;
-    P_VIC(0x15) = 0;
-    if (!overlay_visible) return;
-    for (y = 0; y < 3u; ++y) {
-        for (x = 0; x < 24u; ++x) {
-            offset = (uint16_t)(overlay_y + y) * PLATFORM_MAP_CHAR_WIDTH + overlay_x + x;
-            P_COLOR_RAM[offset] = overlay_saved_colors[(uint16_t)y * 24u + x];
-        }
+void platform_look_cursor_tick(void) {
+    if (look_cursor_visible) {
+        P_VIC(0x27) = look_cursor_colors[(platform_frame_counter >> 2) & 0x07u];
     }
-    overlay_visible = 0;
 }
 
-#pragma code-name (push, "MIDCODE")
-uint8_t platform_overlay_is_visible(void) {
-    return overlay_visible;
+void platform_look_cursor_hide(void) {
+    P_VIC(0x15) &= 0xfeu;
+    look_cursor_visible = 0u;
 }
-#pragma code-name (pop)

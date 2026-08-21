@@ -275,7 +275,7 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$2800-$2FFF` | text charset (`charset.cchr` bank 1) |
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
-| `$3A00-$3BFF` | eight runtime sprite-overlay bitmap slots |
+| `$3A00-$3BFF` | eight runtime sprite bitmap slots; sprite 0 is the Look cursor |
 | `$3C00-$7FFF` | resident platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room |
 | `$84E9-$85FF` | fixed resident `GameState` region |
@@ -360,8 +360,9 @@ code is loaded at `$8600`; game/main and the shared room API occupy
 `$8B48-$98FF`. Independently linked room code has a 1 KiB window at
 `$9900-$9CFF`, and the current-room pristine object baseline occupies
 `$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
-Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at `$B500`
-and `$B900`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
+Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at
+`$B500-$B87F` and `$BA00-$BBFF`; the bottom-text pager occupies
+`$B880-$B9FF`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
 visible while leaving BASIC hidden and these regions readable.
 
 `WORKBSS` uses `$A4E9-$B4D8` for base colors, brightness/visibility buffers,
@@ -382,8 +383,10 @@ mapping `$36` exposes underlying RAM instead. Because `$37` hides the C stack
 under BASIC ROM, C `memcpy()` must not run while the cartridge window is live.
 
 See `PLATFORM_API.md` for room/object binary formats and the public C API for
-map drawing, object movement, transitions, bottom text, and sprite dialogs.
-See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and overlay constraints.
+map drawing, object movement, transitions, bottom text, lighting, and the Look
+cursor.
+See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and room-code overlay
+constraints.
 See `SAVE_GAME.md` for the room-delta invariants and versioned save record.
 
 ### VIC‑II

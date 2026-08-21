@@ -527,10 +527,11 @@ and routines with stacked arguments must perform the required callee cleanup.
 Keep shared structure offsets and fixed addresses in an assembly include, with
 C size assertions, so the C and assembly layouts cannot silently diverge.
 
-Full map/object draws hide the sprite dialog before invoking the native
-blitters. Dirty-cell movement remains overlay-aware because it updates the
-saved-color backing array. Movement should be profiled separately: dirty-cell
-recomposition, not the full map blitter, is the relevant path for actors.
+Full map/object draws hide the sprite Look cursor before invoking the native
+blitters. The cursor does not modify screen or Color RAM, so dirty-cell movement
+does not require overlay bookkeeping. Movement should be profiled separately:
+dirty-cell recomposition, not the full map blitter, is the relevant path for
+actors.
 
 ## Flash saves are a separate feature
 

@@ -10,8 +10,8 @@ lighting update does not redraw the map or any object graphics.
 - `platform_brightness[880]` stores brightness 0-3 for the same cells.
 - The assembly `platform_lighting_apply_native` pass combines both buffers and
   writes `$D800-$DB6F`. The two bottom status rows are outside this range.
-- A sprite text overlay is applied after lighting. Its saved colors therefore
-  contain lit colors, and hiding it restores the current lighting result.
+- The sprite Look cursor does not alter Color RAM. Showing, moving, blinking,
+  and hiding it therefore require no lighting-buffer restoration.
 
 The color lookup rows use standard C64 color indices:
 

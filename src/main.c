@@ -4,13 +4,15 @@
 #include "game.h"
 #include "world.h"
 
-#pragma code-name ("UPPERCODE")
+#pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
 
 int main(void) {
     uint8_t key;
     uint8_t command;
     uint8_t direction;
+    uint8_t look_x;
+    uint8_t look_y;
 
     platform_init();
     if (platform_storage == PLATFORM_STORAGE_DISK) {
@@ -20,14 +22,6 @@ int main(void) {
     game_world_init();
     (void)game_room_code_load_current();
     platform_room_draw(&platform_room, platform_player);
-    platform_overlay_show(&platform_room, 8, 16,
-                          0x01, 0x16, 0x36, 1);
-
-    do {
-        platform_wait_frame();
-        key = platform_input_poll();
-    } while (key == 0u);
-    platform_overlay_hide();
     game_enter_tile();
     command = 0u;
 
@@ -35,7 +29,52 @@ int main(void) {
         platform_wait_frame();
         (void)game_process_pending_transition();
         key = platform_input_poll();
-        if (command != 0u) {
+        if (command == PLATFORM_KEY_LOOK) {
+            platform_look_cursor_tick();
+            switch (key) {
+                case PLATFORM_KEY_CURSOR_UP:
+                    if (look_y > 0u) {
+                        --look_y;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
+                    break;
+                case PLATFORM_KEY_CURSOR_RIGHT:
+                    if (look_x + 1u < PLATFORM_MAP_WIDTH) {
+                        ++look_x;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
+                    break;
+                case PLATFORM_KEY_CURSOR_LEFT:
+                    if (look_x > 0u) {
+                        --look_x;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
+                    break;
+                case PLATFORM_KEY_CURSOR_DOWN:
+                    if (look_y + 1u < PLATFORM_MAP_HEIGHT) {
+                        ++look_y;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
+                    break;
+                case PLATFORM_KEY_ENTER:
+                    platform_look_cursor_hide();
+                    if (platform_look_tile_check(&platform_room, platform_player,
+                                                 look_x, look_y, 1u) == PLATFORM_OK &&
+                        game_look_at(look_x, look_y) == GAME_LOOK_DEFAULT) {
+                        (void)platform_look_tile(&platform_room, look_x, look_y, 1u);
+                    }
+                    command = 0u;
+                    break;
+                case PLATFORM_KEY_LOOK:
+                    platform_look_cursor_hide();
+                    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+                    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+                    command = 0u;
+                    break;
+            }
+            continue;
+        }
+        if (command == PLATFORM_KEY_TAKE) {
             direction = 0xffu;
             switch (key) {
                 case PLATFORM_KEY_CURSOR_UP:
@@ -50,29 +89,14 @@ int main(void) {
                 case PLATFORM_KEY_CURSOR_DOWN:
                     direction = PLATFORM_DIRECTION_SOUTH;
                     break;
-                case PLATFORM_KEY_LOOK:
-                    if (command == PLATFORM_KEY_LOOK) {
-                        platform_overlay_hide();
-                        command = 0u;
-                    }
-                    break;
                 case PLATFORM_KEY_TAKE:
-                    if (command == PLATFORM_KEY_TAKE) {
-                        platform_overlay_hide();
-                        command = 0u;
-                    }
+                    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+                    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+                    command = 0u;
                     break;
             }
             if (direction != 0xffu) {
-                platform_overlay_hide();
-                if (command == PLATFORM_KEY_LOOK) {
-                    if (game_look_at(direction) == GAME_LOOK_DEFAULT) {
-                        (void)platform_look_direction(&platform_room, platform_player,
-                                                      direction, 1u);
-                    }
-                } else {
-                    (void)game_take_direction(direction);
-                }
+                (void)game_take_direction(direction);
                 command = 0u;
             }
             continue;
@@ -104,11 +128,14 @@ int main(void) {
                 platform_lightning();
                 break;
             case PLATFORM_KEY_LOOK:
-                (void)platform_overlay_show_text(8u, 16u, "Looking...", 0, 0, 1u);
+                look_x = platform_player->x >> 1;
+                look_y = platform_player->y >> 1;
+                game_text_write(PLATFORM_TEXT_LINE_TOP, "Looking...", 1u);
+                (void)platform_look_cursor_show(look_x, look_y);
                 command = PLATFORM_KEY_LOOK;
                 break;
             case PLATFORM_KEY_TAKE:
-                (void)platform_overlay_show_text(8u, 16u, "Taking...", 0, 0, 1u);
+                game_text_write(PLATFORM_TEXT_LINE_TOP, "Taking...", 1u);
                 command = PLATFORM_KEY_TAKE;
                 break;
             case PLATFORM_KEY_INVENTORY:

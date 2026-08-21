@@ -58,7 +58,7 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y);
 /* Execute a transition queued by game_transition_request() on a safe frame. */
 uint8_t game_process_pending_transition(void);
 void game_enter_tile(void);
-uint8_t game_look_at(uint8_t direction);
+uint8_t __fastcall__ game_look_at(uint8_t tile_x, uint8_t tile_y);
 uint8_t game_room_code_prepare(uint8_t room_id);
 void game_room_code_activate(void);
 uint8_t game_room_code_load_current(void);
@@ -77,13 +77,9 @@ void game_heal(uint8_t amount);
 void game_damage(uint8_t amount);
 uint8_t game_spend_mana(uint8_t amount);
 
-/* Replace a bottom line or show the standard three-line sprite dialog. */
+/* Write word-wrapped, paged text in the two bottom lines. */
 void game_text_write(uint8_t line, const char* text, uint8_t color);
 void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
-void game_dialog_show(const char* line0, const char* line1,
-                      const char* line2, uint8_t color);
-void game_dialog_show_room(uint8_t line0, uint8_t line1,
-                           uint8_t line2, uint8_t color);
 /* Queue an overlay-safe room change. x/y are half-tile coordinates. */
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 /* Add a non-actor room object to inventory and remove it from the room. */
@@ -95,6 +91,6 @@ void game_inventory_show(void);
 
 /* Implemented independently by every rooms/XX.c. Read coordinates from state. */
 void enter_tile(void);
-uint8_t __fastcall__ look_at(uint8_t direction);
+uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
 
 #endif

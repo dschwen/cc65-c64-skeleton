@@ -88,7 +88,7 @@ void game_inventory_show(void) {
     uint8_t shown;
     uint8_t key;
 
-    platform_overlay_hide();
+    platform_look_cursor_hide();
     GAME_VIC_CTRL1 &= 0xefu;
     platform_text_screen_enter();
     memset(GAME_SCREEN_RAM, platform_text_screen_code(' '), 1000u);
@@ -251,17 +251,6 @@ void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color) {
     platform_text_output_line = line;
     platform_text_output_color = color & 0x0fu;
     platform_text_output_native((const char*)&platform_room.text[text_offset]);
-}
-
-void game_dialog_show(const char* line0, const char* line1,
-                      const char* line2, uint8_t color) {
-    (void)platform_overlay_show_text(8u, 16u, line0, line1, line2, color);
-}
-
-void game_dialog_show_room(uint8_t line0, uint8_t line1,
-                           uint8_t line2, uint8_t color) {
-    (void)platform_overlay_show(&platform_room, 8u, 16u,
-                                line0, line1, line2, color);
 }
 
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y) {

@@ -3,7 +3,8 @@
 The public runtime API is declared in `src/platform.h` and implemented in
 `src/platform.c`. It provides fixed-size room storage, tile and object
 rendering, minimal object movement redraws, room-transition detection, bottom
-status text, and a sprite-based dialog overlay without dynamic allocation.
+status text, lighting/visibility, and a sprite tile cursor without dynamic
+allocation.
 
 ## Coordinate systems
 
@@ -12,8 +13,8 @@ The platform uses three related coordinate systems:
 | Unit | Range | Purpose |
 |---|---|---|
 | tile | x `0-19`, y `0-10` | room maps and 2x2-character tiles |
-| half-tile / character | x `0-39`, y `0-21` | objects, movement, hotspots, overlays |
-| pixel | 320x200 display | sprite hardware and glyph rendering only |
+| half-tile / character | x `0-39`, y `0-21` | objects, movement, hotspots |
+| pixel | 320x200 display | sprite hardware only |
 
 A half-tile is exactly one 8x8 screen character. Object positions store the
 half-tile coordinate of the object's hotspot. The graphic origin is:
@@ -36,7 +37,7 @@ room-transition logic even when a graphic extends in several directions.
 | `$2800-$2FFF` | text charset |
 | `$3000-$38FF` | tiles and tile properties |
 | `$3900-$39FF` | compact read-only lookup tables |
-| `$3A00-$3BFF` | eight 64-byte sprite bitmap slots |
+| `$3A00-$3BFF` | eight 64-byte sprite bitmap slots; look cursor uses slot 0 |
 | `$3C00-$7FFF` | platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room RAM |
 | `$84E9-$85FF` | fixed `GameState` region |
@@ -46,8 +47,9 @@ room-transition logic even when a graphic extends in several directions.
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
 | `$A4E9-$B4D8` | rebuildable render/lighting work RAM and room-code staging |
-| `$B500-$B848` | ordinary resident BSS |
-| `$B900-$BBFF` | cc65 software stack |
+| `$B500-$B87F` | ordinary resident BSS |
+| `$B880-$B9FF` | independently loaded bottom-text pager |
+| `$BA00-$BBFF` | cc65 software stack |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records |
 
@@ -57,8 +59,7 @@ The platform preallocates:
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
 - 256 object-type records, 16 KiB total;
-- a 110-byte dirty-cell bitmap;
-- 72 saved Color RAM bytes for the overlay.
+- a 110-byte dirty-cell bitmap.
 
 No API allocates heap memory.
 
@@ -228,7 +229,7 @@ single-buffer gameplay. See `SAVE_GAME.md` for invariants and capacity.
 
 The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
-Room-specific handlers, `GameState`, and the overlay ABI are specified in
+Room-specific handlers, `GameState`, and the room-code ABI are specified in
 `ROOM_CODE_API.md`.
 
 For disk gameplay, the room files must be present on the generated D64. The
@@ -361,8 +362,9 @@ The lookup table is indexed as `(brightness << 4) | (base_color & 15)`. Its
 four rows are documented in [LIGHTING.md](LIGHTING.md), along with the planned
 object-emitter propagation pass. In the twilight row black remains black; none
 of the other 15 input colors maps to itself.
-Full map/object draws hide an active sprite overlay before invoking the native
-blitters. Dirty-cell movement retains its overlay-aware saved-color handling.
+Full map/object draws hide the look cursor before invoking the native blitters.
+Dirty-cell movement does not need special cursor handling because a sprite does
+not alter screen or Color RAM.
 
 ## Object movement and lists
 
@@ -444,6 +446,7 @@ It returns zero when no event is available. Cursor-key values are exposed as:
 | Up | `PLATFORM_KEY_CURSOR_UP` | 145 |
 | Left | `PLATFORM_KEY_CURSOR_LEFT` | 157 |
 | Look | `PLATFORM_KEY_LOOK` | 76 (`L`) |
+| Select | `PLATFORM_KEY_ENTER` | 13 (Return) |
 | Take | `PLATFORM_KEY_TAKE` | 84 (`T`) |
 | Inventory | `PLATFORM_KEY_INVENTORY` | 73 (`I`) |
 
@@ -453,16 +456,11 @@ uses the corresponding enabled neighbor and enters at the opposite boundary
 while preserving the orthogonal coordinate. Only the hotspot is tested; the
 dimensions of the player graphic do not expand the collision footprint.
 
-The demo loop first waits for any key event and hides the sprite dialog. It
-then handles cursor events as one-half-tile player steps:
+The demo becomes interactive immediately after drawing the first room. Cursor
+events normally move the player by one half-tile. While look mode is active,
+the same keys move the tile cursor and Return selects its tile.
 
 ```c
-do {
-    platform_wait_frame();
-    key = platform_input_poll();
-} while (key == 0);
-platform_overlay_hide();
-
 for (;;) {
     platform_wait_frame();
     key = platform_input_poll();
@@ -505,8 +503,9 @@ leaving-room capture is harmless and idempotent if a later preflight fails.
 
 `platform_room_exit_description()` returns the selected zero-terminated room
 text string, or `NULL` when the direction is invalid or has no description.
-The generic look command uses it only when looking beyond a map edge; it never
-loads the neighboring room.
+The tile-cursor Look command cannot select beyond a map edge. Exit descriptions
+remain available to room logic and other transition UI without loading the
+neighboring room.
 
 Trigger destinations remain game-defined. Game code resolves:
 
@@ -532,9 +531,12 @@ void platform_text_write_line(uint8_t line, uint8_t column,
 void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
                                    uint8_t column, uint8_t text_offset,
                                    uint8_t color);
-uint8_t platform_look_direction(const PlatformRoom* room,
-                                const PlatformObject* viewer,
-                                uint8_t direction, uint8_t color);
+uint8_t platform_look_tile_check(const PlatformRoom* room,
+                                 const PlatformObject* viewer,
+                                 uint8_t tile_x, uint8_t tile_y,
+                                 uint8_t color);
+uint8_t platform_look_tile(const PlatformRoom* room,
+                           uint8_t tile_x, uint8_t tile_y, uint8_t color);
 ```
 
 Line 0 is screen row 23; line 1 is row 24. The raster IRQ has already selected
@@ -575,116 +577,36 @@ platform_text_write_room_line(&platform_room,
                               1, room_string_offset, 1);
 ```
 
-`platform_look_direction()` describes the adjacent hotspot tile across both
-rows. Repeated type IDs are grouped (`5 Gold`), names come from the 14-byte
-object-type name, and output fills the two rows and clips at 80 characters. An
-enabled room edge is reported using its description without loading the
-neighbor; an undescribed edge falls back to `an exit.`.
+`platform_look_tile_check()` must run before room-specific descriptive code. It
+first checks `platform_view_tiles`, so an occluded tile reports `I cannot see
+that.` without invoking the room hook. It then takes the maximum brightness of
+the tile's four character cells and compares Chebyshev distance from the
+viewer against the provisional ranges: no light is never readable, dim light
+reaches 2 tiles, twilight reaches 6, and full light reaches every tile allowed
+by line of sight. A darkness failure reports `It is too dark to make anything
+out. I need to get closer!`. The range table is deliberately isolated for the
+planned perception formula.
 
-The sample loop enters look mode on `L`, displays `Looking...` in the sprite
-overlay, and waits for a cursor direction. A direction hides the overlay and
-writes the description to the bottom rows; pressing `L` again cancels.
+`platform_look_tile()` groups repeated object types and writes their names
+through the word-wrapping pager. An object matches when at least one nonzero
+character in its hotspot-relative graphic intersects either character cell of
+the selected 2x2-character tile. Its hotspot may be on another tile.
 
-## Sprite dialog overlay
-
-```c
-uint8_t platform_overlay_show(const PlatformRoom* room,
-                              uint8_t half_x, uint8_t half_y,
-                              uint8_t line0_offset,
-                              uint8_t line1_offset,
-                              uint8_t line2_offset,
-                              uint8_t sprite_color);
-uint8_t platform_overlay_show_text(uint8_t half_x, uint8_t half_y,
-                                   const char* line0, const char* line1,
-                                   const char* line2, uint8_t sprite_color);
-void platform_overlay_hide(void);
-uint8_t platform_overlay_is_visible(void);
-extern const uint8_t platform_overlay_gray[16];
-```
-
-The overlay uses all eight standard-resolution monochrome sprites side by
-side. It is 192x21 pixels and renders three lines of 48 4x7 glyphs. Each line
-parameter is a byte offset into `room->text`; point a line at offset 0 to leave
-it empty.
-
-`platform_overlay_show_text()` accepts three direct C strings and otherwise
-uses the same clearing, positioning, progressive glyph crawl, and dimming
-behavior. cc65 stores C string letters in PETSCII, so the assembly entry
-normalizes PETSCII upper/lower case before indexing the ASCII glyph table. The
-packed room-text entry continues to consume editor-authored ASCII bytes. The
-demo uses the direct-string entry for the `Looking...` input state.
-
-`half_x` and `half_y` align the overlay to the 8x8 character grid. Valid
-origins are x `0-16` and y `0-19`. The sprite top is shifted down one pixel,
-leaving the 21-pixel box visually centered over the three underlying 8-pixel
-character rows.
-
-The platform saves and darkens the 24x3 Color RAM cells behind the sprites.
-The precomputed lookup table is:
+## Look cursor
 
 ```c
-{ 0,12,11,12,11,11,0,12,11,11,11,0,11,12,11,11 }
+uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y);
+uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y);
+void platform_look_cursor_tick(void);
+void platform_look_cursor_hide(void);
 ```
 
-Only existing C64 colors are possible in Color RAM, so the mapping uses black,
-dark gray, and gray as darker desaturated approximations. While the overlay is
-visible, map/object redraws update the saved original color and leave the
-visible cell darkened. `platform_overlay_hide()` restores the latest originals.
-
-The overlay reads its 4x7 glyphs directly from the high nibble of charset bank
-1 at `$2800`. The supported ASCII-to-character mapping is:
-
-- `A-Z`: characters 193-218;
-- `(`, `$`, `)`, `-`: characters 219-222;
-- `a-z`: characters 225-250;
-- `.`, `,`, `!`, `?`, `:`: characters 251-255.
-
-Space and unsupported bytes render blank. Each glyph uses rows 0-6 and bits
-7-4 of its 8x8 charset character; row 7 and the low nibble are ignored.
-
-### Overlay ASCII lookup table
-
-`ascii_glyph` in `src/overlay.s` is a direct 128-byte lookup indexed by ASCII
-code. Each value is the charset-bank-1 character position, or `00` for a blank
-or currently unsupported character. This is the complete current table;
-columns are the low hexadecimal nibble:
-
-```text
-       0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
-$00:  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-$10:  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-$20:  00 FD 00 00 DC 00 00 00 DB DD 00 00 FC DE FB 00
-$30:  00 00 00 00 00 00 00 00 00 00 FF 00 00 00 00 FE
-$40:  00 C1 C2 C3 C4 C5 C6 C7 C8 C9 CA CB CC CD CE CF
-$50:  D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 DA 00 00 00 00 00
-$60:  00 E1 E2 E3 E4 E5 E6 E7 E8 E9 EA EB EC ED EE EF
-$70:  F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 FA 00 00 00 00 00
-```
-
-The existing named mappings are:
-
-| ASCII | Charset positions |
-|---|---|
-| `A-Z` | `$C1-$DA` (193-218) |
-| `(`, `$`, `)`, `-` | `$DB-$DE` (219-222) |
-| `a-z` | `$E1-$FA` (225-250) |
-| `.`, `,`, `!`, `?`, `:` | `$FB-$FF` (251-255) |
-
-To add a missing character, draw its seven 4-pixel rows in bits 7-4 of an
-available bank-1 charset position, leave row 7 unused, then replace that ASCII
-entry's `00` in `ascii_glyph`. For example, ASCII `0` is table index `$30`.
-The table itself deliberately contains only ASCII indices. The direct C-string
-entry normalizes cc65 PETSCII letters before consulting it; packed room text is
-already ASCII and indexes it directly.
-
-The packed renderer is implemented in `src/overlay.s`. Sprite RAM is cleared
-before the sprites are enabled. The cleared sprites are then positioned and
-enabled before characters are drawn, so text visibly crawls into the box.
-For every pixel row, an even character ORs its existing high nibble directly
-into the destination byte; the following odd character shifts its high nibble
-right by four and ORs it into the same byte. Six characters fill the three
-bytes of one sprite row. The next six continue at the next sprite's 64-byte
-block, and each successive glyph row advances three bytes within that block.
+Pressing `L` starts the cursor on the player's hotspot tile. Cursor keys move
+within the 20x11 room, Return selects, and `L` cancels. The cursor is an 18x18
+one-pixel monochrome frame in sprite slot 0, positioned one pixel outside the
+selected 16x16 tile. `tick()` cycles black, dark gray, gray, light gray, white,
+and back through the grays. Only sprite-0 bits in shared VIC registers are
+changed; sprites 1-7 remain available to game code.
 
 ## Raster IRQ and water animation
 

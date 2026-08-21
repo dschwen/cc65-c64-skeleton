@@ -15,9 +15,9 @@ ROOM_BANKS = 43
 TYPE_BANK_0 = 46
 TYPE_BANK_1 = 47
 OUTPUT_BANKS = 48
-ROOM_CODE_HEADER_BYTES = 20
+ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
-ROOM_CODE_ABI = 2
+ROOM_CODE_ABI = 3
 ROOM_CODE_DIRECTORY_BANK = 3
 ROOM_CODE_DIRECTORY_BYTES = 0x800
 ROOM_CODE_FIRST_BANK = 3
@@ -43,10 +43,10 @@ def load_room_code(code_dir: Path, room_id: int) -> bytes | None:
     data = path.read_bytes()
     if not ROOM_CODE_HEADER_BYTES <= len(data) <= ROOM_CODE_MAX_BYTES:
         raise ValueError(f"{path}: invalid room-code size {len(data)}")
-    if (data[0] != 0x4C or data[3] != 0x4C or
-            data[6:10] != bytes((0x52, 0x43, ROOM_CODE_ABI, room_id))):
+    if (data[0] != 0x4C or data[3] != 0x4C or data[6] != 0x4C or
+            data[9:13] != bytes((0x52, 0x43, ROOM_CODE_ABI, room_id))):
         raise ValueError(f"{path}: invalid room-code header")
-    if int.from_bytes(data[10:12], "little") != len(data):
+    if int.from_bytes(data[13:15], "little") != len(data):
         raise ValueError(f"{path}: header size does not match file")
     return data
 
@@ -69,7 +69,7 @@ def pack_room_code(image: bytearray, code_dir: Path, asset_dir: Path) -> None:
         if bank > ROOM_CODE_LAST_BANK:
             raise ValueError("room code exceeds available EasyFlash ROMH banks")
 
-        checksum = int.from_bytes(code[16:18], "little")
+        checksum = int.from_bytes(code[19:21], "little")
         entry = bytes((bank, 1, offset & 0xFF, offset >> 8,
                        len(code) & 0xFF, len(code) >> 8,
                        checksum & 0xFF, checksum >> 8))

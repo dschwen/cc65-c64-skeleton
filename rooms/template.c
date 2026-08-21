@@ -4,7 +4,6 @@ void enter_room(void) {
 }
 
 void enter_tile(void) {
-    ++game_state.flags[1];
 }
 
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {

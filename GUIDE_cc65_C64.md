@@ -379,7 +379,8 @@ reserved for all eight hardware sprites.
 
 Generic room-callable functions live in resident `src/game_support.c` and are
 resolved by address when each room is linked. Room binaries contain only their
-header, `enter_tile()`, `look_at()`, private helpers, strings, and BSS. This
+header, `enter_room()`, `enter_tile()`, `look_at()`, private helpers, strings,
+and BSS. This
 keeps the 1 KiB overlay available for room-specific behavior without repeating
 inventory, text, transition, or save-aware object code in every room file.
 

@@ -109,7 +109,8 @@ Loading is transactional:
 5. insert the saved player through the normal room transition path;
 6. load and activate that room's code overlay;
 7. commit `GameState` and the journal only after every step succeeds;
-8. set `game_entry_reason = GAME_ENTRY_LOAD`, redraw, and call `enter_tile()`.
+8. set `game_entry_reason = GAME_ENTRY_LOAD`, redraw, and call `enter_room()`
+   followed by `enter_tile()`.
 
 The temporary decode area can reuse `$A4E9-$B4D8`, whose render buffers are
 rebuildable. Code performing the load cannot run from the room overlay while

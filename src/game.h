@@ -57,6 +57,7 @@ void game_player_sync_from_platform(void);
 uint8_t game_player_step(int8_t delta_x, int8_t delta_y);
 /* Execute a transition queued by game_transition_request() on a safe frame. */
 uint8_t game_process_pending_transition(void);
+void game_enter_room(void);
 void game_enter_tile(void);
 uint8_t __fastcall__ game_look_at(uint8_t tile_x, uint8_t tile_y);
 uint8_t game_room_code_prepare(uint8_t room_id);
@@ -90,6 +91,7 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
 void game_inventory_show(void);
 
 /* Implemented independently by every rooms/XX.c. Read coordinates from state. */
+void enter_room(void);
 void enter_tile(void);
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
 

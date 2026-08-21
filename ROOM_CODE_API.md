@@ -16,15 +16,22 @@ entry for every room. A room asset without a matching source fails the build.
 Every `rooms/XX.c` includes `game.h` and defines exactly these functions:
 
 ```c
+void enter_room(void);
 void enter_tile(void);
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
 ```
 
+`enter_room()` runs once after the destination room data and code are active,
+the player has been inserted, and `game_state` has been synchronized. It runs
+on initial startup and after a successful room transition, but not while the
+player moves between tiles in the same room. Use it for room-wide state changes,
+entry narration, and initialization that must happen on every visit.
+
 `enter_tile()` takes no coordinates. Read `game_state.player_x` and
 `game_state.player_y`; both are half-tile/character coordinates. The engine
-calls it after initial startup, after entering a room, and whenever successful
-movement changes the player's hotspot tile. A one-character half-step within
-the same 2x2 tile does not call it.
+calls it immediately after `enter_room()` and whenever successful movement
+changes the player's hotspot tile. A one-character half-step within the same
+2x2 tile does not call it.
 
 `look_at()` receives the tile selected by the Look cursor. The resident engine
 checks line of sight and usable light range before calling this hook, so a room
@@ -36,6 +43,12 @@ Example:
 
 ```c
 #include "game.h"
+
+void enter_room(void) {
+    if (game_entry_reason == GAME_ENTRY_STARTUP) {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "You wake by the sea.", 1u);
+    }
+}
 
 void enter_tile(void) {
     if ((game_state.player_x >> 1) == 4u &&
@@ -75,9 +88,41 @@ The engine synchronizes room, player type, and player coordinates after movement
 and room transitions. `turn` increments after each successful player half-step.
 Time fields are reserved but are not advanced yet. `game_entry_reason` reports
 `GAME_ENTRY_STARTUP`, `GAME_ENTRY_MOVEMENT`, `GAME_ENTRY_TRANSITION`, or
-`GAME_ENTRY_LOAD` to `enter_tile()` without becoming persistent state. Room
+`GAME_ENTRY_LOAD` to room handlers without becoming persistent state. Room
 code may use `flags` for small persistent facts. See `SAVE_GAME.md` for the
 implemented sparse room-object journal and serialized save format.
+
+### Game flags
+
+`game_state.flags` contains 32 persistent bytes. Prefer named indices in a
+shared header instead of unexplained numeric offsets:
+
+```c
+#define GAME_FLAG_LIGHTHOUSE_LIT  3u
+
+if (game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] != 0u) {
+    /* The flag is set. */
+}
+game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] = 1u; /* set */
+game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] = 0u; /* clear */
+```
+
+A byte can hold several boolean facts when flag space becomes tight:
+
+```c
+#define GAME_FLAGS_HOUSE          4u
+#define GAME_FLAG_DOOR_OPEN       0x01u
+
+if (game_state.flags[GAME_FLAGS_HOUSE] & GAME_FLAG_DOOR_OPEN) {
+    /* The door is open. */
+}
+game_state.flags[GAME_FLAGS_HOUSE] |= GAME_FLAG_DOOR_OPEN;
+game_state.flags[GAME_FLAGS_HOUSE] &= (uint8_t)~GAME_FLAG_DOOR_OPEN;
+```
+
+Direct reads and writes are the current public API. These bytes are part of
+`GameState`, so they survive room overlay replacement and are included in save
+records.
 
 ## Room-callable API
 
@@ -117,9 +162,9 @@ string from the current room's 256-byte text pool.
 `game_transition_request()` queues a transition because a room-code overlay
 must not replace itself while one of its functions is executing. The resident
 main loop processes the request on the next frame, calls `platform_room_enter()`,
-loads the destination room-code overlay, synchronizes `game_state`, and calls its
-`enter_tile()`. Coordinates are half-tile coordinates and must be within
-`40x22`.
+loads the destination room-code overlay, synchronizes `game_state`, and calls
+its `enter_room()` followed by `enter_tile()`. Coordinates are half-tile
+coordinates and must be within `40x22`.
 
 `game_take_object()` is a transactional persistent mutation. It accepts a
 non-actor object slot, adds one item of that type to inventory, removes the map
@@ -155,25 +200,27 @@ adjacent room.
 ## Room-code ABI and memory
 
 Room code runs at `$9900-$9CFF`, a maximum of `$0400` bytes including BSS. The
-first 20 file bytes are:
+first 24 file bytes are:
 
 | Offset | Content |
 |---:|---|
 | 0 | `JMP enter_tile` |
 | 3 | `JMP look_at` |
-| 6 | `RC` magic |
-| 8 | ABI version, currently 2 |
-| 9 | room ID |
-| 10 | loaded file size, little-endian |
-| 12 | BSS offset from `$9900` |
-| 14 | BSS size |
-| 16 | 16-bit sum of bytes 20 through end |
-| 18 | reserved |
+| 6 | `JMP enter_room` |
+| 9 | `RC` magic |
+| 11 | ABI version, currently 3 |
+| 12 | room ID |
+| 13 | loaded file size, little-endian |
+| 15 | BSS offset from `$9900` |
+| 17 | BSS size |
+| 19 | 16-bit sum of bytes 24 through end |
+| 21 | three reserved bytes |
 
 `tools/finalize_room_code.py` patches and validates this header. Resident calls
-go through the two jump vectors, so adding private functions does not change
-the ABI. ABI 2 changed `look_at` from one cardinal-direction byte to the two
-tile-coordinate bytes documented above; the loader rejects ABI-1 room code.
+go through the three jump vectors, so adding private functions does not change
+the ABI. ABI 3 added `enter_room`; ABI 2 changed `look_at` from one cardinal
+direction byte to the two tile-coordinate bytes documented above. The loader
+rejects older room code.
 
 Disk loading uses KERNAL I/O with BASIC hidden (`$01 = $36`), staging the file
 at `$A4E9`. EasyFlash uses a small assembly copier while 16 KiB ROM is visible;
@@ -187,7 +234,7 @@ activates the overlay before the normal room draw rebuilds those buffers.
 ## Adding a room
 
 1. Create/export `assets/XX` in Room mode.
-2. Add `rooms/XX.c` with both required handlers.
+2. Copy `rooms/template.c` to `rooms/XX.c` and implement the three handlers.
 3. Run `make d64 cartridge`.
 4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
    cannot be resolved.

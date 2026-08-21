@@ -226,6 +226,7 @@ static uint8_t object_type_is_valid(const PlatformObjectType* type) {
            HOTSPOT_X(type) < width && HOTSPOT_Y(type) < height;
 }
 
+#pragma code-name (push, "UPPERCODE")
 const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
     if (type_id >= 64u && type_id < 128u) {
         platform_object_type_stage(type_id);
@@ -233,6 +234,7 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
     }
     return &platform_object_types[type_id];
 }
+#pragma code-name (pop)
 
 static uint8_t object_cell(const PlatformObject* object,
                            uint8_t world_x, uint8_t world_y,
@@ -1625,7 +1627,9 @@ void platform_look_cursor_tick(void) {
 }
 #pragma code-name (pop)
 
+#pragma code-name (push, "UPPERCODE")
 void platform_look_cursor_hide(void) {
     P_VIC(0x15) &= 0xfeu;
     look_cursor_visible = 0u;
 }
+#pragma code-name (pop)

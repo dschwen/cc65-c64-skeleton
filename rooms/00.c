@@ -1,5 +1,8 @@
 #include "game.h"
 
+void enter_room(void) {
+}
+
 void enter_tile(void) {
     ++game_state.flags[0];
 }

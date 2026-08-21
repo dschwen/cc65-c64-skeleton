@@ -25,6 +25,7 @@ int main(void) {
     game_world_init();
     (void)game_room_code_load_current();
     platform_room_draw(&platform_room, platform_player);
+    game_enter_room();
     game_enter_tile();
     command = 0u;
 

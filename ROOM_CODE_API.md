@@ -101,7 +101,7 @@ void game_text_write(uint8_t line, const char* text, uint8_t color);
 void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 uint8_t game_take_object(uint8_t slot);
-uint8_t game_take_direction(uint8_t direction);
+uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
 void game_inventory_show(void);
 ```
 
@@ -126,8 +126,9 @@ non-actor object slot, adds one item of that type to inventory, removes the map
 object, and captures the room's sparse delta. Journal-capacity or inventory
 failure restores both the object and inventory before returning an error.
 
-`game_take_direction()` examines the adjacent map tile in a cardinal
-direction, skips actors, and takes the first eligible object by room slot.
+`game_take_tile()` finds non-actor objects by their rendered intersection with
+the selected tile rather than by hotspot alone. With multiple matches it runs
+the resident object selector before delegating to `game_take_object()`.
 `game_inventory_show()` blanks the VIC while preparing a 40x25 text screen,
 lists all 32 inventory slots in two columns, waits for a fresh keypress, then
 restores the charset split and redraws the current room.
@@ -147,9 +148,9 @@ const char* description =
 ```
 
 The function returns `NULL` for an absent description. These strings remain
-available to room logic and transition UI. The tile-cursor Look command only
-selects tiles inside the current 20x11 map and therefore does not automatically
-display an exit description.
+available to room logic and transition UI. When the Look cursor is on an edge,
+pushing outward displays the enabled exit's description without loading the
+adjacent room.
 
 ## Room-code ABI and memory
 

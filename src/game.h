@@ -84,8 +84,8 @@ void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 /* Add a non-actor room object to inventory and remove it from the room. */
 uint8_t game_take_object(uint8_t slot);
-/* Take the first non-actor object on the adjacent tile. */
-uint8_t game_take_direction(uint8_t direction);
+/* Select and take a non-actor whose rendered footprint intersects a tile. */
+uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
 /* Show all inventory slots on a temporary full-screen text display. */
 void game_inventory_show(void);
 

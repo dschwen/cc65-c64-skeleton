@@ -372,6 +372,11 @@ room-code copies are implemented in assembly because ROMH temporarily hides
 both the C stack and BSS. Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
+The current interactive command set leaves only small linker margins: inspect
+`build/game.map` before adding resident logic. Cursor helpers deliberately use
+the remaining pre-charset and `$3900` gaps while the sprite bitmap area remains
+reserved for all eight hardware sprites.
+
 Generic room-callable functions live in resident `src/game_support.c` and are
 resolved by address when each room is linked. Room binaries contain only their
 header, `enter_tile()`, `look_at()`, private helpers, strings, and BSS. This

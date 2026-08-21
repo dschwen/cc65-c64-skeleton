@@ -503,9 +503,9 @@ leaving-room capture is harmless and idempotent if a later preflight fails.
 
 `platform_room_exit_description()` returns the selected zero-terminated room
 text string, or `NULL` when the direction is invalid or has no description.
-The tile-cursor Look command cannot select beyond a map edge. Exit descriptions
-remain available to room logic and other transition UI without loading the
-neighboring room.
+The tile-cursor Look command keeps its frame inside the map; pushing outward at
+an edge displays the enabled exit description without loading the neighboring
+room.
 
 Trigger destinations remain game-defined. Game code resolves:
 
@@ -535,8 +535,15 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
                                  uint8_t color);
+uint8_t platform_look_exit(const PlatformRoom* room,
+                           const PlatformObject* viewer,
+                           uint8_t edge_x, uint8_t edge_y,
+                           uint8_t direction, uint8_t color);
 uint8_t platform_look_tile(const PlatformRoom* room,
                            uint8_t tile_x, uint8_t tile_y, uint8_t color);
+uint8_t platform_object_intersects_tile(const PlatformObject* object,
+                                        uint8_t tile_x, uint8_t tile_y);
+void platform_object_take_prompt(uint8_t type_id, uint8_t color);
 ```
 
 Line 0 is screen row 23; line 1 is row 24. The raster IRQ has already selected
@@ -592,6 +599,16 @@ through the word-wrapping pager. An object matches when at least one nonzero
 character in its hotspot-relative graphic intersects either character cell of
 the selected 2x2-character tile. Its hotspot may be on another tile.
 
+`platform_look_exit()` applies the same visibility and light-range check to the
+current edge tile. An enabled exit then displays its room-text description, or
+`An exit.` when no description is assigned. A disabled direction reports
+`There is no exit that way.`. Looking outward never loads the adjacent room.
+
+`platform_object_intersects_tile()` exposes the same rendered-footprint test
+for commands such as Take. Transparent object characters do not count.
+`platform_object_take_prompt()` renders the selected type's editor-authored
+ASCII name through the platform's PETSCII normalization and bottom pager.
+
 ## Look cursor
 
 ```c
@@ -602,11 +619,20 @@ void platform_look_cursor_hide(void);
 ```
 
 Pressing `L` starts the cursor on the player's hotspot tile. Cursor keys move
-within the 20x11 room, Return selects, and `L` cancels. The cursor is an 18x18
+within the 20x11 room, Return selects, and `L` cancels. Pushing outward while
+the cursor is already on an edge displays that direction's exit description
+without moving the cursor. The cursor is an 18x18
 one-pixel monochrome frame in sprite slot 0, positioned one pixel outside the
 selected 16x16 tile. `tick()` cycles black, dark gray, gray, light gray, white,
 and back through the grays. Only sprite-0 bits in shared VIC registers are
 changed; sprites 1-7 remain available to game code.
+
+Pressing `T` uses the same cursor but clips it to the 3x3 tile neighborhood
+centered on the player's hotspot, including the tile underfoot. Return applies
+the same LOS/light gate as Look. If several non-actor object footprints overlap
+the framed tile, the bottom display shows one name at a time; cursor keys cycle
+the choices, Return takes the displayed object, and `T` cancels. Removal still
+uses the transactional, save-aware `game_take_object()` path.
 
 ## Raster IRQ and water animation
 

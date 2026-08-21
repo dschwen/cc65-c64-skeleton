@@ -7,13 +7,16 @@
 #pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
 
-int main(void) {
-    uint8_t key;
-    uint8_t command;
-    uint8_t direction;
-    uint8_t look_x;
-    uint8_t look_y;
+static uint8_t key;
+static uint8_t command;
+static uint8_t look_x;
+static uint8_t look_y;
+static uint8_t cursor_min_x;
+static uint8_t cursor_max_x;
+static uint8_t cursor_min_y;
+static uint8_t cursor_max_y;
 
+int main(void) {
     platform_init();
     if (platform_storage == PLATFORM_STORAGE_DISK) {
         (void)platform_object_types_load("OBJECTS.COBJ", platform_storage_device);
@@ -36,24 +39,40 @@ int main(void) {
                     if (look_y > 0u) {
                         --look_y;
                         (void)platform_look_cursor_move(look_x, look_y);
+                    } else {
+                        (void)platform_look_exit(&platform_room, platform_player,
+                                                 look_x, look_y,
+                                                 PLATFORM_DIRECTION_NORTH, 1u);
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_RIGHT:
                     if (look_x + 1u < PLATFORM_MAP_WIDTH) {
                         ++look_x;
                         (void)platform_look_cursor_move(look_x, look_y);
+                    } else {
+                        (void)platform_look_exit(&platform_room, platform_player,
+                                                 look_x, look_y,
+                                                 PLATFORM_DIRECTION_EAST, 1u);
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_LEFT:
                     if (look_x > 0u) {
                         --look_x;
                         (void)platform_look_cursor_move(look_x, look_y);
+                    } else {
+                        (void)platform_look_exit(&platform_room, platform_player,
+                                                 look_x, look_y,
+                                                 PLATFORM_DIRECTION_WEST, 1u);
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_DOWN:
                     if (look_y + 1u < PLATFORM_MAP_HEIGHT) {
                         ++look_y;
                         (void)platform_look_cursor_move(look_x, look_y);
+                    } else {
+                        (void)platform_look_exit(&platform_room, platform_player,
+                                                 look_x, look_y,
+                                                 PLATFORM_DIRECTION_SOUTH, 1u);
                     }
                     break;
                 case PLATFORM_KEY_ENTER:
@@ -75,29 +94,46 @@ int main(void) {
             continue;
         }
         if (command == PLATFORM_KEY_TAKE) {
-            direction = 0xffu;
+            platform_look_cursor_tick();
             switch (key) {
                 case PLATFORM_KEY_CURSOR_UP:
-                    direction = PLATFORM_DIRECTION_NORTH;
+                    if (look_y > cursor_min_y) {
+                        --look_y;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
                     break;
                 case PLATFORM_KEY_CURSOR_RIGHT:
-                    direction = PLATFORM_DIRECTION_EAST;
+                    if (look_x < cursor_max_x) {
+                        ++look_x;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
                     break;
                 case PLATFORM_KEY_CURSOR_LEFT:
-                    direction = PLATFORM_DIRECTION_WEST;
+                    if (look_x > cursor_min_x) {
+                        --look_x;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
                     break;
                 case PLATFORM_KEY_CURSOR_DOWN:
-                    direction = PLATFORM_DIRECTION_SOUTH;
+                    if (look_y < cursor_max_y) {
+                        ++look_y;
+                        (void)platform_look_cursor_move(look_x, look_y);
+                    }
+                    break;
+                case PLATFORM_KEY_ENTER:
+                    if (platform_look_tile_check(&platform_room, platform_player,
+                                                 look_x, look_y, 1u) == PLATFORM_OK) {
+                        (void)game_take_tile(look_x, look_y);
+                    }
+                    platform_look_cursor_hide();
+                    command = 0u;
                     break;
                 case PLATFORM_KEY_TAKE:
+                    platform_look_cursor_hide();
                     platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
                     platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
                     command = 0u;
                     break;
-            }
-            if (direction != 0xffu) {
-                (void)game_take_direction(direction);
-                command = 0u;
             }
             continue;
         }
@@ -135,7 +171,16 @@ int main(void) {
                 command = PLATFORM_KEY_LOOK;
                 break;
             case PLATFORM_KEY_TAKE:
+                look_x = platform_player->x >> 1;
+                look_y = platform_player->y >> 1;
+                cursor_min_x = look_x == 0u ? 0u : look_x - 1u;
+                cursor_max_x = look_x + 1u < PLATFORM_MAP_WIDTH
+                                   ? look_x + 1u : look_x;
+                cursor_min_y = look_y == 0u ? 0u : look_y - 1u;
+                cursor_max_y = look_y + 1u < PLATFORM_MAP_HEIGHT
+                                   ? look_y + 1u : look_y;
                 game_text_write(PLATFORM_TEXT_LINE_TOP, "Taking...", 1u);
+                (void)platform_look_cursor_show(look_x, look_y);
                 command = PLATFORM_KEY_TAKE;
                 break;
             case PLATFORM_KEY_INVENTORY:

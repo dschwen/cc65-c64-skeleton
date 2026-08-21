@@ -301,9 +301,22 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  uint8_t tile_x, uint8_t tile_y,
                                  uint8_t color);
 
+/* Describe an enabled exit after checking visibility/light at its edge tile. */
+uint8_t platform_look_exit(const PlatformRoom* room,
+                           const PlatformObject* viewer,
+                           uint8_t edge_x, uint8_t edge_y,
+                           uint8_t direction, uint8_t color);
+
 /* List every object with a nonzero rendered character intersecting a tile. */
 uint8_t platform_look_tile(const PlatformRoom* room,
                            uint8_t tile_x, uint8_t tile_y, uint8_t color);
+
+/* True when a nontransparent character from an object overlaps a map tile. */
+uint8_t platform_object_intersects_tile(const PlatformObject* object,
+                                        uint8_t tile_x, uint8_t tile_y);
+
+/* Display one editor-authored ASCII object name in the Take selector. */
+void platform_object_take_prompt(uint8_t type_id, uint8_t color);
 
 /* Sprite-0 18x18 tile cursor. Other sprite registers/bits are preserved. */
 uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y);

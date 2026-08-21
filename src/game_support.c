@@ -29,58 +29,79 @@ static const uint8_t inventory_empty[7] = {
 };
 #pragma rodata-name (pop)
 
-uint8_t game_take_direction(uint8_t direction) {
+static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
+                                uint8_t wanted, uint8_t* found_slot) {
     PlatformObject* object;
     const PlatformObjectType* object_type;
-    uint8_t tile_x;
-    uint8_t tile_y;
     uint8_t slot;
-    uint8_t result;
+    uint8_t count;
 
-    if (platform_player == 0 || direction > PLATFORM_DIRECTION_SOUTH) {
-        return PLATFORM_ERR_ARGUMENT;
-    }
-    tile_x = platform_player->x >> 1;
-    tile_y = platform_player->y >> 1;
-    switch (direction) {
-        case PLATFORM_DIRECTION_NORTH:
-            if (tile_y == 0u) goto nothing;
-            --tile_y;
-            break;
-        case PLATFORM_DIRECTION_EAST:
-            if (++tile_x >= PLATFORM_MAP_WIDTH) goto nothing;
-            break;
-        case PLATFORM_DIRECTION_WEST:
-            if (tile_x == 0u) goto nothing;
-            --tile_x;
-            break;
-        default:
-            if (++tile_y >= PLATFORM_MAP_HEIGHT) goto nothing;
-            break;
-    }
-
+    count = 0u;
     slot = 0u;
     do {
         object = &platform_room.objects[slot];
         if (object->type != 0u && object != platform_player &&
-            (object->x >> 1) == tile_x && (object->y >> 1) == tile_y) {
+            platform_object_intersects_tile(object, tile_x, tile_y)) {
             object_type = platform_object_type_get(object->type);
             if ((object_type->reserved[0] & PLATFORM_OBJECT_FLAG_ACTOR) == 0u) {
-                result = game_take_object(slot);
-                game_text_write(PLATFORM_TEXT_LINE_TOP,
-                                result == PLATFORM_OK ? "Taken."
-                                                      : "You cannot take that.", 1u);
-                platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-                return result;
+                if (count == wanted && found_slot != 0) *found_slot = slot;
+                ++count;
             }
         }
         ++slot;
     } while (slot != 0u);
+    return count;
+}
 
-nothing:
-    game_text_write(PLATFORM_TEXT_LINE_TOP, "Nothing to take.", 1u);
-    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-    return PLATFORM_ERR_NOT_FOUND;
+uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
+    uint8_t count;
+    uint8_t selected;
+    uint8_t slot;
+    uint8_t key;
+    uint8_t result;
+
+    if (tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
+        return PLATFORM_ERR_ARGUMENT;
+    }
+    count = take_object_find(tile_x, tile_y, 0u, &slot);
+    if (count == 0u) {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "Nothing to take.", 1u);
+        return PLATFORM_ERR_NOT_FOUND;
+    }
+
+    selected = 0u;
+    if (count > 1u) {
+        platform_object_take_prompt(platform_room.objects[slot].type, 1u);
+        for (;;) {
+            platform_wait_frame();
+            platform_look_cursor_tick();
+            key = platform_input_poll();
+            if (key == PLATFORM_KEY_CURSOR_LEFT ||
+                key == PLATFORM_KEY_CURSOR_UP) {
+                selected = selected == 0u ? count - 1u : selected - 1u;
+            } else if (key == PLATFORM_KEY_CURSOR_RIGHT ||
+                       key == PLATFORM_KEY_CURSOR_DOWN) {
+                selected = selected + 1u == count ? 0u : selected + 1u;
+            } else if (key == PLATFORM_KEY_ENTER) {
+                break;
+            } else if (key == PLATFORM_KEY_TAKE) {
+                platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+                platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+                return PLATFORM_ERR_BLOCKED;
+            } else {
+                continue;
+            }
+            (void)take_object_find(tile_x, tile_y, selected, &slot);
+            platform_object_take_prompt(platform_room.objects[slot].type, 1u);
+        }
+        (void)take_object_find(tile_x, tile_y, selected, &slot);
+    }
+
+    result = game_take_object(slot);
+    game_text_write(PLATFORM_TEXT_LINE_TOP,
+                    result == PLATFORM_OK ? "Taken."
+                                          : "You cannot take that.", 1u);
+    return result;
 }
 
 void game_inventory_show(void) {

@@ -174,6 +174,10 @@ static uint8_t look_truncated;
 #pragma rodata-name (push, "RODATA")
 static const char hex_digits[] = "0123456789ABCDEF";
 #pragma rodata-name (pop)
+#pragma rodata-name (push, "UPPERRODATA")
+static const char take_prompt_prefix[] = "Take: ";
+static const char take_prompt_arrows[] = "   < >";
+#pragma rodata-name (pop)
 
 #pragma code-name (push, "CODE")
 static void write_screen_cell(uint8_t x, uint8_t y,
@@ -977,15 +981,19 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
     platform_lighting_rebuild(room, player);
 }
 
+#pragma code-name (push, "LOWCODE")
 void platform_lighting_apply(void) {
     platform_lighting_apply_native();
 }
+#pragma code-name (pop)
 
+#pragma code-name (push, "MIDCODE")
 void platform_lighting_set_global(uint8_t level) {
     if (level >= PLATFORM_LIGHT_LEVEL_COUNT) level = PLATFORM_LIGHT_FULL;
     platform_global_light = level;
     platform_lighting_rebuild(rendered_room, rendered_player);
 }
+#pragma code-name (pop)
 
 void platform_lightning(void) {
     platform_lightning_native();
@@ -1272,13 +1280,11 @@ uint8_t platform_transition_check(const PlatformRoom* room,
     return PLATFORM_TRANSITION_NONE;
 }
 
-#pragma code-name (push, "LOWCODE")
 uint8_t platform_text_screen_code(char ch) {
     if (ch >= 'a' && ch <= 'z') return (uint8_t)(ch - 'a' + 1);
     if (ch >= 'A' && ch <= 'Z') return (uint8_t)(ch - 'A' + 65);
     return (uint8_t)ch;
 }
-#pragma code-name (pop)
 
 void platform_text_clear_line(uint8_t line) {
     uint8_t x;
@@ -1381,8 +1387,8 @@ static void look_write_buffer(uint8_t color) {
     platform_text_output_native(look_buffer);
 }
 
-static uint8_t object_intersects_tile(const PlatformObject* object,
-                                      uint8_t tile_x, uint8_t tile_y) {
+uint8_t platform_object_intersects_tile(const PlatformObject* object,
+                                        uint8_t tile_x, uint8_t tile_y) {
     const PlatformObjectType* type;
     int16_t left;
     int16_t top;
@@ -1470,6 +1476,57 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
     return PLATFORM_OK;
 }
 
+#pragma code-name (push, "UPPERCODE")
+static void look_append_room_text(const PlatformRoom* room,
+                                  uint8_t text_offset) {
+    uint8_t ch;
+    do {
+        ch = room->text[text_offset++];
+        if (ch == 0u) break;
+        if (ch >= 0x41u && ch <= 0x5au) ch += 0x80u;
+        else if (ch >= 0x61u && ch <= 0x7au) ch -= 0x20u;
+        look_append_char((char)ch);
+    } while (text_offset != 0u);
+}
+
+uint8_t platform_look_exit(const PlatformRoom* room,
+                           const PlatformObject* viewer,
+                           uint8_t edge_x, uint8_t edge_y,
+                           uint8_t direction, uint8_t color) {
+    uint8_t neighbor;
+    uint8_t text_offset;
+    uint8_t result;
+
+    if (direction > PLATFORM_DIRECTION_SOUTH) return PLATFORM_ERR_ARGUMENT;
+    result = platform_look_tile_check(room, viewer, edge_x, edge_y, color);
+    if (result != PLATFORM_OK) return result;
+    if (platform_room_neighbor(room, direction, &neighbor) != PLATFORM_OK) {
+        look_write_message("There is no exit that way.", color);
+        return PLATFORM_ERR_NOT_FOUND;
+    }
+
+    look_length = 0u;
+    look_truncated = 0u;
+    text_offset = room_exit_text(room, direction);
+    if (text_offset != 0u && room->text[text_offset] != 0u) {
+        look_append_room_text(room, text_offset);
+    } else {
+        look_append_string("An exit.");
+    }
+    look_write_buffer(color);
+    return PLATFORM_OK;
+}
+
+void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
+    look_length = 0u;
+    look_truncated = 0u;
+    look_append_string(take_prompt_prefix);
+    look_append_type_name(type_id);
+    look_append_string(take_prompt_arrows);
+    look_write_buffer(color);
+}
+#pragma code-name (pop)
+
 uint8_t platform_look_tile(const PlatformRoom* room,
                            uint8_t tile_x, uint8_t tile_y, uint8_t color) {
     uint16_t i;
@@ -1491,7 +1548,7 @@ uint8_t platform_look_tile(const PlatformRoom* room,
     for (i = 0u; i < limit; ++i) {
         type_id = room->objects[i].type;
         if (type_id == 0u ||
-            !object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
+            !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
         if (look_counts[type_id] != 0xffu) ++look_counts[type_id];
     }
     found = 0u;
@@ -1499,7 +1556,7 @@ uint8_t platform_look_tile(const PlatformRoom* room,
         type_id = room->objects[i].type;
         count = look_counts[type_id];
         if (type_id == 0u || count == 0u ||
-            !object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
+            !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
         if (found) look_append_string(", ");
         if (count > 1u) look_append_count(count);
         look_append_type_name(type_id);
@@ -1522,6 +1579,7 @@ static void look_cursor_position(uint8_t tile_x, uint8_t tile_y) {
     else P_VIC(0x10) &= 0xfeu;
 }
 
+#pragma code-name (push, "LOWCODE")
 uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
     uint8_t row;
 
@@ -1550,7 +1608,9 @@ uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
     platform_look_cursor_tick();
     return PLATFORM_OK;
 }
+#pragma code-name (pop)
 
+#pragma code-name (push, "MIDCODE")
 uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y) {
     if (!look_cursor_visible || tile_x >= PLATFORM_MAP_WIDTH ||
         tile_y >= PLATFORM_MAP_HEIGHT) return PLATFORM_ERR_ARGUMENT;
@@ -1563,6 +1623,7 @@ void platform_look_cursor_tick(void) {
         P_VIC(0x27) = look_cursor_colors[(platform_frame_counter >> 2) & 0x07u];
     }
 }
+#pragma code-name (pop)
 
 void platform_look_cursor_hide(void) {
     P_VIC(0x15) &= 0xfeu;

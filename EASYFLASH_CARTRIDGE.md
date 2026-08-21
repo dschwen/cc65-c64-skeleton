@@ -473,12 +473,23 @@ custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
 
 Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
 ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
-changing its mode. A room or room-code copy can cross one or both split-screen
-raster deadlines. Before restoring the caller's interrupt flag, the copy
-primitive therefore resynchronizes `$D018` and the next raster compare from the
-VIC's current 9-bit raster position and acknowledges any pending raster IRQ.
+changing its mode. The complete room transaction clears the status area,
+disables the VIC raster source, and forces `$D018=$18` before loading either
+the room record or its code overlay. A room or room-code copy can therefore
+cross either split-screen deadline without selecting the text charset over the
+map. While suspended, the copy primitive acknowledges pending raster requests
+but preserves tile mode. After the new room is fully drawn, the transition
+resynchronizes `$D018` and the next compare from the VIC's current 9-bit raster
+position, then reenables the raster source.
+
 The IRQ itself also treats late entry on lines 1-225 as a missed top event and
 lines 227-311 as a bottom event, rather than waiting almost a complete frame.
+
+The executable image also contains the independently linked bottom-text pager
+after the main payload in bank 2. The RAM-resident bootstrap copies it to
+`$B880-$B9FF` before disabling EasyFlash. Disk builds load the same
+`build/text.prg` as a second file, so neither format requires zero padding from
+the end of resident code to `$B880`.
 
 VICE can persist EasyFlash modifications back into the attached CRT on exit.
 Do not leave an emulator attached to `build/game.crt` while rebuilding it: a

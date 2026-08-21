@@ -205,16 +205,21 @@ same `00`-`FF` names and binary format.
 
 A room transition using one resident buffer follows this order:
 
-1. retain the transitioning player/NPC record outside the room buffer;
-2. load and validate the destination immutable room;
-3. remove its baked startup-player record when applicable;
-4. collision-check the arrival tile and prepare the destination room overlay;
-5. capture modifications to the leaving room while its baseline is current;
-6. preflight an actor slot, establish the destination baseline, and apply deltas;
-7. insert the actor into the first valid empty slot;
-8. update `platform_current_room`, `platform_player_slot`, and
+1. clear rows 22-24, disable the raster source, and force tile charset bank 0;
+2. retain the transitioning player/NPC record outside the room buffer;
+3. load and validate the destination immutable room;
+4. remove its baked startup-player record when applicable;
+5. collision-check the arrival tile and prepare the destination room overlay;
+6. capture modifications to the leaving room while its baseline is current;
+7. preflight an actor slot, establish the destination baseline, and apply deltas;
+8. insert the actor into the first valid empty slot;
+9. update `platform_current_room`, `platform_player_slot`, and
    `platform_player` only after success;
-9. activate the room overlay and draw tiles, objects, and the player.
+10. activate the room overlay and draw tiles, objects, and the player;
+11. resynchronize the split and reenable the raster source.
+
+Every failure after step 1 follows the same resume path, so an I/O, format,
+collision, room-code, or capacity error cannot leave the raster IRQ disabled.
 
 `src/world.c` supplies that mutable policy with exact-slot deltas against the
 immutable asset. The current `platform_room_object_transfer()` still expects
@@ -516,6 +521,8 @@ to a destination room and hotspot before calling `platform_room_enter()`.
 ## Bottom text API
 
 ```c
+void game_text_write(uint8_t line, const char* text, uint8_t color);
+void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
 uint8_t platform_text_screen_code(char ch);
 void platform_text_screen_enter(void);
 void platform_text_screen_leave(void);
@@ -530,8 +537,20 @@ uint8_t platform_look_direction(const PlatformRoom* room,
                                 uint8_t direction, uint8_t color);
 ```
 
-Line 0 is screen row 23; line 1 is row 24. Strings are clipped at column 40.
-The raster IRQ has already selected charset bank 1 for these rows.
+Line 0 is screen row 23; line 1 is row 24. The raster IRQ has already selected
+charset bank 1 for these rows.
+
+Game and room code should normally use `game_text_write()` or
+`game_text_write_room()`. These clear the status area, wrap at word boundaries,
+and split words longer than 40 characters. When output needs a third line, the
+pager waits for a fresh press and release, moves the lower line to the upper
+line, clears the lower line, and continues. Explicit carriage returns and line
+feeds also advance through the same pager. The implementation is an assembly
+module loaded independently at `$B880`.
+
+The lower-level `platform_text_write_line()` and
+`platform_text_write_room_line()` calls remain available for fixed-position UI
+and clip at column 40; they do not invoke wrapping or paging.
 
 `platform_text_screen_enter()` tells the assembly raster IRQ to keep charset
 bank 1 selected at raster line zero, making all 25 rows text rows.

@@ -31,7 +31,7 @@ CFLAGS := -t $(TARGET) -Oirs --cpu 6502
 LDFLAGS := -C $(CFG)
 
 SOURCES_C := $(wildcard src/*.c)
-SOURCES_S := $(wildcard src/*.s)
+SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
 ASSETS := assets/charset.cchr assets/tiles.ctil assets/00 assets/objects.cobj
 OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
            $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
@@ -45,10 +45,19 @@ OUT_EF_BASE := $(OUTDIR)/game-ef-base.bin
 OUT_CRT := $(OUTDIR)/game.crt
 EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
 EF_CFG := cfg/easyflash.cfg
+TEXT_MODULE_OBJ := $(OUTDIR)/text-module.o
+TEXT_HEADER_OBJ := $(OUTDIR)/text-header.o
+TEXT_RESOLVER_SRC := $(OUTDIR)/text-resolver.s
+TEXT_RESOLVER_OBJ := $(OUTDIR)/text-resolver.o
+TEXT_MODULE_CFG := cfg/text_module.cfg
+TEXT_MODULE_PRG := $(OUTDIR)/text.prg
+DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
+DISK_BOOT_CFG := cfg/disk_boot.cfg
+DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
-all: $(OUT_PRG)
+all: $(OUT_PRG) $(TEXT_MODULE_PRG)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -67,6 +76,31 @@ $(OUTDIR)/assets.o: $(ASSETS)
 $(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
 	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
 	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
+
+$(TEXT_MODULE_OBJ): src/text.s src/platform.inc | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(TEXT_HEADER_OBJ): modules/text_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) \
+		tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(TEXT_MODULE_OBJ)
+
+$(TEXT_RESOLVER_OBJ): $(TEXT_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) \
+		$(TEXT_RESOLVER_OBJ) $(TEXT_MODULE_CFG)
+	$(LD65) -C $(TEXT_MODULE_CFG) -m $(OUTDIR)/text.map -o $@ \
+		$(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_RESOLVER_OBJ)
+
+$(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(DISK_BOOT_PRG): $(DISK_BOOT_OBJ) $(DISK_BOOT_CFG)
+	$(LD65) -C $(DISK_BOOT_CFG) -m $(OUTDIR)/disk-boot.map -o $@ $<
 
 $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
@@ -93,14 +127,14 @@ $(ROOM_OUTDIR)/C%: $(ROOM_OUTDIR)/room-%.raw tools/finalize_room_code.py
 	python3 tools/finalize_room_code.py --input $< \
 		--map $(ROOM_OUTDIR)/room-$*.map --room $* --output $@
 
-$(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) | $(OUTDIR)
+$(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
 $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
-$(OUT_EF_BIN): $(OUT_EF_BASE) tools/pack_easyflash.py $(ROOM_ASSETS) \
-		assets/objects.cobj $(ROOM_CODES)
+$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) tools/pack_easyflash.py \
+		$(ROOM_ASSETS) assets/objects.cobj $(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets assets \
 		--objects assets/objects.cobj --room-code $(ROOM_OUTDIR) --output $@
 
@@ -111,21 +145,24 @@ cartridge: $(OUT_CRT)
 
 d64: $(OUT_D64)
 
-$(OUT_D64): $(OUT_PRG) $(DISK_EXTRA_DEPS) | $(OUTDIR)
+$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(DISK_BOOT_PRG) \
+		$(DISK_EXTRA_DEPS) | $(OUTDIR)
 	rm -f $@
 	$(C1541) -format "$(DISK_NAME),00" d64 $@
-	$(C1541) $@ -write $(OUT_PRG) "$(PRG_NAME)"
+	$(C1541) $@ -write $(DISK_BOOT_PRG) "$(PRG_NAME)"
+	$(C1541) $@ -write $(OUT_PRG) "ENGINE"
+	$(C1541) $@ -write $(TEXT_MODULE_PRG) "TEXT"
 	for f in $(DISK_EXTRA_FILES); do \
 		[ -f "$$f" ] || continue; \
 		name=$$(basename "$$f"); \
 		$(C1541) $@ -write "$$f" "$$name"; \
 	done
 
-run: $(OUT_PRG)
-	$(VICE) -autostart $(OUT_PRG)
+run: $(OUT_D64)
+	$(VICE) -autostart $(OUT_D64)
 
 run-d64: $(OUT_D64)
-	$(VICE) -8 $(OUT_D64)
+	$(VICE) -autostart $(OUT_D64)
 
 run-cartridge: $(OUT_CRT)
 	$(VICE) -cartcrt $(OUT_CRT)

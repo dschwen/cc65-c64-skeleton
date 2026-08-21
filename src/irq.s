@@ -3,8 +3,11 @@
 ; entry supports periods in which disk code temporarily maps KERNAL back in.
 
 .export _raster_irq_install, _raster_irq_vectors_restore, _raster_irq_resync
+.export _raster_irq_suspend, _raster_irq_resume
 .export _platform_frame_counter
 .export _platform_text_screen_enter, _platform_text_screen_leave
+
+.import _platform_text_area_clear_native
 
 .include "platform.inc"
 
@@ -28,6 +31,7 @@ WATER_CHAR     = $2000 + 14 * 8
 .segment "BSS"
 _platform_frame_counter: .res 1
 platform_text_screen_active: .res 1
+platform_raster_irq_active: .res 1
 
 .segment "CODE"
 
@@ -36,6 +40,8 @@ _raster_irq_install:
     lda #0
     sta _platform_frame_counter
     sta platform_text_screen_active
+    lda #1
+    sta platform_raster_irq_active
 
     ; Own the IRQ source. This intentionally stops the KERNAL jiffy clock.
     lda #$7f
@@ -100,10 +106,19 @@ _platform_text_screen_leave:
 ; an EasyFlash room bank. Choose the next event from the VIC's full 9-bit
 ; raster position so a pending interrupt cannot leave the text charset over
 ; the map for a frame.
-.segment "HIGHCODE"
+.segment "UPPERCODE"
 _raster_irq_resync:
     php
     sei
+    lda platform_raster_irq_active
+    bne @resync_active
+    lda #TILE_MEMPTR
+    sta VIC_MEMPTR
+    lda #$01
+    sta VIC_IRQ_STATUS
+    plp
+    rts
+@resync_active:
     lda VIC_CTRL1
     bpl @resync_low_raster
     ; Avoid scheduling line zero while it may be only a few cycles away.
@@ -146,6 +161,35 @@ _raster_irq_resync:
     sta VIC_CTRL1
     lda #$01
     sta VIC_IRQ_STATUS
+    plp
+    rts
+
+; Room transactions keep the tile charset selected and do not need the split
+; while no status text is visible. Clearing first avoids leaving text glyphs
+; on screen when D018 is forced to the tile bank.
+_raster_irq_suspend:
+    jsr _platform_text_area_clear_native
+    php
+    sei
+    lda #0
+    sta platform_raster_irq_active
+    sta VIC_IRQ_ENABLE
+    lda #TILE_MEMPTR
+    sta VIC_MEMPTR
+    lda #$01
+    sta VIC_IRQ_STATUS
+    plp
+    rts
+
+.segment "HIGHCODE"
+_raster_irq_resume:
+    php
+    sei
+    lda #1
+    sta platform_raster_irq_active
+    jsr _raster_irq_resync
+    lda #$01
+    sta VIC_IRQ_ENABLE
     plp
     rts
 

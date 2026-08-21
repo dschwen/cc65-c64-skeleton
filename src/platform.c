@@ -38,6 +38,8 @@ extern const uint8_t initial_room_data[];
 extern const uint8_t initial_object_type_data[];
 void raster_irq_install(void);
 void raster_irq_vectors_restore(void);
+void raster_irq_suspend(void);
+void raster_irq_resume(void);
 void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
@@ -1167,13 +1169,14 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 
     if (actor_type == 0u || new_x >= PLATFORM_MAP_CHAR_WIDTH ||
         new_y >= PLATFORM_MAP_CHAR_HEIGHT) return PLATFORM_ERR_ARGUMENT;
+    raster_irq_suspend();
     actor.type = actor_type;
     actor.x = new_x;
     actor.y = new_y;
     removed_actor = platform_player != 0 && platform_player->type == actor_type;
 
     result = room_stage_load(room_id);
-    if (result != PLATFORM_OK) return result;
+    if (result != PLATFORM_OK) goto transition_done;
     if (removed_actor && room_id == player_spawn_room &&
         room_stage.objects[player_spawn_slot].type == player_spawn_type) {
         memset(&room_stage.objects[player_spawn_slot], 0, sizeof(PlatformObject));
@@ -1181,32 +1184,33 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     tile = room_stage.tiles[(uint16_t)(new_y >> 1) * PLATFORM_MAP_WIDTH +
                             (new_x >> 1)];
     if ((tile_properties[tile] & PLATFORM_TILE_SOLID_LAND) == 0u) {
-        return PLATFORM_ERR_BLOCKED;
+        result = PLATFORM_ERR_BLOCKED;
+        goto transition_done;
     }
     result = game_room_code_prepare(room_id);
     if (result != PLATFORM_OK) {
         platform_room_draw(&platform_room, platform_player);
-        return result;
+        goto transition_done;
     }
     if (room_store_hook != 0) {
         result = room_store_hook(&platform_room);
         if (result != PLATFORM_OK) {
             platform_room_draw(&platform_room, platform_player);
-            return result;
+            goto transition_done;
         }
     }
     if (room_restore_hook != 0) {
         result = room_restore_hook(&room_stage);
         if (result != PLATFORM_OK) {
             platform_room_draw(&platform_room, platform_player);
-            return result;
+            goto transition_done;
         }
     }
     result = platform_room_object_add(&room_stage, actor.type,
                                       actor.x, actor.y, &slot);
     if (result != PLATFORM_OK) {
         platform_room_draw(&platform_room, platform_player);
-        return result;
+        goto transition_done;
     }
 
     if (removed_actor) {
@@ -1217,7 +1221,10 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     platform_player = &platform_room.objects[slot];
     game_room_code_activate();
     platform_room_draw(&platform_room, platform_player);
-    return PLATFORM_OK;
+    result = PLATFORM_OK;
+transition_done:
+    raster_irq_resume();
+    return result;
 }
 #pragma code-name (pop)
 

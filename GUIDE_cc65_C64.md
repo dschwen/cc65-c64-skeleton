@@ -285,15 +285,17 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
 | `$A4E9-$B4D8` | rebuildable rendering/lighting work RAM and code staging |
-| `$B500-$B848` | ordinary platform BSS |
-| `$B900-$BBFF` | cc65 software stack |
+| `$B500-$B87F` | ordinary platform BSS |
+| `$B880-$B9FF` | independently loaded bottom-text pager |
+| `$BA00-$BBFF` | cc65 software stack |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
-Long interrupt-disabled cartridge copies can pass either raster deadline, so
-their epilogue resynchronizes the split before reenabling IRQs. The handler also
+Room transitions clear rows 22-24, disable the VIC raster source, and force
+`$D018=$18` until the destination has been completely drawn. Their epilogue
+resynchronizes the split before reenabling the source. The handler also
 uses `$D011` bit 7 with `$D012`: `$D012` alone wraps at raster line 256 and is
 not enough to distinguish vertical blank from the top of the next frame.
 The IRQ is implemented entirely in `src/irq.s`. Its bottom-of-map branch also
@@ -325,8 +327,24 @@ RAM are unavailable in that mapping.
 EasyFlash banks 0-2, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
 both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
 six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
-KERNAL, copies the PRG to its linked RAM layout, and disables the
-cartridge before entering the cc65 startup at `$080D`.
+KERNAL, copies the PRG to its linked RAM layout, copies the text pager from the
+unused tail of executable bank 2 to `$B880`, and disables the cartridge before
+entering the cc65 startup at `$080D`.
+
+### Split disk load
+
+The linker does not pad the resident PRG across the runtime gap from `$9900` to
+`$B880`. `build/game.prg` ends with its last resident byte near `$9900`, while
+`build/text.prg` is a normal fixed-address PRG with a `$B880` load header.
+`build/disk-boot.prg` is stored first on the D64 as `GAME`; it relocates its
+81-byte loader body to `$0200`, loads `ENGINE`, loads `TEXT`, and jumps to the
+resident cc65 entry point. This saves roughly 8 KiB of disk transfer on every
+cold boot and leaves the pager replaceable without relinking the engine ABI.
+
+The pager is linked after the resident label file exists. Its calls to
+`platform_wait_frame()` and `platform_input_poll()`, and its references to the
+resident color/line parameters, are resolved from `build/game.lbl`. Only the
+entry point at `$B880` is fixed in the resident program (`src/text_api.s`).
 
 The game now maintains a backend-neutral sparse room-object journal in RAM but
 does not yet write save data to flash. EasyFlash programming

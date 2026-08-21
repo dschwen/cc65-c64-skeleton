@@ -86,7 +86,7 @@ cold_start:
 ; and absolute references outside itself, because its linked ROM address and
 ; execution address differ.
 bank1_stage:
-    lda #1
+    lda #2
     sta COPY_MORE_BANKS
     lda #1
     sta EASYFLASH_BANK
@@ -130,6 +130,7 @@ bank1_stage:
 @stage_copy_done:
     dec COPY_MORE_BANKS
     bmi @all_payload_copied
+    beq @copy_text_module
 
     lda #2
     sta EASYFLASH_BANK
@@ -144,6 +145,23 @@ bank1_stage:
     lda #<PAYLOAD2_SIZE
     sta COPY_LEN
     lda #>PAYLOAD2_SIZE
+    sta COPY_LEN+1
+    bne @stage_copy_byte
+
+@copy_text_module:
+    lda #2
+    sta EASYFLASH_BANK
+    lda #<text_module
+    sta COPY_SRC
+    lda #>text_module
+    sta COPY_SRC+1
+    lda #<$b880
+    sta COPY_DST
+    lda #>$b880
+    sta COPY_DST+1
+    lda #<TEXT_MODULE_SIZE
+    sta COPY_LEN
+    lda #>TEXT_MODULE_SIZE
     sta COPY_LEN+1
     bne @stage_copy_byte
 
@@ -242,10 +260,18 @@ prg_payload2_end:
 
 PAYLOAD2_SIZE = prg_payload2_end - prg_payload2
 
+.segment "TEXTMODULE"
+text_module:
+    .incbin "build/text.prg", 2
+text_module_end:
+
+TEXT_MODULE_SIZE = text_module_end - text_module
+
 .assert PAYLOAD0_SIZE = PAYLOAD0_BYTES, error, "PRG payload is too small"
 .assert PAYLOAD1_SIZE = PAYLOAD1_BYTES, error, "second payload bank is incomplete"
 .assert PAYLOAD2_SIZE > 0, error, "third payload bank is empty"
 .assert prg_payload2_end <= $c000, error, "PRG payload exceeds three banks"
+.assert TEXT_MODULE_SIZE <= $0180, error, "text module exceeds reserved RAM"
 
 .segment "VECTORS"
     .word cold_start        ; NMI at $FFFA in Ultimax mode

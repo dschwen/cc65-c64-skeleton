@@ -22,8 +22,13 @@ make
 
 Outputs:
 - `build/game.prg`
+- `build/text.prg`
 - `build/game.map`
 - `build/game.lbl`
+
+`game.prg` is the resident engine and `text.prg` is the independently loaded
+bottom-text pager. Use the D64 or cartridge target to run the complete game;
+the engine PRG alone deliberately does not contain a padded copy of the pager.
 
 Build disk image:
 ```bash
@@ -32,7 +37,11 @@ make d64
 
 Output:
 - `build/game.d64`
+- `build/disk-boot.prg` (the first-file loader stored as `GAME`)
 - plus `res/*`, hexadecimal room assets, and `assets/objects.cobj`
+
+The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
+address, loads `TEXT` at `$B880`, and then enters cc65 startup at `$080D`.
 
 Build an EasyFlash cartridge image:
 ```bash
@@ -50,12 +59,10 @@ Output:
 - `build/game-ef.bin` (packed executable and runtime asset banks)
 
 ## Run
-Open `build/game.prg` in your favorite C64 emulator (VICE etc.).
-
-Or run via Makefile targets:
+Run via Makefile targets:
 ```bash
-make run      # autostarts build/game.prg
-make run-d64  # boots build/game.d64 as drive 8
+make run      # builds and autostarts the complete D64
+make run-d64  # same explicit disk workflow
 make run-cartridge # attaches build/game.crt
 ```
 

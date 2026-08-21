@@ -14,13 +14,20 @@ uint8_t game_inventory_draw_index;
 uint8_t game_inventory_draw_type;
 uint8_t game_inventory_draw_quantity;
 void game_inventory_draw_item_native(void);
+void raster_irq_suspend(void);
+void raster_irq_resume(void);
+void __fastcall__ platform_text_output_native(const char* text);
+uint8_t platform_text_output_color;
+uint8_t platform_text_output_line;
 
+#pragma rodata-name (push, "HIGHRODATA")
 static const uint8_t inventory_title[9] = {
     73u, 14u, 22u, 5u, 14u, 20u, 15u, 18u, 25u
 };
 static const uint8_t inventory_empty[7] = {
     40u, 5u, 13u, 16u, 20u, 25u, 41u
 };
+#pragma rodata-name (pop)
 
 uint8_t game_take_direction(uint8_t direction) {
     PlatformObject* object;
@@ -114,8 +121,14 @@ void game_inventory_show(void) {
         key = platform_input_poll();
     } while (key != 0u);
 
+    GAME_VIC_CTRL1 &= 0xefu;
+    memset(GAME_SCREEN_RAM, platform_text_screen_code(' '), 1000u);
+    memset(GAME_COLOR_RAM, 0u, 1000u);
+    raster_irq_suspend();
     platform_text_screen_leave();
     platform_room_draw(&platform_room, platform_player);
+    raster_irq_resume();
+    GAME_VIC_CTRL1 |= 0x10u;
 }
 
 uint8_t game_inventory_count(uint8_t type) {
@@ -227,13 +240,17 @@ uint8_t game_spend_mana(uint8_t amount) {
 }
 
 void game_text_write(uint8_t line, const char* text, uint8_t color) {
-    platform_text_clear_line(line);
-    platform_text_write_line(line, 0u, text, color);
+    if (text == 0 || line > PLATFORM_TEXT_LINE_BOTTOM) return;
+    platform_text_output_line = line;
+    platform_text_output_color = color & 0x0fu;
+    platform_text_output_native(text);
 }
 
 void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color) {
-    platform_text_clear_line(line);
-    platform_text_write_room_line(&platform_room, line, 0u, text_offset, color);
+    if (line > PLATFORM_TEXT_LINE_BOTTOM) return;
+    platform_text_output_line = line;
+    platform_text_output_color = color & 0x0fu;
+    platform_text_output_native((const char*)&platform_room.text[text_offset]);
 }
 
 void game_dialog_show(const char* line0, const char* line1,

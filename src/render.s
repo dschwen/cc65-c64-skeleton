@@ -685,7 +685,7 @@ _platform_lightning_native:
     sta $d021
     jmp _platform_lighting_apply_native
 
-.segment "UPPERCODE"
+.segment "HIGHCODE"
 
 ; Room tiles occupy rows 0-21. Clear the separator and both status rows on a
 ; full room redraw so bytes left by the previous room or a text screen cannot

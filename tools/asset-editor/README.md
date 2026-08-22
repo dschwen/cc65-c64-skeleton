@@ -55,6 +55,15 @@ The server has no third-party dependencies and only exposes file operations unde
   - Edit the 14-byte name, actor flag, and emitted-light byte; object type 0 remains reserved.
 - Room mode:
   - Rooms are fixed at 20x11 tiles (40x22 half-tile/object coordinates).
+  - Hover over the room canvas to display the zero-based tile coordinates used
+    by room story hooks.
+  - Toggle `Show objects` to inspect or paint the underlying room tiles without
+    changing the room object list.
+  - Opening a room through the asset server replaces untouched editor defaults
+    with `charset.cchr` and `tiles.ctil`, and loads referenced, missing type
+    definitions from `objects.cobj`. Existing edited asset data is preserved.
+    Without a loaded definition, a placed object is still shown as an amber
+    marker containing its hexadecimal type ID.
   - Paint tiles with the tile tool.
   - Place/select objects with the object tool.
   - Shift-click moves the selected object's hotspot.

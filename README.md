@@ -1,6 +1,7 @@
 # cc65 C64 Skeleton
 
 This is a minimal cc65-based C64 repository skeleton with:
+- A non-programmer guide for story and map design: `GAME_DESIGNER_GUIDE.md`
 - A pragmatic guide: `GUIDE_cc65_C64.md`
 - C platform API and binary contracts: `PLATFORM_API.md`
 - Runtime RAM, banking, and sprite ownership: `MEMORY_MAP.md`

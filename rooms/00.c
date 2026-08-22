@@ -9,17 +9,18 @@ void enter_tile(void) {
 }
 
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
-    if (tile_x == 8u && tile_y == 3u) {
+    if (tile_x == 18u && tile_y == 3u) {
         game_text_write(PLATFORM_TEXT_LINE_TOP,
-                        "Smoke curls through a gap in the roof.", 1u);
-        platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+                        "The tree has a knot hole.", 1u);
         return GAME_LOOK_HANDLED;
     }
     return GAME_LOOK_DEFAULT;
 }
 
 uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
-    (void)tile_x;
-    (void)tile_y;
+    if (tile_x == 18u && tile_y == 3u) {
+        game_text_write_room(PLATFORM_TEXT_LINE_TOP, 0x23u, 1u);
+        return GAME_USE_HANDLED;
+    }
     return GAME_USE_DEFAULT;
 }

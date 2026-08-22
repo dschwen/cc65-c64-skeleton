@@ -243,9 +243,15 @@
           <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-west" disabled aria-label="West exit description"></select></label>
           <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-south" disabled aria-label="South exit description"></select></label>
         </div>
-        <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
-          <button id="map-tool-tile" class="active">Tile paint</button>
-          <button id="map-tool-object">Object place</button>
+        <div class="map-toolbar">
+          <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
+            <button id="map-tool-tile" class="active">Tile paint</button>
+            <button id="map-tool-object">Object place</button>
+          </div>
+          <div class="map-display-controls">
+            <label><input id="show-room-objects" type="checkbox" checked> Show objects</label>
+            <output id="map-hover-coordinates" class="map-coordinate-readout">Tile (-, -)</output>
+          </div>
         </div>
         <div class="map-viewport">
           <canvas id="map-canvas" width="640" height="352"></canvas>

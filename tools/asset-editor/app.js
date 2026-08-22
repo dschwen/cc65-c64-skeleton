@@ -49,6 +49,7 @@
     charClipboard: null,
     tileClipboard: null,
     showGrid: true,
+    showRoomObjects: true,
     drawing: false,
     drawValue: 1,
     map: {
@@ -170,6 +171,8 @@
     roomExitTextSouth: document.getElementById("room-exit-text-south"),
     mapToolTile: document.getElementById("map-tool-tile"),
     mapToolObject: document.getElementById("map-tool-object"),
+    showRoomObjects: document.getElementById("show-room-objects"),
+    mapHoverCoordinates: document.getElementById("map-hover-coordinates"),
     roomObjectType: document.getElementById("room-object-type"),
     roomObjectCount: document.getElementById("room-object-count"),
     roomObjectList: document.getElementById("room-object-list"),
@@ -282,6 +285,7 @@
         trialMapping: state.trialMapping,
         trialColor: state.trialColor,
         showGrid: state.showGrid,
+        showRoomObjects: state.showRoomObjects,
         charset: Array.from(state.charset),
         tiles: state.tiles.map((t) => ({
           chars: t.chars.slice(0, 4),
@@ -468,6 +472,7 @@
           : "petscii-screen";
       state.trialColor = clampByte(parsed.trialColor ?? 1) & 0x0f;
       state.showGrid = parsed.showGrid !== false;
+      state.showRoomObjects = parsed.showRoomObjects !== false;
       state.selectedObjectType = Math.max(1, clampByte(parsed.selectedObjectType ?? 1));
       state.selectedObjectSlot = Number.isInteger(parsed.selectedObjectSlot)
         ? Math.max(-1, Math.min(255, parsed.selectedObjectSlot))
@@ -816,6 +821,12 @@
       type.hotspotX < type.width && type.hotspotY < type.height;
   }
 
+  function objectTypeIsInitialPlaceholder(typeId, type) {
+    return typeId === 1 && type.width === 1 && type.height === 1 &&
+      type.hotspotX === 0 && type.hotspotY === 0 && type.name === "OBJECT 1" &&
+      type.chars[0] === 1 && type.colors[0] === 1 && type.flags === 0 && type.light === 0;
+  }
+
   function drawObjectChar(charIndex, color, dx, dy, scale) {
     ctx.map.fillStyle = C64_COLORS[color & 0x0f];
     for (let py = 0; py < 8; py += 1) {
@@ -828,7 +839,26 @@
     }
   }
 
+  function drawMissingObjectType(typeId, halfTileX, halfTileY, cellPixels) {
+    const x = halfTileX * cellPixels;
+    const y = halfTileY * cellPixels;
+    if (x < 0 || y < 0 || x >= ui.mapCanvas.width || y >= ui.mapCanvas.height) return;
+
+    ctx.map.fillStyle = "#06121c";
+    ctx.map.fillRect(x + 1, y + 1, cellPixels - 2, cellPixels - 2);
+    ctx.map.strokeStyle = "#ffb347";
+    ctx.map.lineWidth = 1;
+    ctx.map.strokeRect(x + 0.5, y + 0.5, cellPixels - 1, cellPixels - 1);
+    ctx.map.fillStyle = "#ffb347";
+    ctx.map.font = "9px monospace";
+    ctx.map.textAlign = "center";
+    ctx.map.textBaseline = "middle";
+    ctx.map.fillText(typeId.toString(16).padStart(2, "0").toUpperCase(),
+      x + cellPixels / 2, y + cellPixels / 2 + 0.5);
+  }
+
   function renderRoomObjects() {
+    if (!state.showRoomObjects) return;
     const scale = 2;
     const cellPixels = 8 * scale;
     for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
@@ -836,7 +866,10 @@
       const typeId = state.map.objects[p];
       if (typeId === 0) continue;
       const type = state.objectTypes[typeId];
-      if (!objectTypeIsValid(type)) continue;
+      if (!objectTypeIsValid(type)) {
+        drawMissingObjectType(typeId, state.map.objects[p + 1], state.map.objects[p + 2], cellPixels);
+        continue;
+      }
       const originX = state.map.objects[p + 1] - type.hotspotX;
       const originY = state.map.objects[p + 2] - type.hotspotY;
       for (let index = 0; index < type.width * type.height; index += 1) {
@@ -1264,6 +1297,7 @@
     ui.testWidth.value = String(state.test.width);
     ui.testHeight.value = String(state.test.height);
     ui.showGrid.checked = state.showGrid;
+    ui.showRoomObjects.checked = state.showRoomObjects;
   }
 
   function copyCurrentChar() {
@@ -1317,6 +1351,17 @@
     const x = Math.floor((event.clientX - rect.left) * canvas.width / rect.width);
     const y = Math.floor((event.clientY - rect.top) * canvas.height / rect.height);
     return { x, y };
+  }
+
+  function updateMapHoverCoordinates(event) {
+    const { x, y } = canvasPos(ui.mapCanvas, event);
+    const tileX = Math.floor(x / 32);
+    const tileY = Math.floor(y / 32);
+    if (tileX < 0 || tileX >= MAP_WIDTH || tileY < 0 || tileY >= MAP_HEIGHT) {
+      ui.mapHoverCoordinates.textContent = "Tile (-, -)";
+      return;
+    }
+    ui.mapHoverCoordinates.textContent = `Tile (${tileX}, ${tileY})`;
   }
 
   function tileCanvasCell(event) {
@@ -1898,25 +1943,117 @@
       return;
     }
     for (let typeId = 0; typeId < OBJECT_TYPE_COUNT; typeId += 1) {
-      const base = typeId * OBJECT_TYPE_BYTES;
-      const type = state.objectTypes[typeId];
-      type.width = data[base] >> 4;
-      type.height = data[base] & 0x0f;
-      type.hotspotX = data[base + 1] >> 4;
-      type.hotspotY = data[base + 1] & 0x0f;
-      const nameBytes = data.subarray(base + 2, base + 16);
-      const zero = nameBytes.indexOf(0);
-      type.name = decoder.decode(zero >= 0 ? nameBytes.subarray(0, zero) : nameBytes).trimEnd();
-      type.chars.set(data.subarray(base + 16, base + 32));
-      type.colors.set(data.subarray(base + 32, base + 48));
-      for (let i = 0; i < 16; i += 1) type.colors[i] &= 0x0f;
-      type.flags = data[base + 48];
-      type.light = data[base + 49];
-      type.reserved.set(data.subarray(base + 50, base + 64));
+      importObjectTypeRecord(data, typeId, decoder);
     }
     setStatus("Imported 256 object types.");
     renderAll();
     schedulePersist();
+  }
+
+  function importObjectTypeRecord(data, typeId, decoder) {
+    const base = typeId * OBJECT_TYPE_BYTES;
+    const type = state.objectTypes[typeId];
+    type.width = data[base] >> 4;
+    type.height = data[base] & 0x0f;
+    type.hotspotX = data[base + 1] >> 4;
+    type.hotspotY = data[base + 1] & 0x0f;
+    const nameBytes = data.subarray(base + 2, base + 16);
+    const zero = nameBytes.indexOf(0);
+    type.name = decoder.decode(zero >= 0 ? nameBytes.subarray(0, zero) : nameBytes).trimEnd();
+    type.chars.set(data.subarray(base + 16, base + 32));
+    type.colors.set(data.subarray(base + 32, base + 48));
+    for (let i = 0; i < 16; i += 1) type.colors[i] &= 0x0f;
+    type.flags = data[base + 48];
+    type.light = data[base + 49];
+    type.reserved.set(data.subarray(base + 50, base + 64));
+  }
+
+  function missingRoomObjectTypeIds() {
+    const missing = new Set();
+    for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
+      const typeId = state.map.objects[slot * 3];
+      const type = state.objectTypes[typeId];
+      if (typeId !== 0 && (!objectTypeIsValid(type) || objectTypeIsInitialPlaceholder(typeId, type))) {
+        missing.add(typeId);
+      }
+    }
+    return Array.from(missing);
+  }
+
+  function charsetIsInitialDefault() {
+    const marker = [0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81];
+    for (let i = 0; i < state.charset.length; i += 1) {
+      const expected = i < marker.length ? marker[i] : 0;
+      if (state.charset[i] !== expected) return false;
+    }
+    return true;
+  }
+
+  function tilesAreInitialDefault() {
+    for (let tileId = 0; tileId < TILE_COUNT; tileId += 1) {
+      const tile = state.tiles[tileId];
+      for (let cell = 0; cell < 4; cell += 1) {
+        if (tile.chars[cell] !== tileId || tile.colors[cell] !== 1) return false;
+      }
+      if (state.tileProps[tileId] !== 0) return false;
+    }
+    return true;
+  }
+
+  function companionAsset(kind, preferredPath) {
+    const candidates = assetFiles.filter((file) =>
+      Array.isArray(file.kinds) && file.kinds.includes(kind));
+    return candidates.find((file) => file.path === preferredPath) ||
+      (candidates.length === 1 ? candidates[0] : null);
+  }
+
+  async function fetchAssetData(file) {
+    const response = await fetch(assetApiUrl(file.path));
+    if (!response.ok) throw new Error(`HTTP ${response.status} loading ${file.path}`);
+    return response.arrayBuffer();
+  }
+
+  async function loadDefaultRoomDisplayAssets() {
+    const loaded = [];
+    const charsetFile = charsetIsInitialDefault() ? companionAsset("charset", "charset.cchr") : null;
+    if (charsetFile) {
+      importCharset(await fetchAssetData(charsetFile));
+      loaded.push("charset");
+    }
+
+    const tileFile = tilesAreInitialDefault() ? companionAsset("tiles", "tiles.ctil") : null;
+    if (tileFile) {
+      importTiles(await fetchAssetData(tileFile));
+      loaded.push("tiles");
+    }
+    return loaded;
+  }
+
+  async function loadMissingRoomObjectTypes() {
+    const missing = missingRoomObjectTypeIds();
+    if (missing.length === 0) return 0;
+
+    const source = companionAsset("objecttypes", "objects.cobj");
+    if (!source) return 0;
+
+    const data = new Uint8Array(await fetchAssetData(source));
+    if (data.length !== OBJECT_TYPE_FILE_BYTES) {
+      throw new Error(`${source.path} is not an object type list`);
+    }
+
+    const decoder = new TextDecoder("latin1");
+    let loaded = 0;
+    missing.forEach((typeId) => {
+      const packedSize = data[typeId * OBJECT_TYPE_BYTES];
+      if ((packedSize >> 4) === 0 || (packedSize & 0x0f) === 0) return;
+      importObjectTypeRecord(data, typeId, decoder);
+      loaded += 1;
+    });
+    if (loaded > 0) {
+      renderAll();
+      schedulePersist();
+    }
+    return loaded;
   }
 
   function normalizeAssetPath(path) {
@@ -2087,7 +2224,12 @@
       }
       if (importAssetBytes(path, buffer, kind)) {
         ui.assetSavePaths[kind].value = path;
-        setStatus(`Opened assets/${path}.`);
+        const companions = kind === "map" ? await loadDefaultRoomDisplayAssets() : [];
+        const loadedTypes = kind === "map" ? await loadMissingRoomObjectTypes() : 0;
+        if (loadedTypes > 0) companions.push(`${loadedTypes} object type${loadedTypes === 1 ? "" : "s"}`);
+        setStatus(companions.length > 0
+          ? `Opened assets/${path}; loaded ${companions.join(", ")}.`
+          : `Opened assets/${path}.`);
       }
     } catch (err) {
       setStatus(`Failed to open assets/${path}: ${String(err)}`, true);
@@ -2151,6 +2293,12 @@
       if (state.mode === "room") {
         renderMapCanvas();
       }
+      schedulePersist();
+    });
+
+    ui.showRoomObjects.addEventListener("change", () => {
+      state.showRoomObjects = ui.showRoomObjects.checked;
+      renderMapCanvas();
       schedulePersist();
     });
 
@@ -2336,7 +2484,11 @@
       applyTilePaintOnCanvas("map", event);
     });
     ui.mapCanvas.addEventListener("mousemove", (event) => {
+      updateMapHoverCoordinates(event);
       if (state.drawing && state.mapTool === "tile") applyTilePaintOnCanvas("map", event);
+    });
+    ui.mapCanvas.addEventListener("mouseleave", () => {
+      ui.mapHoverCoordinates.textContent = "Tile (-, -)";
     });
 
     ui.testCanvas.addEventListener("mousedown", (event) => {

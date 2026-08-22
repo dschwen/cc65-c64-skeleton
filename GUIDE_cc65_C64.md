@@ -369,14 +369,15 @@ Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at
 bottom-text pager occupy `$B80D-$B9FF`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
 visible while leaving BASIC hidden and these regions readable.
 
-`WORKBSS` uses `$A4E9-$B4D8` for base colors, brightness/visibility buffers,
-and caches. Room-code staging deliberately overwrites a prefix of this
+`WORKBSS` currently uses `$A4E9-$ADF8` for base colors, tile brightness,
+visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
 rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
 room-code copies are implemented in assembly because ROMH temporarily hides
-both the C stack and BSS. Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
+both the C stack and BSS. `$ADF9-$B4D8` is the current 1,760-byte WORKRAM tail.
+Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current interactive command set leaves only small linker margins: inspect
+The current `HIGH` segment has about 837 bytes of linker margin; inspect
 `build/game.map` before adding resident logic. Cursor helpers deliberately use
 the remaining pre-charset and `$3900` gaps while the sprite bitmap area remains
 reserved for all eight hardware sprites.

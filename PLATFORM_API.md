@@ -275,8 +275,8 @@ clipped to the 40x22 map area.
 The native renderer preserves these public functions. Assembly is an
 implementation detail: the map blitter streams the 220 tile IDs and writes
 screen RAM plus the offscreen base-color buffer; the object blitter draws one
-clipped, transparent object at a time. A final native pass translates base
-colors through the 40x22 brightness buffer into Color RAM. Room ordering and
+clipped, transparent object at a time. A final native pass expands the 20x11
+tile-brightness buffer over the 40x22 base colors in Color RAM. Room ordering and
 transition policy remain in C. A full room draw also clears screen and Color
 RAM rows 22-24 before rendering, preventing separator/status text from the
 previous room or a full-screen text view from surviving the transition.
@@ -285,7 +285,7 @@ previous room or a full-screen text view from surviving the transition.
 
 ```c
 extern uint8_t platform_base_colors[40 * 22];
-extern uint8_t platform_brightness[40 * 22];
+extern uint8_t platform_brightness[20 * 11];
 extern uint8_t platform_global_light;
 extern uint8_t platform_view_tiles[20 * 11];
 extern const uint8_t platform_light_colors[4 * 16];
@@ -298,8 +298,9 @@ void platform_lighting_rebuild(const PlatformRoom* room,
 void platform_lightning(void);
 ```
 
-Brightness is per character cell, matching Color RAM and the half-tile object
-coordinate system. Levels are `PLATFORM_LIGHT_NONE` (0),
+Brightness is per 2x2-character tile. Object hotspots remain at half-tile
+resolution but light sources snap to the tile containing the hotspot. Levels
+are `PLATFORM_LIGHT_NONE` (0),
 `PLATFORM_LIGHT_DIM` (1), `PLATFORM_LIGHT_TWILIGHT` (2), and
 `PLATFORM_LIGHT_FULL` (3). Map and object rendering preserve original colors
 in `platform_base_colors`; `platform_lighting_apply()` changes only the 880 map
@@ -313,16 +314,17 @@ that rebuild immediately. The sample game binds `-` and `+` to decreasing and
 increasing ambient light. Direct brightness-buffer edits must be followed by
 `platform_lighting_apply()`.
 
-Object-type byte 49 is a radius in character cells, clamped to 16 at runtime.
-For radius `R`, distances `0..R-4` are full light, the next two distances are
-twilight, and the outer two are dim. Thus radius 10 gives full light through
-distance 6, twilight through 8, and dim through 10. Sources use max composition,
-so overlapping lights never reduce or add numerically to an existing level.
+Object-type byte 49 remains a radius in half-tile/character-cell units and is
+clamped to 16 at runtime. Tile distance is doubled before applying the existing
+bands, preserving asset compatibility: remaining radius 4 or more is full,
+2-3 is twilight, and 0-1 is dim. Thus radius 10 gives full light through three
+tiles, twilight at four tiles, and dim at five tiles. Sources use max
+composition, so overlapping lights never reduce an existing level.
 
-Distance is ceiling Euclidean distance. `platform_light_distance` is the first
-quadrant lookup indexed by `(abs_y << 4) | abs_x` for deltas 0-15. The four
-radius-16 axis endpoints are handled explicitly; positions outside the radius
-are excluded.
+Distance is ceiling Euclidean tile distance. `platform_light_distance` is the
+first-quadrant lookup indexed by `(abs_y << 4) | abs_x`; its result is doubled
+before comparison with the half-tile radius. Positions outside the radius are
+excluded.
 
 Tile-property bit 1 (`PLATFORM_TILE_BLOCKS_VIEW`) blocks both illumination and
 player sight. A native one-parent ring propagation produces one 20x11 mask per
@@ -340,10 +342,10 @@ a light on the player's side can illuminate the wall even when a different
 light on the far side cannot. Player visibility is built first and remains a
 separate final mask over the composed brightness buffer.
 
-For each opaque character cell, the platform caches four 2-bit maxima: one for
+For each opaque tile, the platform caches four 2-bit maxima in one byte: one for
 each viewer quadrant relative to that tile. Moving a non-emitting player across
 a tile boundary rebuilds the persistent player visibility mask and selects new
-wall brightness from this cache. It does not clear the 880-byte brightness
+wall brightness from this cache. It does not clear the 220-byte brightness
 buffer, recast any emitter, or rerun open-cell distance falloff. Moving an
 emitter, changing ambient light, loading a room, or explicitly rebuilding
 lighting invalidates and recreates the cache.
@@ -358,8 +360,8 @@ KERNAL storage call.
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The
 assembly loop patches its brightness destination and distance-table row once
-per scanline, derives each band from `radius - distance`, and performs a strict
-max write. There is no C call or multiplication in the per-cell path.
+per tile row, derives each band from `radius - 2 * tile_distance`, and performs
+a strict max write. There is no C call or multiplication in the per-tile path.
 
 `platform_lightning()` is bound to `F` in the sample game. Its assembly routine
 sets the VIC border and background to white, clears only the 40x22 map portion
@@ -370,8 +372,8 @@ bottom text rows are not touched. Raster interrupts must be enabled so the frame
 counter can advance.
 
 The lookup table is indexed as `(brightness << 4) | (base_color & 15)`. Its
-four rows are documented in [LIGHTING.md](LIGHTING.md), along with the planned
-object-emitter propagation pass. In the twilight row black remains black; none
+four rows and object-emitter propagation are documented in
+[LIGHTING.md](LIGHTING.md). In the twilight row black remains black; none
 of the other 15 input colors maps to itself.
 Full map/object draws hide the look cursor before invoking the native blitters.
 Dirty-cell movement does not need special cursor handling because a sprite does

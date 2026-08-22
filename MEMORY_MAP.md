@@ -36,7 +36,8 @@ always-visible RAM before rendering it.
 | `$0400-$07E7` | 1000 | screen matrix |
 | `$07E8-$07F7` | 16 | unused screen-block tail; available only for tiny fixed state |
 | `$07F8-$07FF` | 8 | sprite pointers 0-7 |
-| `$0801-$1FFF` | 6143 | startup, low code, C runtime, data; currently full |
+| `$0801-$1FAB` | 6059 | startup, low code, C runtime, and initialized data |
+| `$1FAC-$1FFF` | 84 | free low-program linker tail |
 | `$2000-$27FF` | 2048 | tile charset |
 | `$2800-$2FFF` | 2048 | text charset |
 | `$3000-$37FF` | 2048 | 256 tile definitions |
@@ -44,7 +45,8 @@ always-visible RAM before rendering it.
 | `$3900-$39F9` | 250 | compact lookup/native code |
 | `$39FA-$39FF` | 6 | free linker tail |
 | `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7FFF` | 17408 | resident platform code/RODATA; currently full |
+| `$3C00-$7CBA` | 16571 | resident platform code/RODATA |
+| `$7CBB-$7FFF` | 837 | free resident-code linker tail |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
 | `$855D-$85F7` | 155 | compact native helpers |
@@ -56,7 +58,8 @@ always-visible RAM before rendering it.
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room staging |
-| `$A4E9-$B4D8` | 4080 | render work RAM or inventory/story overlay |
+| `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
+| `$ADF9-$B4D8` | 1760 | free work-RAM/overlay tail |
 | `$B4D9-$B4FF` | 39 | unallocated gap |
 | `$B500-$B80C` | 781 | resident BSS; currently full |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
@@ -72,20 +75,22 @@ always-visible RAM before rendering it.
 | `$E000-$FFF9` | 8186 | object types 128-255 beneath KERNAL |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors; overlays type 255 reserved bytes |
 
-The small tails are unsuitable for general C growth. The low program region
-and `$3C00-$7FFF` are exactly full, and several helpers are deliberately split
-across fixed tails. Prefer room overlays or the inventory/story overlay for new
-logic instead of consuming these fragments.
+The 837-byte `HIGH` tail is the primary margin for modest resident-code growth;
+the smaller tails are unsuitable for general C code. Prefer room overlays or
+the inventory/story overlay for larger features, and recheck `build/game.map`
+after every change because cc65 can move code between segments.
 
 ## RAM beneath BASIC and KERNAL
 
 ### BASIC ROM: `$A000-$BFFF`
 
-All 8 KiB are already usefully exposed as RAM. The render buffers and
-inventory/story overlay deliberately share `$A4E9-$B4D8`: the overlay may
-overwrite render state because the resident wrapper redraws the room after it
-returns. The only genuinely unallocated pieces are `$B4D9-$B4FF` (39 bytes),
-`$B9FD-$B9FF` (3 bytes), and `$BFE8-$BFFF` (24 bytes).
+All 8 KiB are already exposed as RAM. The render buffers and inventory/story
+overlay deliberately share `$A4E9-$B4D8`: the overlay may overwrite render
+state because the resident wrapper redraws the room after it returns. Full-tile
+lighting reduced active `WORKBSS` to `$A4E9-$ADF8`, leaving a contiguous
+1,760-byte tail for future work buffers or overlay growth. Other unallocated
+pieces are `$B4D9-$B4FF` (39 bytes), `$B9FD-$B9FF` (3 bytes), and
+`$BFE8-$BFFF` (24 bytes).
 
 ### KERNAL ROM: `$E000-$FFFF`
 

@@ -132,7 +132,7 @@ $(INVENTORY_MODULE_C_OBJ): modules/inventory.c src/game.h src/platform.h \
 		src/story.h | $(OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
-$(INVENTORY_MODULE_ASM_OBJ): modules/inventory.s | $(OUTDIR)
+$(INVENTORY_MODULE_ASM_OBJ): modules/inventory_draw.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
 $(INVENTORY_STORY_OBJ): story/story.c src/game.h src/platform.h src/story.h | $(OUTDIR)

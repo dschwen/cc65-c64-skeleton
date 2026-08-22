@@ -7,9 +7,11 @@ lighting update does not redraw the map or any object graphics.
 
 - `platform_base_colors[880]` stores the original color selected by the tile
   and object compositor for every cell in the 40x22 map area.
-- `platform_brightness[880]` stores brightness 0-3 for the same cells.
+- `platform_brightness[220]` stores brightness 0-3 for each 2x2-character map
+  tile. All four character colors in a tile use the same brightness.
 - The assembly `platform_lighting_apply_native` pass combines both buffers and
-  writes `$D800-$DB6F`. The two bottom status rows are outside this range.
+  writes `$D800-$DB6F`. It reads one brightness byte and applies it to four
+  base-color bytes. The two bottom status rows are outside this range.
 - The sprite Look cursor does not alter Color RAM. Showing, moving, blinking,
   and hiding it therefore require no lighting-buffer restoration.
 
@@ -32,49 +34,53 @@ enough to remain perceptible become blue; everything else is black.
 
 Object-type record byte 49 is the emitted-light radius. Zero disables emission,
 and values above 16 clamp to 16. Emission originates at the object's hotspot,
-which is already expressed in character-cell/half-tile coordinates.
+which is expressed in character-cell/half-tile coordinates. Lighting snaps the
+hotspot to its containing tile, while object graphics retain half-tile motion.
+The stored radius remains in half-tile units for asset compatibility.
 
 The implemented room-light rebuild is:
 
 1. Fill the brightness buffer with the room ambient/global level.
-2. Build the compact list of opaque room tiles and clear their four-quadrant
-   wall-light cache.
+2. Build the compact list of opaque room tiles and clear their packed
+   four-quadrant wall-light cache.
 3. Visit populated room objects and the player in the same type-aware manner as
    drawing. Skip types whose emitted-light byte is zero.
-4. Propagate from each hotspot using ceiling Euclidean distance. For radius `R`,
-   `0..R-4` is full, the next two cells are twilight, and the outer two are dim.
-5. Max-combine open-cell light directly into `platform_brightness`. For every
-   opaque tile reached by the source, max-combine its four character-cell
-   levels into the wall cache quadrant(s) containing the source.
+4. Propagate from each hotspot using ceiling Euclidean tile distance, converted
+   back to half-tile units before comparing with the stored radius. For radius
+   `R`, remaining radius 4 or more is full, 2-3 is twilight, and 0-1 is dim.
+5. Max-combine open-tile light directly into `platform_brightness`. For every
+   opaque tile reached by the source, max-combine its tile level into the wall
+   cache quadrant(s) containing the source.
 6. Select each cached wall level using the quadrant(s) containing the player.
 7. Apply the color lookup once after all sources have contributed.
 
 Distance uses one 16x16 first-quadrant lookup table, indexed as
-`(abs_y << 4) | abs_x`. Radius-16 axis endpoints are handled separately, while
-table positions geometrically beyond distance 16 use an outside sentinel. The
-source bounds are clipped to 40x22 before visiting cells.
+`(abs_y << 4) | abs_x`, where the deltas are now full tiles. The lookup result
+is doubled before applying the unchanged half-tile radius and band thresholds.
+A radius-16 source therefore examines at most eight tiles in each direction.
+The source bounds are clipped to 20x11 before visiting tiles.
 
 The hot propagation loop is implemented by
 `platform_light_source_apply_native` in `src/render.s`. C performs bank-aware
 type lookup and rectangle clipping once per source. Assembly then patches the
 brightness and distance-table row addresses once per scanline and max-combines
-each open cell without multiplication or C calls. Opaque tile entries are
-removed from that native pass after their four character-cell values have been
-stored in the cache. Its complete 880-byte result has been regression-checked
-against the previous implementation.
+each open tile without multiplication or C calls. Opaque tile entries are
+removed from that native pass after their tile value has been stored in the
+cache. The final assembly pass expands the complete 220-byte result over Color
+RAM.
 
-Each cached wall character uses one byte: four 2-bit maxima for northwest,
+Each cached wall tile uses one byte: four 2-bit maxima for northwest,
 northeast, southwest, and southeast viewers. A source on a wall axis belongs to
 both adjacent quadrants. Selecting the maximum of the viewer's applicable
 quadrants is equivalent to the strict viewer-relative rule: a wall is rejected
 when its X or Y lies strictly between viewer and source. This retains exact
-half-tile distance falloff and correct max composition across multiple lights.
+tile-level falloff and correct max composition across multiple lights.
 
 ## Occlusion and player vision
 
 Tile-property bit 1 already means `blocks view`; it is independent of passage
-and solid-land policy. Light occlusion should be computed at the 20x11 tile
-level, while distance falloff remains at 40x22 character-cell resolution.
+and solid-land policy. Light occlusion and distance falloff both operate at the
+20x11 tile level.
 
 Visibility uses a one-parent outward ring propagation:
 
@@ -90,8 +96,8 @@ Visibility uses a one-parent outward ring propagation:
    quadrant(s), then exclude that tile from the open-cell propagation loop. It
    still writes `OCCLUDED` to its children.
 6. Normalize occluded states to zero after the last ring.
-7. Let the native character-cell propagation loop write only when the target
-   cell's tile is marked visible. Overlapping emitters still max-combine.
+7. Let the native tile propagation loop write only when the target tile is
+   marked visible. Overlapping emitters still max-combine.
 
 The complete ring builder is native assembly and uses states 0=unprocessed,
 1=visible, and 2=occluded in the same byte-per-tile buffer. It needs no dynamic
@@ -107,6 +113,10 @@ The current view is 360 degrees with no range limit. Because the origin is a
 tile, half-tile player movement recomputes LOS only when it crosses a tile edge.
 A later facing cone can restrict the target bounds/angles without changing the
 final Color RAM mask pass.
+
+Because emission is tile-based, moving an emitting object within its current
+tile redraws only its changed graphics. Lighting is rebuilt only when its
+hotspot crosses into another tile.
 
 The separating-wall cache is populated independently for every emitter. A wall
 aligned with either endpoint belongs to both adjacent quadrants and is not

@@ -100,7 +100,7 @@ uint8_t native_visibility_origin_offset;
 uint8_t native_visibility_max_ring;
 #pragma bss-name (push, "WORKBSS")
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
-uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
 #pragma bss-name (pop)
 uint8_t platform_global_light;
 uint8_t platform_light_visibility[PLATFORM_MAP_TILE_COUNT];
@@ -154,11 +154,10 @@ static uint8_t look_cursor_visible;
 static PlatformRoom room_stage;
 #pragma bss-name (pop)
 #pragma bss-name (push, "WORKBSS")
-static uint8_t wall_light_cache[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+static uint8_t wall_light_cache[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
-static uint16_t wall_char_offsets[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
 static uint8_t look_counts[PLATFORM_OBJECT_TYPE_COUNT];
@@ -184,6 +183,7 @@ static const char taken_suffix[] = " taken.";
 static void write_screen_cell(uint8_t x, uint8_t y,
                               uint8_t ch, uint8_t color) {
     uint16_t offset;
+    uint16_t tile_offset;
 
     if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= 25u) return;
     offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
@@ -191,10 +191,10 @@ static void write_screen_cell(uint8_t x, uint8_t y,
     color &= 0x0f;
     if (y < PLATFORM_MAP_CHAR_HEIGHT) {
         platform_base_colors[offset] = color;
+        tile_offset = (uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1);
         color = platform_light_colors[
-            ((platform_brightness[offset] & 0x03u) << 4) | color];
-        if (platform_view_tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH +
-                                (x >> 1)] == 0u) color = 0u;
+            ((platform_brightness[tile_offset] & 0x03u) << 4) | color];
+        if (platform_view_tiles[tile_offset] == 0u) color = 0u;
     }
 
     P_COLOR_RAM[offset] = color;
@@ -359,6 +359,7 @@ static void redraw_dirty(const PlatformRoom* room,
     uint16_t offset;
     uint8_t visible_color;
     uint16_t object_limit;
+    uint16_t tile_offset;
 
     if (room == rendered_room) {
         object_limit = rendered_object_limit;
@@ -373,11 +374,11 @@ static void redraw_dirty(const PlatformRoom* room,
         y = dirty_y[i];
         compose_cell(room, x, y, player, object_limit, &ch, &color);
         offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
+        tile_offset = (uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1);
         platform_base_colors[offset] = color;
         visible_color = platform_light_colors[
-            ((platform_brightness[offset] & 0x03u) << 4) | (color & 0x0fu)];
-        if (platform_view_tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH +
-                                (x >> 1)] == 0u) visible_color = 0u;
+            ((platform_brightness[tile_offset] & 0x03u) << 4) | (color & 0x0fu)];
+        if (platform_view_tiles[tile_offset] == 0u) visible_color = 0u;
         if (P_SCREEN_RAM[offset] != ch) P_SCREEN_RAM[offset] = ch;
         if (P_COLOR_RAM[offset] != visible_color) P_COLOR_RAM[offset] = visible_color;
     }
@@ -740,17 +741,9 @@ static uint8_t light_level_at(uint8_t x, uint8_t y) {
                                         : x - native_light_source_x;
     delta_y = y < native_light_source_y ? native_light_source_y - y
                                         : y - native_light_source_y;
-    if (delta_x > PLATFORM_LIGHT_MAX_RADIUS ||
-        delta_y > PLATFORM_LIGHT_MAX_RADIUS) return PLATFORM_LIGHT_NONE;
-    if (delta_y == PLATFORM_LIGHT_MAX_RADIUS) {
-        if (delta_x != 0u) return PLATFORM_LIGHT_NONE;
-        distance = PLATFORM_LIGHT_MAX_RADIUS;
-    } else if (delta_x == PLATFORM_LIGHT_MAX_RADIUS) {
-        if (delta_y != 0u) return PLATFORM_LIGHT_NONE;
-        distance = PLATFORM_LIGHT_MAX_RADIUS;
-    } else {
-        distance = platform_light_distance[(uint16_t)delta_y * 16u + delta_x];
-    }
+    if (delta_x > (PLATFORM_LIGHT_MAX_RADIUS >> 1) ||
+        delta_y > (PLATFORM_LIGHT_MAX_RADIUS >> 1)) return PLATFORM_LIGHT_NONE;
+    distance = platform_light_distance[(uint16_t)delta_y * 16u + delta_x] << 1;
     if (distance > native_light_radius) return PLATFORM_LIGHT_NONE;
     remaining = native_light_radius - distance;
     if (remaining >= 4u) return PLATFORM_LIGHT_FULL;
@@ -804,53 +797,37 @@ static void wall_cache_prepare(const PlatformRoom* room) {
     uint8_t x;
     uint8_t y;
     uint8_t tile_offset;
-    uint16_t char_row;
-    uint16_t char_offset;
 
     wall_count = 0u;
     tile_offset = 0u;
-    char_row = 0u;
     for (y = 0u; y < PLATFORM_MAP_HEIGHT; ++y) {
-        char_offset = char_row;
         for (x = 0u; x < PLATFORM_MAP_WIDTH; ++x, ++tile_offset) {
             if (tile_properties[room->tiles[tile_offset]] & PLATFORM_TILE_BLOCKS_VIEW) {
                 wall_tile_offsets[wall_count] = tile_offset;
                 wall_x[wall_count] = x;
                 wall_y[wall_count] = y;
-                wall_char_offsets[wall_count] = char_offset;
-                memset(&wall_light_cache[(uint16_t)wall_count * 4u], 0, 4u);
+                wall_light_cache[wall_count] = 0u;
                 ++wall_count;
             }
-            char_offset += 2u;
         }
-        char_row += PLATFORM_MAP_CHAR_WIDTH * 2u;
     }
     wall_cache_room = room;
 }
 
 static void wall_cache_add_source(void) {
     uint8_t i;
-    uint8_t cell;
     uint8_t quadrants;
     uint8_t level;
-    uint8_t char_x;
-    uint8_t char_y;
-    uint16_t cache_offset;
 
     for (i = 0u; i < wall_count; ++i) {
         if (platform_light_visibility[wall_tile_offsets[i]] == 0u) continue;
-        quadrants = wall_quadrants(native_light_source_x >> 1,
-                                   native_light_source_y >> 1,
+        quadrants = wall_quadrants(native_light_source_x,
+                                   native_light_source_y,
                                    wall_x[i], wall_y[i]);
-        cache_offset = (uint16_t)i * 4u;
-        for (cell = 0u; cell < 4u; ++cell) {
-            char_x = (wall_x[i] << 1) + (cell & 1u);
-            char_y = (wall_y[i] << 1) + (cell >> 1);
-            level = light_level_at(char_x, char_y);
-            if (level != PLATFORM_LIGHT_NONE) {
-                wall_light_cache[cache_offset + cell] = packed_light_add(
-                    wall_light_cache[cache_offset + cell], quadrants, level);
-            }
+        level = light_level_at(wall_x[i], wall_y[i]);
+        if (level != PLATFORM_LIGHT_NONE) {
+            wall_light_cache[i] = packed_light_add(
+                wall_light_cache[i], quadrants, level);
         }
         /* The normal source blitter now updates open cells only. */
         platform_light_visibility[wall_tile_offsets[i]] = 0u;
@@ -864,8 +841,6 @@ static void wall_cache_apply(const PlatformRoom* room,
     uint8_t level;
     uint8_t player_x;
     uint8_t player_y;
-    uint16_t cache_offset;
-    uint16_t char_offset;
 
     if (room != wall_cache_room) return;
     if (player != 0 && player->type != 0u &&
@@ -880,19 +855,8 @@ static void wall_cache_apply(const PlatformRoom* room,
     for (i = 0u; i < wall_count; ++i) {
         quadrants = player_x == 0xffu ? 0x0fu
             : wall_quadrants(player_x, player_y, wall_x[i], wall_y[i]);
-        cache_offset = (uint16_t)i * 4u;
-        char_offset = wall_char_offsets[i];
-        level = packed_light_max(wall_light_cache[cache_offset], quadrants);
-        platform_brightness[char_offset] = level > platform_global_light
-                                               ? level : platform_global_light;
-        level = packed_light_max(wall_light_cache[cache_offset + 1u], quadrants);
-        platform_brightness[char_offset + 1u] = level > platform_global_light
-                                                    ? level : platform_global_light;
-        level = packed_light_max(wall_light_cache[cache_offset + 2u], quadrants);
-        platform_brightness[char_offset + PLATFORM_MAP_CHAR_WIDTH] =
-            level > platform_global_light ? level : platform_global_light;
-        level = packed_light_max(wall_light_cache[cache_offset + 3u], quadrants);
-        platform_brightness[char_offset + PLATFORM_MAP_CHAR_WIDTH + 1u] =
+        level = packed_light_max(wall_light_cache[i], quadrants);
+        platform_brightness[wall_tile_offsets[i]] =
             level > platform_global_light ? level : platform_global_light;
     }
 }
@@ -905,6 +869,7 @@ static void light_source_apply(const PlatformRoom* room,
     uint8_t max_x;
     uint8_t min_y;
     uint8_t max_y;
+    uint8_t tile_radius;
 
     if (object == 0 || object->type == 0u ||
         object->x >= PLATFORM_MAP_CHAR_WIDTH ||
@@ -913,26 +878,28 @@ static void light_source_apply(const PlatformRoom* room,
     radius = PLATFORM_OBJECT_LIGHT(type);
     if (radius == 0u) return;
     if (radius > PLATFORM_LIGHT_MAX_RADIUS) radius = PLATFORM_LIGHT_MAX_RADIUS;
+    tile_radius = (radius + 1u) >> 1;
 
-    min_x = object->x > radius ? object->x - radius : 0u;
-    max_x = (uint16_t)object->x + radius < PLATFORM_MAP_CHAR_WIDTH
-                ? object->x + radius : PLATFORM_MAP_CHAR_WIDTH - 1u;
-    min_y = object->y > radius ? object->y - radius : 0u;
-    max_y = (uint16_t)object->y + radius < PLATFORM_MAP_CHAR_HEIGHT
-                ? object->y + radius : PLATFORM_MAP_CHAR_HEIGHT - 1u;
-    native_light_source_x = object->x;
-    native_light_source_y = object->y;
+    native_light_source_x = object->x >> 1;
+    native_light_source_y = object->y >> 1;
+    min_x = native_light_source_x > tile_radius
+                ? native_light_source_x - tile_radius : 0u;
+    max_x = (uint16_t)native_light_source_x + tile_radius < PLATFORM_MAP_WIDTH
+                ? native_light_source_x + tile_radius : PLATFORM_MAP_WIDTH - 1u;
+    min_y = native_light_source_y > tile_radius
+                ? native_light_source_y - tile_radius : 0u;
+    max_y = (uint16_t)native_light_source_y + tile_radius < PLATFORM_MAP_HEIGHT
+                ? native_light_source_y + tile_radius : PLATFORM_MAP_HEIGHT - 1u;
     native_light_radius = radius;
     native_light_min_x = min_x;
     native_light_min_y = min_y;
     native_light_columns = max_x - min_x + 1u;
     native_light_rows = max_y - min_y + 1u;
     native_light_screen_offset =
-        (uint16_t)min_y * PLATFORM_MAP_CHAR_WIDTH + min_x;
-    native_light_visibility_offset = (min_y >> 1) * PLATFORM_MAP_WIDTH;
-    visibility_build(room, object->x >> 1, object->y >> 1,
-                     min_x >> 1, max_x >> 1,
-                     min_y >> 1, max_y >> 1,
+        (uint16_t)min_y * PLATFORM_MAP_WIDTH + min_x;
+    native_light_visibility_offset = min_y * PLATFORM_MAP_WIDTH;
+    visibility_build(room, native_light_source_x, native_light_source_y,
+                     min_x, max_x, min_y, max_y,
                      platform_light_visibility);
     wall_cache_add_source();
     platform_light_source_apply_native();
@@ -1005,10 +972,12 @@ void platform_lightning(void) {
 void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player) {
-    uint8_t emits_light;
+    uint8_t light_changed;
     uint8_t view_changed;
     if (room == 0 || object == 0 || object->type == 0u) return;
-    emits_light = PLATFORM_OBJECT_LIGHT(platform_object_type_get(object->type)) != 0u;
+    light_changed = PLATFORM_OBJECT_LIGHT(platform_object_type_get(object->type)) != 0u &&
+                    ((object->x >> 1) != (new_x >> 1) ||
+                     (object->y >> 1) != (new_y >> 1));
     view_changed = object == player &&
                    ((object->x >> 1) != (new_x >> 1) ||
                     (object->y >> 1) != (new_y >> 1));
@@ -1022,7 +991,7 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
         rendered_player = player;
         view_rebuild(room, player);
     }
-    if (emits_light && room == rendered_room) {
+    if (light_changed && room == rendered_room) {
         rendered_player = player;
         platform_lighting_rebuild(room, player);
     } else if (view_changed && room == rendered_room) {
@@ -1433,7 +1402,6 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  uint8_t color) {
     uint16_t offset;
     uint8_t light;
-    uint8_t value;
     uint8_t distance_x;
     uint8_t distance_y;
     uint8_t distance;
@@ -1448,15 +1416,7 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
         return PLATFORM_ERR_BLOCKED;
     }
 
-    offset = (uint16_t)(tile_y << 1) * PLATFORM_MAP_CHAR_WIDTH +
-             (tile_x << 1);
     light = platform_brightness[offset] & 0x03u;
-    value = platform_brightness[offset + 1u] & 0x03u;
-    if (value > light) light = value;
-    value = platform_brightness[offset + PLATFORM_MAP_CHAR_WIDTH] & 0x03u;
-    if (value > light) light = value;
-    value = platform_brightness[offset + PLATFORM_MAP_CHAR_WIDTH + 1u] & 0x03u;
-    if (value > light) light = value;
 
     distance_x = (viewer->x >> 1) > tile_x
                      ? (uint8_t)((viewer->x >> 1) - tile_x)

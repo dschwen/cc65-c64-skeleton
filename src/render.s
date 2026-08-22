@@ -324,8 +324,8 @@ _platform_object_draw_native:
     rts
 
 ; C resolves the banked object type and prepares one clipped source rectangle.
-; This loop patches the distance-table and brightness row addresses once per
-; scanline, then max-combines the source without C calls or multiplication.
+; This loop patches the distance-table and brightness addresses once per tile
+; row, then max-combines the source without C calls or multiplication.
 _platform_light_source_apply_native:
     lda _native_light_screen_offset
     clc
@@ -364,8 +364,6 @@ _platform_light_source_apply_native:
     sbc _native_light_source_y
 @delta_y_ready:
     sta @delta_y+1
-    cmp #16
-    beq @distance_row_ready
     asl
     asl
     asl
@@ -376,13 +374,11 @@ _platform_light_source_apply_native:
     lda #>_platform_light_distance
     adc #0
     sta @distance_read+2
-@distance_row_ready:
     ldy #0
 
 @light_source_cell:
 @world_x:
     lda #0
-    lsr
     tax
 @visibility_read:
     lda _platform_light_visibility,x
@@ -401,23 +397,11 @@ _platform_light_source_apply_native:
     tax
 @delta_y:
     lda #0
-    cmp #16
-    beq @delta_y_sixteen
-    cpx #16
-    beq @delta_x_sixteen
 @distance_read:
     lda _platform_light_distance,x
-    jmp @distance_ready
-@delta_y_sixteen:
-    cpx #0
-    bne @light_source_next
-    lda #16
-    jmp @distance_ready
-@delta_x_sixteen:
-    cmp #0
-    bne @light_source_next
-    lda #16
-@distance_ready:
+    ; The table is indexed in full tiles; radius/bands remain in half-tile
+    ; asset units, so convert the distance before comparing.
+    asl
     cmp _native_light_radius
     bcc @inside_light
     bne @light_source_next
@@ -454,7 +438,7 @@ _platform_light_source_apply_native:
 
     clc
     lda @brightness_read+1
-    adc #MAP_WIDTH_CHARS
+    adc #MAP_WIDTH_TILES
     sta @brightness_read+1
     sta @brightness_write+1
     lda @brightness_read+2
@@ -462,9 +446,6 @@ _platform_light_source_apply_native:
     sta @brightness_read+2
     sta @brightness_write+2
     inc @world_y+1
-    lda @world_y+1
-    and #1
-    bne @visibility_row_ready
     clc
     lda @visibility_read+1
     adc #MAP_WIDTH_TILES
@@ -472,7 +453,6 @@ _platform_light_source_apply_native:
     lda @visibility_read+2
     adc #0
     sta @visibility_read+2
-@visibility_row_ready:
 @light_row_count:
     lda #1
     sec
@@ -495,13 +475,9 @@ _platform_lighting_apply_native:
     lda #>(_platform_base_colors+MAP_WIDTH_CHARS)
     sta @base_bottom_read+2
     lda #<_platform_brightness
-    sta @brightness_top_read+1
+    sta @brightness_read_tile+1
     lda #>_platform_brightness
-    sta @brightness_top_read+2
-    lda #<(_platform_brightness+MAP_WIDTH_CHARS)
-    sta @brightness_bottom_read+1
-    lda #>(_platform_brightness+MAP_WIDTH_CHARS)
-    sta @brightness_bottom_read+2
+    sta @brightness_read_tile+2
     lda #<COLOR_RAM
     sta @color_top_write+1
     lda #>COLOR_RAM
@@ -524,6 +500,14 @@ _platform_lighting_apply_native:
 @view_read:
     lda _platform_view_tiles,x
     beq @write_hidden_tile
+@brightness_read_tile:
+    lda _platform_brightness,x
+    asl
+    asl
+    asl
+    asl
+    sta @top_light+1
+    sta @bottom_light+1
     txa
     pha
     jsr @write_lit_top
@@ -573,19 +557,12 @@ _platform_lighting_apply_native:
     adc #0
     sta @base_bottom_read+2
     clc
-    lda @brightness_top_read+1
-    adc #80
-    sta @brightness_top_read+1
-    lda @brightness_top_read+2
+    lda @brightness_read_tile+1
+    adc #MAP_WIDTH_TILES
+    sta @brightness_read_tile+1
+    lda @brightness_read_tile+2
     adc #0
-    sta @brightness_top_read+2
-    clc
-    lda @brightness_bottom_read+1
-    adc #80
-    sta @brightness_bottom_read+1
-    lda @brightness_bottom_read+2
-    adc #0
-    sta @brightness_bottom_read+2
+    sta @brightness_read_tile+2
     clc
     lda @color_top_write+1
     adc #80
@@ -607,14 +584,7 @@ _platform_lighting_apply_native:
 @write_lit_top:
 @base_top_read:
     lda _platform_base_colors,y
-    sta @top_index+1
-@brightness_top_read:
-    lda _platform_brightness,y
-    asl
-    asl
-    asl
-    asl
-@top_index:
+@top_light:
     ora #0
     tax
     lda _platform_light_colors,x
@@ -625,14 +595,7 @@ _platform_lighting_apply_native:
 @write_lit_bottom:
 @base_bottom_read:
     lda _platform_base_colors+MAP_WIDTH_CHARS,y
-    sta @bottom_index+1
-@brightness_bottom_read:
-    lda _platform_brightness+MAP_WIDTH_CHARS,y
-    asl
-    asl
-    asl
-    asl
-@bottom_index:
+@bottom_light:
     ora #0
     tax
     lda _platform_light_colors,x

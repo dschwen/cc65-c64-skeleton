@@ -145,9 +145,9 @@ extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 extern volatile uint8_t platform_frame_counter;
 extern PlatformStorage platform_storage;
 extern uint8_t platform_storage_device;
-/* Unmodified map/object colors and per-character-cell brightness levels. */
+/* Unmodified character colors and one brightness level per 2x2 tile. */
 extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
-extern uint8_t platform_brightness[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
+extern uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
 extern uint8_t platform_global_light;
 extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
@@ -295,7 +295,7 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
 
 /*
  * Reject a tile hidden by line of sight or beyond the provisional range for
- * its brightest character-cell light level. A rejection writes the reason to
+ * its tile light level. A rejection writes the reason to
  * the bottom pager, so room-specific look hooks must only run after success.
  */
 uint8_t platform_look_tile_check(const PlatformRoom* room,

@@ -25,7 +25,7 @@ C64_ASSET_OUTDIR := $(OUTDIR)/assets
 C64_ROOM_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/,$(ROOM_IDS))
 C64_OBJECT_TYPES := $(C64_ASSET_OUTDIR)/objects.cobj
 ROOM_CFG := cfg/room_overlay.cfg
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES)
+DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
@@ -33,7 +33,7 @@ ASSET_EDITOR_PORT ?= 8000
 CFLAGS := -t $(TARGET) -Oirs --cpu 6502
 LDFLAGS := -C $(CFG)
 
-SOURCES_C := $(wildcard src/*.c)
+SOURCES_C := $(filter-out src/sid.c,$(wildcard src/*.c))
 SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
 ASSETS := assets/charset.cchr assets/tiles.ctil $(C64_ASSET_OUTDIR)/00 $(C64_OBJECT_TYPES)
 OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
@@ -49,18 +49,29 @@ OUT_CRT := $(OUTDIR)/game.crt
 EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
 EF_CFG := cfg/easyflash.cfg
 TEXT_MODULE_OBJ := $(OUTDIR)/text-module.o
+TEXT_SID_OBJ := $(OUTDIR)/text-sid.o
+TEXT_VALIDATOR_OBJ := $(OUTDIR)/text-validator.o
 TEXT_HEADER_OBJ := $(OUTDIR)/text-header.o
 TEXT_RESOLVER_SRC := $(OUTDIR)/text-resolver.s
 TEXT_RESOLVER_OBJ := $(OUTDIR)/text-resolver.o
 TEXT_MODULE_CFG := cfg/text_module.cfg
 TEXT_MODULE_PRG := $(OUTDIR)/text.prg
+INVENTORY_MODULE_C_OBJ := $(OUTDIR)/inventory-module.o
+INVENTORY_MODULE_ASM_OBJ := $(OUTDIR)/inventory-module-asm.o
+INVENTORY_STORY_OBJ := $(OUTDIR)/inventory-story.o
+INVENTORY_HEADER_OBJ := $(OUTDIR)/inventory-header.o
+INVENTORY_RESOLVER_SRC := $(OUTDIR)/inventory-resolver.s
+INVENTORY_RESOLVER_OBJ := $(OUTDIR)/inventory-resolver.o
+INVENTORY_MODULE_CFG := cfg/inventory_overlay.cfg
+INVENTORY_MODULE_RAW := $(OUTDIR)/inventory.raw
+INVENTORY_MODULE := $(OUTDIR)/IV
 DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
 DISK_BOOT_CFG := cfg/disk_boot.cfg
 DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
-all: $(OUT_PRG) $(TEXT_MODULE_PRG)
+all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -92,21 +103,66 @@ $(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
 $(TEXT_MODULE_OBJ): src/text.s src/platform.inc | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
+$(TEXT_SID_OBJ): src/sid.c src/sid.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(TEXT_VALIDATOR_OBJ): modules/inventory_validate_post.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
 $(TEXT_HEADER_OBJ): modules/text_header.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
-$(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) \
+$(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
+		$(TEXT_VALIDATOR_OBJ) \
 		tools/generate_room_resolver.py | $(OUTDIR)
 	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(TEXT_MODULE_OBJ)
+		$(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) $(TEXT_VALIDATOR_OBJ)
 
 $(TEXT_RESOLVER_OBJ): $(TEXT_RESOLVER_SRC)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
-$(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) \
+$(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
+		$(TEXT_VALIDATOR_OBJ) \
 		$(TEXT_RESOLVER_OBJ) $(TEXT_MODULE_CFG)
 	$(LD65) -C $(TEXT_MODULE_CFG) -m $(OUTDIR)/text.map -o $@ \
-		$(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_RESOLVER_OBJ)
+		$(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
+		$(TEXT_VALIDATOR_OBJ) $(TEXT_RESOLVER_OBJ)
+
+$(INVENTORY_MODULE_C_OBJ): modules/inventory.c src/game.h src/platform.h \
+		src/story.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(INVENTORY_MODULE_ASM_OBJ): modules/inventory.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(INVENTORY_STORY_OBJ): story/story.c src/game.h src/platform.h src/story.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(INVENTORY_HEADER_OBJ): modules/inventory_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(INVENTORY_RESOLVER_SRC): $(OUT_PRG) $(INVENTORY_MODULE_C_OBJ) \
+		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
+		$(INVENTORY_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(INVENTORY_MODULE_C_OBJ) $(INVENTORY_MODULE_ASM_OBJ) \
+		$(INVENTORY_STORY_OBJ) $(INVENTORY_HEADER_OBJ)
+
+$(INVENTORY_RESOLVER_OBJ): $(INVENTORY_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(INVENTORY_MODULE_RAW): $(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
+		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
+		$(INVENTORY_RESOLVER_OBJ) $(INVENTORY_MODULE_CFG)
+	$(LD65) -C $(INVENTORY_MODULE_CFG) -m $(OUTDIR)/inventory.map -o $@ \
+		$(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
+		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
+		$(INVENTORY_RESOLVER_OBJ)
+
+$(INVENTORY_MODULE): $(INVENTORY_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/inventory.map --output $@
 
 $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
@@ -145,10 +201,11 @@ $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
 $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
-$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) tools/pack_easyflash.py \
+$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
-		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) --output $@
+		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
+		--inventory $(INVENTORY_MODULE) --output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"
@@ -157,7 +214,7 @@ cartridge: $(OUT_CRT)
 
 d64: $(OUT_D64)
 
-$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(DISK_BOOT_PRG) \
+$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(DISK_BOOT_PRG) \
 		$(DISK_EXTRA_DEPS) | $(OUTDIR)
 	rm -f $@
 	$(C1541) -format "$(DISK_NAME),00" d64 $@

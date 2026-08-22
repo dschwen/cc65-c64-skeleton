@@ -3,6 +3,7 @@
 This is a minimal cc65-based C64 repository skeleton with:
 - A pragmatic guide: `GUIDE_cc65_C64.md`
 - C platform API and binary contracts: `PLATFORM_API.md`
+- Runtime RAM, banking, and sprite ownership: `MEMORY_MAP.md`
 - EasyFlash cartridge notes: `EASYFLASH_CARTRIDGE.md`
 - Minimal VIC/SID helper wrappers
 - A custom linker config starter: `cfg/myc64.cfg`
@@ -23,6 +24,7 @@ make
 Outputs:
 - `build/game.prg`
 - `build/text.prg`
+- `build/IV` (inventory UI and story-specific item-use overlay)
 - `build/game.map`
 - `build/game.lbl`
 
@@ -42,7 +44,8 @@ Output:
   object-type assets
 
 The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
-address, loads `TEXT` at `$B880`, and then enters cc65 startup at `$080D`.
+address, loads the helper/text module `TEXT` at `$B80D`, and then enters cc65
+startup at `$080D`. The `IV` overlay is loaded on demand when inventory opens.
 
 Build an EasyFlash cartridge image:
 ```bash
@@ -53,6 +56,7 @@ See `EASYFLASH_CARTRIDGE.md` for the boot process, linker layout, CRT format,
 validation steps, multi-bank expansion guidance, and flash-save constraints.
 See `ROOM_CODE_API.md` for per-room C handlers, `GameState`, and the room-code
 ABI.
+See `STORY_CODE_API.md` for map Use hooks and global inventory-item behavior.
 
 Output:
 - `build/game.crt`

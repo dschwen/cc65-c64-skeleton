@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve room-overlay imports against the resident game's VICE labels."""
+"""Resolve independently linked module imports against resident VICE labels."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def main() -> None:
     unresolved = sorted(imported - exported)
     missing = [name for name in unresolved if name not in resident]
     if missing:
-        raise SystemExit("room overlay imports unavailable in resident game: " +
+        raise SystemExit("module imports unavailable in resident game: " +
                          ", ".join(missing))
 
     lines = ["; Generated from build/game.lbl. Do not edit.", ".setcpu \"6502\"", ""]

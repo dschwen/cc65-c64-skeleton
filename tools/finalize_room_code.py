@@ -15,7 +15,7 @@ SEGMENT = re.compile(
 BASE = 0x9900
 MAX_BYTES = 0x0400
 HEADER_BYTES = 24
-ABI_VERSION = 3
+ABI_VERSION = 4
 
 
 def main() -> None:
@@ -30,7 +30,7 @@ def main() -> None:
     if len(data) < HEADER_BYTES or len(data) > MAX_BYTES:
         raise SystemExit(f"room code size {len(data)} is outside {HEADER_BYTES}..{MAX_BYTES}")
     if (data[:1] != b"\x4c" or data[3:4] != b"\x4c" or
-            data[6:7] != b"\x4c" or
+            data[6:7] != b"\x4c" or data[21:22] != b"\x4c" or
             data[9:13] != bytes((0x52, 0x43, ABI_VERSION, args.room))):
         raise SystemExit("invalid room overlay header")
 

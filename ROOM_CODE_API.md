@@ -19,6 +19,7 @@ Every `rooms/XX.c` includes `game.h` and defines exactly these functions:
 void enter_room(void);
 void enter_tile(void);
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
+uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y);
 ```
 
 `enter_room()` runs once after the destination room data and code are active,
@@ -38,6 +39,13 @@ checks line of sight and usable light range before calling this hook, so a room
 description cannot reveal a hidden or insufficiently lit tile. Return
 `GAME_LOOK_HANDLED` after producing room-specific output, or
 `GAME_LOOK_DEFAULT` to let `platform_look_tile()` list intersecting objects.
+
+`use_at()` receives the tile selected by the adjacent-tile Use cursor after
+the same visibility/light check used by Take. Return `GAME_USE_HANDLED` after
+performing the complete room-specific action, or `GAME_USE_DEFAULT` to make
+the resident command print `Nothing happens.`. Door, lever, container, and
+terrain interactions belong here; generic inventory-item use belongs in
+`story/story.c` instead.
 
 Example:
 
@@ -64,6 +72,14 @@ uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
         return GAME_LOOK_HANDLED;
     }
     return GAME_LOOK_DEFAULT;
+}
+
+uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
+    if (tile_x == 7u && tile_y == 3u) {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "The door opens.", 1u);
+        return GAME_USE_HANDLED;
+    }
+    return GAME_USE_DEFAULT;
 }
 ```
 
@@ -176,8 +192,10 @@ failure restores both the object and inventory before returning an error.
 `game_take_tile()` finds non-actor objects by their rendered intersection with
 the selected tile rather than by hotspot alone. With multiple matches it runs
 the resident object selector before delegating to `game_take_object()`.
-`game_inventory_show()` blanks the VIC while preparing a 40x25 text screen,
-lists all 32 inventory slots in two columns, waits for a fresh keypress, then
+`game_inventory_show()` loads the inventory/story overlay, blanks the VIC while
+preparing a 40x25 text screen, and lists all 32 inventory slots in two columns.
+Cursor keys move the selection marker, `U` dispatches the selected slot to
+`story_use_inventory()`, and `I` closes the screen. The resident wrapper then
 restores the charset split and redraws the current room.
 
 All public platform APIs in `platform.h` are also callable when the generated
@@ -210,19 +228,19 @@ first 24 file bytes are:
 | 3 | `JMP look_at` |
 | 6 | `JMP enter_room` |
 | 9 | `RC` magic |
-| 11 | ABI version, currently 3 |
+| 11 | ABI version, currently 4 |
 | 12 | room ID |
 | 13 | loaded file size, little-endian |
 | 15 | BSS offset from `$9900` |
 | 17 | BSS size |
 | 19 | 16-bit sum of bytes 24 through end |
-| 21 | three reserved bytes |
+| 21 | `JMP use_at` |
 
 `tools/finalize_room_code.py` patches and validates this header. Resident calls
-go through the three jump vectors, so adding private functions does not change
-the ABI. ABI 3 added `enter_room`; ABI 2 changed `look_at` from one cardinal
-direction byte to the two tile-coordinate bytes documented above. The loader
-rejects older room code.
+go through the four jump vectors, so adding private functions does not change
+the ABI. ABI 4 added `use_at`; ABI 3 added `enter_room`; ABI 2 changed
+`look_at` from one cardinal direction byte to the two tile-coordinate bytes
+documented above. The loader rejects older room code.
 
 Disk loading uses KERNAL I/O with BASIC hidden (`$01 = $36`), staging the file
 at `$A4E9`. EasyFlash uses a small assembly copier while 16 KiB ROM is visible;
@@ -236,7 +254,7 @@ activates the overlay before the normal room draw rebuilds those buffers.
 ## Adding a room
 
 1. Create/export `assets/XX` in Room mode.
-2. Copy `rooms/template.c` to `rooms/XX.c` and implement the three handlers.
+2. Copy `rooms/template.c` to `rooms/XX.c` and implement the four handlers.
 3. Run `make d64 cartridge`.
 4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
    cannot be resolved.

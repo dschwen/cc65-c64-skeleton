@@ -13,10 +13,10 @@ SCREEN_RIGHT = $0400 + 2 * 40 + 21
 TYPE_NAME    = 2
 TYPE_NAME_LENGTH = 14
 
-.segment "UPPERCODE"
+.segment "CODE"
 
-; Draw one inventory entry. The C caller supplies a compact list index, type,
-; and quantity in resident globals to avoid cc65's multi-argument stack cost.
+; Draw one compact inventory entry. Columns zero and twenty are deliberately
+; left free for the selection cursor drawn by inventory.c.
 _game_inventory_draw_item_native:
     lda _game_inventory_draw_index
     cmp #16
@@ -35,7 +35,6 @@ _game_inventory_draw_item_native:
 @set_high:
     sta inventory_put+2
 
-    ; Advance the destination by 40 bytes per displayed row.
     txa
     beq @write_quantity
 @advance_row:
@@ -60,7 +59,7 @@ _game_inventory_draw_item_native:
     bne @hundreds
 @hundreds_done:
     pha
-    ldy #0                    ; nonzero once a leading digit was emitted
+    ldy #0
     cpx #0
     beq @skip_hundreds
     txa
@@ -106,7 +105,6 @@ _game_inventory_draw_item_native:
 @name:
     lda (ptr1),y
     beq @done
-    ; Build-prepared names are PETSCII. Convert letters to screen codes.
     cmp #$41
     bcc @put_name
     cmp #$5b

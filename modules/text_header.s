@@ -1,4 +1,4 @@
 .setcpu "6502"
 
 .segment "LOADADDR"
-.word $b880
+.word $b80d

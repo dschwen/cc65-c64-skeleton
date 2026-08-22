@@ -6,6 +6,9 @@ rendering, minimal object movement redraws, room-transition detection, bottom
 status text, lighting/visibility, and a sprite tile cursor without dynamic
 allocation.
 
+See `MEMORY_MAP.md` for the complete CPU-layer map, current linker occupancy,
+RAM beneath BASIC/I/O/KERNAL, and portrait-sprite allocation.
+
 ## Coordinate systems
 
 The platform uses three related coordinate systems:
@@ -40,15 +43,16 @@ room-transition logic even when a graphic extends in several directions.
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots; look cursor uses slot 0 |
 | `$3C00-$7FFF` | platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room RAM |
-| `$84E9-$85FF` | fixed `GameState` region |
+| `$84E9-$855C` | fixed `GameState` |
+| `$855D-$85FF` | compact native resident helpers |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
-| `$A4E9-$B4D8` | rebuildable render/lighting work RAM and room-code staging |
-| `$B500-$B87F` | ordinary resident BSS |
-| `$B880-$B9FF` | independently loaded bottom-text pager |
+| `$A4E9-$B4D8` | rebuildable work RAM; inventory/story overlay while active |
+| `$B500-$B80C` | ordinary resident BSS |
+| `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | cc65 software stack |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records |
@@ -455,6 +459,7 @@ It returns zero when no event is available. Cursor-key values are exposed as:
 | Look | `PLATFORM_KEY_LOOK` | 76 (`L`) |
 | Select | `PLATFORM_KEY_ENTER` | 13 (Return) |
 | Take | `PLATFORM_KEY_TAKE` | 84 (`T`) |
+| Use | `PLATFORM_KEY_USE` | 85 (`U`) |
 | Inventory | `PLATFORM_KEY_INVENTORY` | 73 (`I`) |
 
 `platform_player_step()` proposes a signed half-tile delta. An in-room
@@ -466,6 +471,12 @@ dimensions of the player graphic do not expand the collision footprint.
 The demo becomes interactive immediately after drawing the first room. Cursor
 events normally move the player by one half-tile. While look mode is active,
 the same keys move the tile cursor and Return selects its tile.
+
+Take and map Use share a cursor constrained to the player's surrounding 3x3
+tile area. Take selects intersecting non-actor objects; Use dispatches the
+selected coordinates to the active room's `use_at()` hook. Inventory uses a
+full-screen text overlay: cursor keys select a carried stack, `U` calls the
+global `story_use_inventory()` hook, and `I` returns to the map.
 
 ```c
 for (;;) {
@@ -563,7 +574,7 @@ and split words longer than 40 characters. When output needs a third line, the
 pager waits for a fresh press and release, moves the lower line to the upper
 line, clears the lower line, and continues. Explicit carriage returns and line
 feeds also advance through the same pager. The implementation is an assembly
-module loaded independently at `$B880`.
+module whose helper block loads at `$B80D`; the pager entry remains `$B880`.
 
 The lower-level `platform_text_write_line()` and
 `platform_text_write_room_line()` calls remain available for fixed-position UI

@@ -181,7 +181,7 @@ _raster_irq_suspend:
     plp
     rts
 
-.segment "HIGHCODE"
+.segment "STATEEXT"
 _raster_irq_resume:
     php
     sei

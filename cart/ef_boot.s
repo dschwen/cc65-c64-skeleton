@@ -155,9 +155,9 @@ bank1_stage:
     sta COPY_SRC
     lda #>text_module
     sta COPY_SRC+1
-    lda #<$b880
+    lda #<$b80d
     sta COPY_DST
-    lda #>$b880
+    lda #>$b80d
     sta COPY_DST+1
     lda #<TEXT_MODULE_SIZE
     sta COPY_LEN
@@ -271,7 +271,7 @@ TEXT_MODULE_SIZE = text_module_end - text_module
 .assert PAYLOAD1_SIZE = PAYLOAD1_BYTES, error, "second payload bank is incomplete"
 .assert PAYLOAD2_SIZE > 0, error, "third payload bank is empty"
 .assert prg_payload2_end <= $c000, error, "PRG payload exceeds three banks"
-.assert TEXT_MODULE_SIZE <= $0180, error, "text module exceeds reserved RAM"
+.assert TEXT_MODULE_SIZE <= $01f3, error, "resident helper module exceeds reserved RAM"
 
 .segment "VECTORS"
     .word cold_start        ; NMI at $FFFA in Ultimax mode

@@ -268,6 +268,9 @@ cc65-c64-skeleton/
 
 The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 
+`MEMORY_MAP.md` is the authoritative detailed allocation, including actual
+linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
+
 | Address range | Use |
 |---|---|
 | `$0400-$07E7` | 40x25 screen matrix |
@@ -278,15 +281,16 @@ The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
 | `$3A00-$3BFF` | eight runtime sprite bitmap slots; sprite 0 is the Look cursor |
 | `$3C00-$7FFF` | resident platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room |
-| `$84E9-$85FF` | fixed resident `GameState` region |
+| `$84E9-$855C` | fixed resident `GameState` |
+| `$855D-$85FF` | compact native resident helpers |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-specific code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
-| `$A4E9-$B4D8` | rebuildable rendering/lighting work RAM and code staging |
-| `$B500-$B87F` | ordinary platform BSS |
-| `$B880-$B9FF` | independently loaded bottom-text pager |
+| `$A4E9-$B4D8` | rebuildable work RAM; inventory/story overlay while active |
+| `$B500-$B80C` | ordinary platform BSS |
+| `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | cc65 software stack |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
@@ -327,15 +331,15 @@ RAM are unavailable in that mapping.
 EasyFlash banks 0-2, and creates `build/game.crt` with VICE `cartconv`. The cartridge has
 both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
 six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
-KERNAL, copies the PRG to its linked RAM layout, copies the text pager from the
-unused tail of executable bank 2 to `$B880`, and disables the cartridge before
+KERNAL, copies the PRG to its linked RAM layout, copies the helper/text module
+from the unused tail of executable bank 2 to `$B80D`, and disables the cartridge before
 entering the cc65 startup at `$080D`.
 
 ### Split disk load
 
 The linker does not pad the resident PRG across the runtime gap from `$9900` to
-`$B880`. `build/game.prg` ends with its last resident byte near `$9900`, while
-`build/text.prg` is a normal fixed-address PRG with a `$B880` load header.
+`$B80D`. `build/game.prg` ends with its last resident byte near `$9900`, while
+`build/text.prg` is a normal fixed-address PRG with a `$B80D` load header.
 `build/disk-boot.prg` is stored first on the D64 as `GAME`; it relocates its
 81-byte loader body to `$0200`, loads `ENGINE`, loads `TEXT`, and jumps to the
 resident cc65 entry point. This saves roughly 8 KiB of disk transfer on every
@@ -361,8 +365,8 @@ code is loaded at `$8600`; game/main and the shared room API occupy
 `$9900-$9CFF`, and the current-room pristine object baseline occupies
 `$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
 Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at
-`$B500-$B87F` and `$BA00-$BBFF`; the bottom-text pager occupies
-`$B880-$B9FF`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
+`$B500-$B80C` and `$BA00-$BBFF`; independently loaded helpers and the
+bottom-text pager occupy `$B80D-$B9FF`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
 visible while leaving BASIC hidden and these regions readable.
 
 `WORKBSS` uses `$A4E9-$B4D8` for base colors, brightness/visibility buffers,

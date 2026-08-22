@@ -14,14 +14,19 @@ FIRST_ROOM_BANK = 3
 ROOM_BANKS = 43
 TYPE_BANK_0 = 46
 TYPE_BANK_1 = 47
-OUTPUT_BANKS = 48
+INVENTORY_BANK = 48
+OUTPUT_BANKS = 49
 ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
-ROOM_CODE_ABI = 3
+ROOM_CODE_ABI = 4
 ROOM_CODE_DIRECTORY_BANK = 3
 ROOM_CODE_DIRECTORY_BYTES = 0x800
 ROOM_CODE_FIRST_BANK = 3
 ROOM_CODE_LAST_BANK = TYPE_BANK_1
+INVENTORY_LOAD_ADDRESS = 0xA4E9
+INVENTORY_HEADER_BYTES = 16
+INVENTORY_MAX_BYTES = 0x0FF0
+INVENTORY_ABI = 1
 
 
 def load_room(asset_dir: Path, room_id: int) -> bytes:
@@ -44,6 +49,7 @@ def load_room_code(code_dir: Path, room_id: int) -> bytes | None:
     if not ROOM_CODE_HEADER_BYTES <= len(data) <= ROOM_CODE_MAX_BYTES:
         raise ValueError(f"{path}: invalid room-code size {len(data)}")
     if (data[0] != 0x4C or data[3] != 0x4C or data[6] != 0x4C or
+            data[21] != 0x4C or
             data[9:13] != bytes((0x52, 0x43, ROOM_CODE_ABI, room_id))):
         raise ValueError(f"{path}: invalid room-code header")
     if int.from_bytes(data[13:15], "little") != len(data):
@@ -83,8 +89,25 @@ def pack_room_code(image: bytearray, code_dir: Path, asset_dir: Path) -> None:
     image[start:start + ROOM_CODE_DIRECTORY_BYTES] = directory
 
 
+def load_inventory(path: Path) -> bytes:
+    raw = path.read_bytes()
+    if len(raw) < 2 or int.from_bytes(raw[:2], "little") != INVENTORY_LOAD_ADDRESS:
+        raise ValueError(f"{path}: invalid inventory load address")
+    data = raw[2:]
+    if not INVENTORY_HEADER_BYTES <= len(data) <= INVENTORY_MAX_BYTES:
+        raise ValueError(f"{path}: invalid inventory size {len(data)}")
+    if (data[0] != 0x4C or
+            data[3:6] != bytes((0x49, 0x55, INVENTORY_ABI)) or
+            int.from_bytes(data[6:8], "little") != len(data)):
+        raise ValueError(f"{path}: invalid inventory header")
+    checksum = sum(data[INVENTORY_HEADER_BYTES:]) & 0xFFFF
+    if checksum != int.from_bytes(data[12:14], "little"):
+        raise ValueError(f"{path}: invalid inventory checksum")
+    return data
+
+
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
-                code_dir: Path) -> bytes:
+                code_dir: Path, inventory: Path) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -104,6 +127,9 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     start = TYPE_BANK_1 * BANK_BYTES
     image[start : start + ROML_BYTES] = types[ROML_BYTES:]
     pack_room_code(image, code_dir, asset_dir)
+    inventory_data = load_inventory(inventory)
+    start = INVENTORY_BANK * BANK_BYTES + ROML_BYTES
+    image[start:start + len(inventory_data)] = inventory_data
     return bytes(image)
 
 
@@ -113,11 +139,12 @@ def main() -> None:
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--objects", type=Path, required=True)
     parser.add_argument("--room-code", type=Path, required=True)
+    parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
-                    args.room_code)
+                    args.room_code, args.inventory)
     )
 
 

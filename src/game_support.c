@@ -1,33 +1,12 @@
-#include <string.h>
-
 #include "game.h"
 #include "world.h"
 
 #pragma code-name ("UPPERCODE")
 #pragma rodata-name ("UPPERRODATA")
 
-#define GAME_SCREEN_RAM ((uint8_t*)0x0400)
-#define GAME_COLOR_RAM  ((uint8_t*)0xd800)
-#define GAME_VIC_CTRL1  (*(volatile uint8_t*)0xd011)
-
-uint8_t game_inventory_draw_index;
-uint8_t game_inventory_draw_type;
-uint8_t game_inventory_draw_quantity;
-void game_inventory_draw_item_native(void);
-void raster_irq_suspend(void);
-void raster_irq_resume(void);
 void __fastcall__ platform_text_output_native(const char* text);
 uint8_t platform_text_output_color;
 uint8_t platform_text_output_line;
-
-#pragma rodata-name (push, "HIGHRODATA")
-static const uint8_t inventory_title[9] = {
-    73u, 14u, 22u, 5u, 14u, 20u, 15u, 18u, 25u
-};
-static const uint8_t inventory_empty[7] = {
-    40u, 5u, 13u, 16u, 20u, 25u, 41u
-};
-#pragma rodata-name (pop)
 
 static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
                                 uint8_t wanted, uint8_t* found_slot) {
@@ -106,54 +85,6 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
         game_text_write(PLATFORM_TEXT_LINE_TOP, "You cannot take that.", 1u);
     }
     return result;
-}
-
-void game_inventory_show(void) {
-    uint8_t i;
-    uint8_t shown;
-    uint8_t key;
-
-    platform_look_cursor_hide();
-    GAME_VIC_CTRL1 &= 0xefu;
-    platform_text_screen_enter();
-    memset(GAME_SCREEN_RAM, platform_text_screen_code(' '), 1000u);
-    memset(GAME_COLOR_RAM, 1u, 1000u);
-    memcpy(GAME_SCREEN_RAM + 15u, inventory_title, sizeof(inventory_title));
-    shown = 0u;
-    for (i = 0u; i < GAME_INVENTORY_SLOTS; ++i) {
-        if (game_state.inventory[i].type == 0u) continue;
-        game_inventory_draw_index = shown;
-        game_inventory_draw_type = game_state.inventory[i].type;
-        game_inventory_draw_quantity = game_state.inventory[i].quantity;
-        game_inventory_draw_item_native();
-        ++shown;
-    }
-    if (shown == 0u) {
-        memcpy(GAME_SCREEN_RAM + 81u, inventory_empty, sizeof(inventory_empty));
-    }
-    GAME_VIC_CTRL1 |= 0x10u;
-
-    do {
-        platform_wait_frame();
-        key = platform_input_poll();
-    } while (key != 0u);
-    do {
-        platform_wait_frame();
-        key = platform_input_poll();
-    } while (key == 0u);
-    do {
-        platform_wait_frame();
-        key = platform_input_poll();
-    } while (key != 0u);
-
-    GAME_VIC_CTRL1 &= 0xefu;
-    memset(GAME_SCREEN_RAM, platform_text_screen_code(' '), 1000u);
-    memset(GAME_COLOR_RAM, 0u, 1000u);
-    raster_irq_suspend();
-    platform_text_screen_leave();
-    platform_room_draw(&platform_room, platform_player);
-    raster_irq_resume();
-    GAME_VIC_CTRL1 |= 0x10u;
 }
 
 uint8_t game_inventory_count(uint8_t type) {

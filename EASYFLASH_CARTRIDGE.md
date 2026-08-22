@@ -234,9 +234,9 @@ The base linker output is ordered exactly as one EasyFlash bank expects:
 8 KiB bank 0 ROML, bank 0 ROMH, bank 1 ROML, then bank 1 ROMH
 ```
 
-VICE 3.9 `cartconv` rejects a 32 KiB EasyFlash input by default because a
+VICE 3.9 `cartconv` rejects a partial EasyFlash input by default because a
 fully padded raw EasyFlash image would be 1 MiB. The build uses `-p` to accept
-the non-padded 47-bank prefix; `cartconv` omits erased CHIP packets:
+the non-padded 49-bank prefix; `cartconv` omits erased CHIP packets:
 
 ```bash
 cartconv -p -t easy -i build/game-ef.bin -o build/game.crt -n GAME
@@ -405,6 +405,14 @@ copies the selected `CXX` overlay to staging without touching the C stack or
 BSS, both of which ROMH temporarily hides. ROML room and object-type assets use
 the same native copier with an `$8000` source base. See `ROOM_CODE_API.md`.
 
+The inventory UI and global story-specific item-use code form another
+independently linked overlay. `tools/pack_easyflash.py` puts its loadable bytes
+at bank 48 ROMH offset zero. Pressing `I` copies and validates that overlay at
+`$A4E9`; its execution temporarily replaces rebuildable render/lighting work
+RAM. On return, resident code restores the charset split and redraws the room.
+The disk build performs the same operation from the `IV` PRG. See
+`STORY_CODE_API.md` for the callable contract and restrictions.
+
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
 bank-switch routine and its copy loop must therefore execute from stable RAM.
@@ -485,11 +493,12 @@ position, then reenables the raster source.
 The IRQ itself also treats late entry on lines 1-225 as a missed top event and
 lines 227-311 as a bottom event, rather than waiting almost a complete frame.
 
-The executable image also contains the independently linked bottom-text pager
-after the main payload in bank 2. The RAM-resident bootstrap copies it to
-`$B880-$B9FF` before disabling EasyFlash. Disk builds load the same
-`build/text.prg` as a second file, so neither format requires zero padding from
-the end of resident code to `$B880`.
+The executable image also contains an independently linked resident helper and
+bottom-text module after the main payload in bank 2. The RAM-resident bootstrap
+copies it to `$B80D-$B9FC` before disabling EasyFlash; the pager's fixed entry
+remains `$B880`. Disk builds load the same `build/text.prg` as a second file,
+so neither format requires zero padding from the end of resident code to
+`$B80D`.
 
 VICE can persist EasyFlash modifications back into the attached CRT on exit.
 Do not leave an emulator attached to `build/game.crt` while rebuilding it: a

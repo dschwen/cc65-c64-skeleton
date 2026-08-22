@@ -94,7 +94,7 @@ int main(void) {
             }
             continue;
         }
-        if (command == PLATFORM_KEY_TAKE) {
+        if (command == PLATFORM_KEY_TAKE || command == PLATFORM_KEY_USE) {
             platform_look_cursor_tick();
             switch (key) {
                 case PLATFORM_KEY_CURSOR_UP:
@@ -124,17 +124,23 @@ int main(void) {
                 case PLATFORM_KEY_ENTER:
                     if (platform_look_tile_check(&platform_room, platform_player,
                                                  look_x, look_y, 1u) == PLATFORM_OK) {
-                        (void)game_take_tile(look_x, look_y);
+                        if (command == PLATFORM_KEY_TAKE) {
+                            (void)game_take_tile(look_x, look_y);
+                        } else if (game_use_at(look_x, look_y) == GAME_USE_DEFAULT) {
+                            game_text_write(PLATFORM_TEXT_LINE_TOP,
+                                            "Nothing happens.", 1u);
+                        }
                     }
                     platform_look_cursor_hide();
                     command = 0u;
                     break;
-                case PLATFORM_KEY_TAKE:
-                    platform_look_cursor_hide();
-                    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
-                    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-                    command = 0u;
-                    break;
+                default:
+                    if (key == command) {
+                        platform_look_cursor_hide();
+                        platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+                        platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+                        command = 0u;
+                    }
             }
             continue;
         }
@@ -172,6 +178,7 @@ int main(void) {
                 command = PLATFORM_KEY_LOOK;
                 break;
             case PLATFORM_KEY_TAKE:
+            case PLATFORM_KEY_USE:
                 look_x = platform_player->x >> 1;
                 look_y = platform_player->y >> 1;
                 cursor_min_x = look_x == 0u ? 0u : look_x - 1u;
@@ -180,9 +187,11 @@ int main(void) {
                 cursor_min_y = look_y == 0u ? 0u : look_y - 1u;
                 cursor_max_y = look_y + 1u < PLATFORM_MAP_HEIGHT
                                    ? look_y + 1u : look_y;
-                game_text_write(PLATFORM_TEXT_LINE_TOP, "Taking...", 1u);
+                game_text_write(PLATFORM_TEXT_LINE_TOP,
+                                key == PLATFORM_KEY_TAKE ? "Taking..." : "Using...",
+                                1u);
                 (void)platform_look_cursor_show(look_x, look_y);
-                command = PLATFORM_KEY_TAKE;
+                command = key;
                 break;
             case PLATFORM_KEY_INVENTORY:
                 game_inventory_show();

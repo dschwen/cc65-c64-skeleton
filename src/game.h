@@ -10,6 +10,8 @@
 
 #define GAME_LOOK_DEFAULT    0u
 #define GAME_LOOK_HANDLED    1u
+#define GAME_USE_DEFAULT     0u
+#define GAME_USE_HANDLED     1u
 
 #define GAME_ENTRY_STARTUP    0u
 #define GAME_ENTRY_MOVEMENT   1u
@@ -60,6 +62,7 @@ uint8_t game_process_pending_transition(void);
 void game_enter_room(void);
 void game_enter_tile(void);
 uint8_t __fastcall__ game_look_at(uint8_t tile_x, uint8_t tile_y);
+uint8_t __fastcall__ game_use_at(uint8_t tile_x, uint8_t tile_y);
 uint8_t game_room_code_prepare(uint8_t room_id);
 void game_room_code_activate(void);
 uint8_t game_room_code_load_current(void);
@@ -94,5 +97,6 @@ void game_inventory_show(void);
 void enter_room(void);
 void enter_tile(void);
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
+uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y);
 
 #endif

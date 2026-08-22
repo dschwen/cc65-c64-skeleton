@@ -8,7 +8,7 @@
 #define ROOM_CODE_STAGE            ((uint8_t*)0xa4e9)
 #define ROOM_CODE_MAX_BYTES        0x0400u
 #define ROOM_CODE_HEADER_BYTES     24u
-#define ROOM_CODE_ABI              3u
+#define ROOM_CODE_ABI              4u
 #define ROOM_CODE_DIRECTORY_BANK   3u
 #define ROOM_CODE_DIRECTORY_ENTRY  8u
 #define ROOM_CODE_LFN              3u
@@ -52,6 +52,7 @@ static uint8_t validate_room_code(uint8_t room_id, uint16_t expected_size,
     uint16_t enter_address;
     uint16_t look_address;
     uint16_t room_address;
+    uint16_t use_address;
     uint16_t checksum;
     uint16_t i;
 
@@ -61,17 +62,21 @@ static uint8_t validate_room_code(uint8_t room_id, uint16_t expected_size,
         ROOM_CODE_STAGE[6] != 0x4cu ||
         ROOM_CODE_STAGE[9] != 0x52u || ROOM_CODE_STAGE[10] != 0x43u ||
         ROOM_CODE_STAGE[11] != ROOM_CODE_ABI || ROOM_CODE_STAGE[12] != room_id ||
+        ROOM_CODE_STAGE[21] != 0x4cu ||
         header_word(13u) != expected_size) return PLATFORM_ERR_FORMAT;
 
     enter_address = header_word(1u);
     look_address = header_word(4u);
     room_address = header_word(7u);
+    use_address = header_word(22u);
     if (enter_address < ROOM_CODE_BASE ||
         enter_address >= ROOM_CODE_BASE + expected_size ||
         look_address < ROOM_CODE_BASE ||
         look_address >= ROOM_CODE_BASE + expected_size ||
         room_address < ROOM_CODE_BASE ||
-        room_address >= ROOM_CODE_BASE + expected_size) {
+        room_address >= ROOM_CODE_BASE + expected_size ||
+        use_address < ROOM_CODE_BASE ||
+        use_address >= ROOM_CODE_BASE + expected_size) {
         return PLATFORM_ERR_FORMAT;
     }
     room_code_bss_offset = header_word(15u);

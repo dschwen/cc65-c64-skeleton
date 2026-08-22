@@ -41,6 +41,7 @@
 #define PLATFORM_KEY_LIGHTNING        70u
 #define PLATFORM_KEY_LOOK             76u
 #define PLATFORM_KEY_TAKE             84u
+#define PLATFORM_KEY_USE              85u
 #define PLATFORM_KEY_INVENTORY        73u
 #define PLATFORM_KEY_ENTER            13u
 

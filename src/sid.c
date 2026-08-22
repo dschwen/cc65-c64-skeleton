@@ -1,6 +1,6 @@
 #include "sid.h"
 
-#pragma code-name (push, "HIGHCODE")
+#pragma code-name (push, "PRETEXT")
 
 void sid_set_volume(uint8_t vol0_15) {
     /* Keep only low 4 bits; leave filter bits at 0 */

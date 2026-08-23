@@ -21,8 +21,16 @@
   const OBJECT_TYPE_COUNT = 256;
   const OBJECT_TYPE_BYTES = 64;
   const OBJECT_TYPE_FILE_BYTES = OBJECT_TYPE_COUNT * OBJECT_TYPE_BYTES;
+  const PORTRAIT_SPRITE_WIDTH = 24;
+  const PORTRAIT_SPRITE_HEIGHT = 21;
+  const PORTRAIT_SPRITE_ROW_BYTES = 3;
+  const PORTRAIT_SPRITE_BYTES = 64;
+  const PORTRAIT_WIDTH = PORTRAIT_SPRITE_WIDTH * 2;
+  const PORTRAIT_HEIGHT = PORTRAIT_SPRITE_HEIGHT * 2;
+  const PORTRAIT_FILE_BYTES = 4 * PORTRAIT_SPRITE_BYTES;
+  const PORTRAIT_SCALE = 8;
   const STORAGE_KEY = "c64-asset-editor-state-v1";
-  const STORAGE_VERSION = 5;
+  const STORAGE_VERSION = 6;
 
   const C64_COLORS = [
     "#000000", "#ffffff", "#813338", "#75cec8",
@@ -92,6 +100,18 @@
       width: 16,
       height: 12,
       data: new Uint8Array(16 * 12)
+    },
+    portrait: {
+      id: 0,
+      data: new Uint8Array(PORTRAIT_FILE_BYTES)
+    },
+    portraitUnderlay: {
+      image: null,
+      visible: false,
+      offsetX: 0,
+      offsetY: 0,
+      scale: 1,
+      opacity: 0.5
     }
   };
 
@@ -100,19 +120,22 @@
       char: document.getElementById("mode-char"),
       tile: document.getElementById("mode-tile"),
       object: document.getElementById("mode-object"),
-      room: document.getElementById("mode-room")
+      room: document.getElementById("mode-room"),
+      portrait: document.getElementById("mode-portrait")
     },
     modePanels: {
       char: document.getElementById("char-mode"),
       tile: document.getElementById("tile-mode"),
       object: document.getElementById("object-mode"),
-      room: document.getElementById("room-mode")
+      room: document.getElementById("room-mode"),
+      portrait: document.getElementById("portrait-mode")
     },
     sidePanels: {
       char: document.getElementById("side-char"),
       tile: document.getElementById("side-tile"),
       object: document.getElementById("side-object"),
-      room: document.getElementById("side-room")
+      room: document.getElementById("side-room"),
+      portrait: document.getElementById("side-portrait")
     },
     charsetActiveBank: document.getElementById("charset-active-bank"),
     charsetImportBank: document.getElementById("charset-import-bank"),
@@ -209,35 +232,59 @@
     tilesFile: document.getElementById("tiles-file"),
     mapFile: document.getElementById("map-file"),
     objectTypesFile: document.getElementById("object-types-file"),
+
+    portraitCanvas: document.getElementById("portrait-canvas"),
+    portraitId: document.getElementById("portrait-id"),
+    portraitClear: document.getElementById("portrait-clear"),
+    selectedPortraitId: document.getElementById("selected-portrait-id"),
+    exportPortrait: document.getElementById("export-portrait"),
+    importPortrait: document.getElementById("import-portrait"),
+    importPortraitPng: document.getElementById("import-portrait-png"),
+    portraitFile: document.getElementById("portrait-file"),
+    portraitPngFile: document.getElementById("portrait-png-file"),
+    portraitUnderlayVisible: document.getElementById("portrait-underlay-visible"),
+    portraitUnderlayLoad: document.getElementById("portrait-underlay-load"),
+    portraitUnderlayClear: document.getElementById("portrait-underlay-clear"),
+    portraitUnderlayFile: document.getElementById("portrait-underlay-file"),
+    portraitUnderlayX: document.getElementById("portrait-underlay-x"),
+    portraitUnderlayY: document.getElementById("portrait-underlay-y"),
+    portraitUnderlayScale: document.getElementById("portrait-underlay-scale"),
+    portraitUnderlayOpacity: document.getElementById("portrait-underlay-opacity"),
+
     assetServerStatus: document.getElementById("asset-server-status"),
     assetFileLists: {
       charset: document.getElementById("asset-file-list-charset"),
       tiles: document.getElementById("asset-file-list-tiles"),
       map: document.getElementById("asset-file-list-map"),
-      objecttypes: document.getElementById("asset-file-list-objecttypes")
+      objecttypes: document.getElementById("asset-file-list-objecttypes"),
+      portrait: document.getElementById("asset-file-list-portrait")
     },
     assetRefreshButtons: {
       charset: document.getElementById("asset-refresh-charset"),
       tiles: document.getElementById("asset-refresh-tiles"),
       map: document.getElementById("asset-refresh-map"),
-      objecttypes: document.getElementById("asset-refresh-objecttypes")
+      objecttypes: document.getElementById("asset-refresh-objecttypes"),
+      portrait: document.getElementById("asset-refresh-portrait")
     },
     assetOpenButtons: {
       charset: document.getElementById("asset-open-charset"),
       tiles: document.getElementById("asset-open-tiles"),
       map: document.getElementById("asset-open-map"),
-      objecttypes: document.getElementById("asset-open-objecttypes")
+      objecttypes: document.getElementById("asset-open-objecttypes"),
+      portrait: document.getElementById("asset-open-portrait")
     },
     assetSavePaths: {
       charset: document.getElementById("asset-save-path-charset"),
       tiles: document.getElementById("asset-save-path-tiles"),
       map: document.getElementById("asset-save-path-map"),
-      objecttypes: document.getElementById("asset-save-path-objecttypes")
+      objecttypes: document.getElementById("asset-save-path-objecttypes"),
+      portrait: document.getElementById("asset-save-path-portrait")
     },
     assetSaveChars: document.getElementById("asset-save-chars"),
     assetSaveTiles: document.getElementById("asset-save-tiles"),
     assetSaveMap: document.getElementById("asset-save-map"),
-    assetSaveObjectTypes: document.getElementById("asset-save-objecttypes")
+    assetSaveObjectTypes: document.getElementById("asset-save-objecttypes"),
+    assetSavePortrait: document.getElementById("asset-save-portrait")
   };
 
   const ctx = {
@@ -247,7 +294,8 @@
     tilePicker: ui.tilePicker.getContext("2d"),
     trial: ui.trialCanvas.getContext("2d"),
     test: ui.testCanvas.getContext("2d"),
-    map: ui.mapCanvas.getContext("2d")
+    map: ui.mapCanvas.getContext("2d"),
+    portrait: ui.portraitCanvas.getContext("2d")
   };
   const tileAtlases = new Map();
   let persistTimer = null;
@@ -332,6 +380,10 @@
           width: state.test.width,
           height: state.test.height,
           data: Array.from(state.test.data)
+        },
+        portrait: {
+          id: state.portrait.id,
+          data: Array.from(state.portrait.data)
         }
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -353,7 +405,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
-      if (!parsed || ![1, 2, 3, 4, STORAGE_VERSION].includes(parsed.version)) return false;
+      if (!parsed || ![1, 2, 3, 4, 5, STORAGE_VERSION].includes(parsed.version)) return false;
 
       if (Array.isArray(parsed.charset) && parsed.charset.length === state.charset.length) {
         state.charset.set(parsed.charset.map(clampByte));
@@ -457,8 +509,14 @@
         }
       }
 
+      if (parsed.portrait && Array.isArray(parsed.portrait.data) &&
+          parsed.portrait.data.length === PORTRAIT_FILE_BYTES) {
+        state.portrait.id = clampByte(parsed.portrait.id ?? 0);
+        state.portrait.data = Uint8Array.from(parsed.portrait.data.map(clampByte));
+      }
+
       if (parsed.mode === "char" || parsed.mode === "tile" || parsed.mode === "object" ||
-          parsed.mode === "room" || parsed.mode === "map") {
+          parsed.mode === "room" || parsed.mode === "map" || parsed.mode === "portrait") {
         state.mode = parsed.mode === "map" ? "room" : parsed.mode;
       }
       state.activeCharsetBank = clampCharsetBank(parsed.activeCharsetBank ?? 0);
@@ -518,6 +576,42 @@
     } else {
       state.charset[offset] &= ~mask;
     }
+  }
+
+  function clampPortraitId(n) {
+    return Math.max(0, Math.min(255, n | 0));
+  }
+
+  // Sprite order within the 256-byte block is raster order: top-left,
+  // top-right, bottom-left, bottom-right. Each 64-byte sprite block holds 63
+  // bytes of pixel data (3 bytes/row * 21 rows) plus one trailing pad byte,
+  // matching real C64 sprite memory alignment.
+  function portraitPixelOffset(x, y) {
+    const quadCol = x < PORTRAIT_SPRITE_WIDTH ? 0 : 1;
+    const quadRow = y < PORTRAIT_SPRITE_HEIGHT ? 0 : 1;
+    const localX = x - quadCol * PORTRAIT_SPRITE_WIDTH;
+    const localY = y - quadRow * PORTRAIT_SPRITE_HEIGHT;
+    const spriteIndex = quadRow * 2 + quadCol;
+    const byteOffset = spriteIndex * PORTRAIT_SPRITE_BYTES +
+      localY * PORTRAIT_SPRITE_ROW_BYTES + (localX >> 3);
+    const bitMask = 1 << (7 - (localX & 7));
+    return { byteOffset, bitMask };
+  }
+
+  function setPortraitPixel(x, y, value) {
+    if (x < 0 || x >= PORTRAIT_WIDTH || y < 0 || y >= PORTRAIT_HEIGHT) return;
+    const { byteOffset, bitMask } = portraitPixelOffset(x, y);
+    if (value) {
+      state.portrait.data[byteOffset] |= bitMask;
+    } else {
+      state.portrait.data[byteOffset] &= ~bitMask;
+    }
+  }
+
+  function getPortraitPixel(x, y) {
+    if (x < 0 || x >= PORTRAIT_WIDTH || y < 0 || y >= PORTRAIT_HEIGHT) return 0;
+    const { byteOffset, bitMask } = portraitPixelOffset(x, y);
+    return (state.portrait.data[byteOffset] & bitMask) ? 1 : 0;
   }
 
   function drawChar(targetCtx, bank, charIndex, dx, dy, scale, fg, bg) {
@@ -1190,6 +1284,57 @@
     }
   }
 
+  function renderPortraitCanvas() {
+    const scale = PORTRAIT_SCALE;
+    ctx.portrait.fillStyle = "#000000";
+    ctx.portrait.fillRect(0, 0, ui.portraitCanvas.width, ui.portraitCanvas.height);
+
+    const underlay = state.portraitUnderlay;
+    if (underlay.visible && underlay.image) {
+      ctx.portrait.save();
+      ctx.portrait.globalAlpha = underlay.opacity;
+      const dw = underlay.image.width * underlay.scale * scale;
+      const dh = underlay.image.height * underlay.scale * scale;
+      const dx = underlay.offsetX * scale;
+      const dy = underlay.offsetY * scale;
+      ctx.portrait.drawImage(underlay.image, dx, dy, dw, dh);
+      ctx.portrait.restore();
+    }
+
+    // Only the set (white) pixels are drawn; unset pixels stay transparent
+    // over the black fill / reference image so tracing over it works.
+    ctx.portrait.fillStyle = "#ffffff";
+    for (let y = 0; y < PORTRAIT_HEIGHT; y += 1) {
+      for (let x = 0; x < PORTRAIT_WIDTH; x += 1) {
+        if (getPortraitPixel(x, y)) {
+          ctx.portrait.fillRect(x * scale, y * scale, scale, scale);
+        }
+      }
+    }
+
+    // Dashed cross marks the boundary between the four underlying sprites.
+    ctx.portrait.strokeStyle = "rgba(255, 179, 71, 0.8)";
+    ctx.portrait.setLineDash([4, 4]);
+    const midX = PORTRAIT_SPRITE_WIDTH * scale + 0.5;
+    const midY = PORTRAIT_SPRITE_HEIGHT * scale + 0.5;
+    ctx.portrait.beginPath();
+    ctx.portrait.moveTo(midX, 0);
+    ctx.portrait.lineTo(midX, ui.portraitCanvas.height);
+    ctx.portrait.moveTo(0, midY);
+    ctx.portrait.lineTo(ui.portraitCanvas.width, midY);
+    ctx.portrait.stroke();
+    ctx.portrait.setLineDash([]);
+  }
+
+  function applyPortraitDraw(event) {
+    const { x, y } = canvasPos(ui.portraitCanvas, event);
+    const px = Math.floor(x / PORTRAIT_SCALE);
+    const py = Math.floor(y / PORTRAIT_SCALE);
+    setPortraitPixel(px, py, state.drawValue);
+    renderPortraitCanvas();
+    schedulePersist();
+  }
+
   function renderTileDefinitions() {
     ui.tileDefGrid.innerHTML = "";
     const names = ["Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"];
@@ -1247,7 +1392,7 @@
   }
 
   function renderMode() {
-    ["char", "tile", "object", "room"].forEach((m) => {
+    ["char", "tile", "object", "room", "portrait"].forEach((m) => {
       ui.modePanels[m].classList.toggle("hidden", m !== state.mode);
       ui.sidePanels[m].classList.toggle("hidden", m !== state.mode);
       ui.modeButtons[m].classList.toggle("active", m === state.mode);
@@ -1262,6 +1407,7 @@
     ui.selectedCharObject.textContent = String(state.selectedChar);
     ui.selectedTile.textContent = String(state.selectedTile);
     ui.selectedTileMap.textContent = String(state.selectedTile);
+    ui.selectedPortraitId.textContent = String(state.portrait.id);
   }
 
   function renderAll() {
@@ -1285,6 +1431,9 @@
       renderMapCanvas();
       renderMapEditorState();
     }
+    if (state.mode === "portrait") {
+      renderPortraitCanvas();
+    }
     ui.charPaste.disabled = !state.charClipboard;
   }
 
@@ -1296,6 +1445,12 @@
     ui.mapId.value = String(state.map.id);
     ui.testWidth.value = String(state.test.width);
     ui.testHeight.value = String(state.test.height);
+    ui.portraitId.value = String(state.portrait.id);
+    ui.portraitUnderlayVisible.checked = state.portraitUnderlay.visible;
+    ui.portraitUnderlayX.value = String(state.portraitUnderlay.offsetX);
+    ui.portraitUnderlayY.value = String(state.portraitUnderlay.offsetY);
+    ui.portraitUnderlayScale.value = String(state.portraitUnderlay.scale);
+    ui.portraitUnderlayOpacity.value = String(Math.round(state.portraitUnderlay.opacity * 100));
     ui.showGrid.checked = state.showGrid;
     ui.showRoomObjects.checked = state.showRoomObjects;
   }
@@ -1694,6 +1849,10 @@
     return out;
   }
 
+  function buildPortraitBytes() {
+    return state.portrait.data.slice();
+  }
+
   function downloadBinary(name, bytes) {
     const blob = new Blob([bytes], { type: "application/octet-stream" });
     const a = document.createElement("a");
@@ -1968,6 +2127,79 @@
     type.reserved.set(data.subarray(base + 50, base + 64));
   }
 
+  function exportPortrait() {
+    const name = state.portrait.id.toString(16).padStart(2, "0").toUpperCase();
+    downloadBinary(name, buildPortraitBytes());
+    setStatus(`Exported portrait ${name}`);
+  }
+
+  function importPortrait(buffer) {
+    const data = new Uint8Array(buffer);
+    if (data.length !== PORTRAIT_FILE_BYTES) {
+      setStatus(`Portrait file must be ${PORTRAIT_FILE_BYTES} bytes.`, true);
+      return;
+    }
+    state.portrait.data.set(data);
+    setStatus(`Imported portrait ${state.portrait.id.toString(16).padStart(2, "0").toUpperCase()}.`);
+    renderAll();
+    schedulePersist();
+  }
+
+  async function importPortraitPng(file) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = PORTRAIT_WIDTH;
+      canvas.height = PORTRAIT_HEIGHT;
+      const offCtx = canvas.getContext("2d");
+      offCtx.fillStyle = "#000000";
+      offCtx.fillRect(0, 0, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+      offCtx.drawImage(bitmap, 0, 0, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+      const image = offCtx.getImageData(0, 0, PORTRAIT_WIDTH, PORTRAIT_HEIGHT).data;
+      state.portrait.data.fill(0);
+      for (let y = 0; y < PORTRAIT_HEIGHT; y += 1) {
+        for (let x = 0; x < PORTRAIT_WIDTH; x += 1) {
+          const i = (y * PORTRAIT_WIDTH + x) * 4;
+          const luma = 0.299 * image[i] + 0.587 * image[i + 1] + 0.114 * image[i + 2];
+          const alpha = image[i + 3];
+          setPortraitPixel(x, y, alpha >= 128 && luma >= 128 ? 1 : 0);
+        }
+      }
+      setStatus(`Imported PNG into portrait ${state.portrait.id.toString(16).padStart(2, "0").toUpperCase()} (${PORTRAIT_WIDTH}x${PORTRAIT_HEIGHT}, thresholded).`);
+      renderAll();
+      schedulePersist();
+    } catch (err) {
+      setStatus(`Failed to import PNG: ${String(err)}`, true);
+    }
+  }
+
+  async function loadPortraitUnderlayImage(file) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      if (state.portraitUnderlay.image) {
+        state.portraitUnderlay.image.close();
+      }
+      state.portraitUnderlay.image = bitmap;
+      state.portraitUnderlay.visible = true;
+      ui.portraitUnderlayVisible.checked = true;
+      renderPortraitCanvas();
+      setStatus(`Loaded reference image (${bitmap.width}x${bitmap.height}).`);
+    } catch (err) {
+      setStatus(`Failed to load reference image: ${String(err)}`, true);
+    }
+  }
+
+  function clearPortraitUnderlay() {
+    if (state.portraitUnderlay.image) {
+      state.portraitUnderlay.image.close();
+    }
+    state.portraitUnderlay.image = null;
+    state.portraitUnderlay.visible = false;
+    ui.portraitUnderlayVisible.checked = false;
+    renderPortraitCanvas();
+    setStatus("Cleared reference image.");
+  }
+
   function missingRoomObjectTypeIds() {
     const missing = new Set();
     for (let slot = 0; slot < ROOM_OBJECT_COUNT; slot += 1) {
@@ -2073,7 +2305,8 @@
       ui.assetSaveChars,
       ui.assetSaveTiles,
       ui.assetSaveMap,
-      ui.assetSaveObjectTypes
+      ui.assetSaveObjectTypes,
+      ui.assetSavePortrait
     ].forEach((el) => {
       el.disabled = !available;
     });
@@ -2094,11 +2327,13 @@
       kinds.add("map");
     }
     if (bytes.length === OBJECT_TYPE_FILE_BYTES) kinds.add("objecttypes");
+    if (bytes.length === PORTRAIT_FILE_BYTES && /(^|\/)portraits\//.test(lower)) kinds.add("portrait");
     if (kinds.size > 0) return Array.from(kinds);
     if (lower.endsWith(".cchr") || lower.endsWith(".rom") || lower.endsWith(".chr")) kinds.add("charset");
     if (lower.endsWith(".ctil") || lower.endsWith(".til") || lower.endsWith(".tiles")) kinds.add("tiles");
     if (lower.endsWith(".map") || lower.endsWith(".cmap")) kinds.add("map");
     if (lower.endsWith(".cobj") || lower.endsWith(".objects")) kinds.add("objecttypes");
+    if (/(^|\/)portraits\/[0-9a-f]{2}$/.test(lower)) kinds.add("portrait");
     return Array.from(kinds);
   }
 
@@ -2119,6 +2354,10 @@
       importObjectTypes(buffer);
       return true;
     }
+    if (kind === "portrait") {
+      importPortrait(buffer);
+      return true;
+    }
     setStatus(`Unknown asset type for ${path}.`, true);
     return false;
   }
@@ -2127,6 +2366,7 @@
     if (kind === "charset") return "charset";
     if (kind === "tiles") return "tile";
     if (kind === "objecttypes") return "object type";
+    if (kind === "portrait") return "portrait";
     return "room";
   }
 
@@ -2137,6 +2377,7 @@
     if (kind === "tiles") return /\.(ctil|til|tiles)$/.test(lower);
     if (kind === "map") return /\.(map|cmap)$/.test(lower) || /(^|\/)[0-9a-f]{2}$/.test(lower);
     if (kind === "objecttypes") return /\.(cobj|objects)$/.test(lower);
+    if (kind === "portrait") return /(^|\/)portraits\/[0-9a-f]{2}$/.test(lower);
     return false;
   }
 
@@ -2156,7 +2397,7 @@
   }
 
   function renderAssetFileLists() {
-    ["charset", "tiles", "map", "objecttypes"].forEach((kind) => {
+    ["charset", "tiles", "map", "objecttypes", "portrait"].forEach((kind) => {
       const select = ui.assetFileLists[kind];
       const current = select.value;
       const files = assetFiles.filter((file) => Array.isArray(file.kinds) && file.kinds.includes(kind));
@@ -2252,7 +2493,9 @@
         ? buildTilesBytes()
         : kind === "objecttypes"
           ? buildObjectTypesBytes()
-          : buildMapBytes();
+          : kind === "portrait"
+            ? buildPortraitBytes()
+            : buildMapBytes();
 
     try {
       const response = await fetch(assetApiUrl(path), {
@@ -2436,7 +2679,7 @@
       }
     });
 
-    [ui.charCanvas, ui.tileCanvas, ui.mapCanvas, ui.testCanvas].forEach((canvas) => {
+    [ui.charCanvas, ui.tileCanvas, ui.mapCanvas, ui.testCanvas, ui.portraitCanvas].forEach((canvas) => {
       canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     });
 
@@ -2498,6 +2741,15 @@
     });
     ui.testCanvas.addEventListener("mousemove", (event) => {
       if (state.drawing) applyTilePaintOnCanvas("test", event);
+    });
+
+    ui.portraitCanvas.addEventListener("mousedown", (event) => {
+      state.drawing = true;
+      state.drawValue = event.button === 2 ? 0 : 1;
+      applyPortraitDraw(event);
+    });
+    ui.portraitCanvas.addEventListener("mousemove", (event) => {
+      if (state.drawing) applyPortraitDraw(event);
     });
 
     window.addEventListener("mouseup", () => {
@@ -2575,6 +2827,51 @@
       ui.mapId.value = String(state.map.id);
       ui.assetSavePaths.map.value = state.map.id.toString(16).padStart(2, "0").toUpperCase();
       schedulePersist();
+    });
+
+    ui.portraitId.addEventListener("change", () => {
+      state.portrait.id = clampPortraitId(Number(ui.portraitId.value));
+      ui.portraitId.value = String(state.portrait.id);
+      ui.assetSavePaths.portrait.value =
+        `portraits/${state.portrait.id.toString(16).padStart(2, "0").toUpperCase()}`;
+      renderSelection();
+      schedulePersist();
+    });
+    ui.portraitClear.addEventListener("click", () => {
+      state.portrait.data.fill(0);
+      renderPortraitCanvas();
+      schedulePersist();
+      setStatus(`Cleared portrait ${state.portrait.id.toString(16).padStart(2, "0").toUpperCase()}.`);
+    });
+
+    ui.portraitUnderlayVisible.addEventListener("change", () => {
+      state.portraitUnderlay.visible = ui.portraitUnderlayVisible.checked;
+      renderPortraitCanvas();
+    });
+    ui.portraitUnderlayLoad.addEventListener("click", () => ui.portraitUnderlayFile.click());
+    ui.portraitUnderlayClear.addEventListener("click", clearPortraitUnderlay);
+    ui.portraitUnderlayFile.addEventListener("change", async () => {
+      const file = ui.portraitUnderlayFile.files[0];
+      if (!file) return;
+      await loadPortraitUnderlayImage(file);
+      ui.portraitUnderlayFile.value = "";
+    });
+    ui.portraitUnderlayX.addEventListener("input", () => {
+      state.portraitUnderlay.offsetX = Number(ui.portraitUnderlayX.value) || 0;
+      renderPortraitCanvas();
+    });
+    ui.portraitUnderlayY.addEventListener("input", () => {
+      state.portraitUnderlay.offsetY = Number(ui.portraitUnderlayY.value) || 0;
+      renderPortraitCanvas();
+    });
+    ui.portraitUnderlayScale.addEventListener("input", () => {
+      const value = Number(ui.portraitUnderlayScale.value);
+      state.portraitUnderlay.scale = value > 0 ? value : 1;
+      renderPortraitCanvas();
+    });
+    ui.portraitUnderlayOpacity.addEventListener("input", () => {
+      state.portraitUnderlay.opacity = Math.max(0, Math.min(100, Number(ui.portraitUnderlayOpacity.value))) / 100;
+      renderPortraitCanvas();
     });
 
     [
@@ -2673,6 +2970,9 @@
     ui.importMap.addEventListener("click", () => ui.mapFile.click());
     ui.exportObjectTypes.addEventListener("click", exportObjectTypes);
     ui.importObjectTypes.addEventListener("click", () => ui.objectTypesFile.click());
+    ui.exportPortrait.addEventListener("click", exportPortrait);
+    ui.importPortrait.addEventListener("click", () => ui.portraitFile.click());
+    ui.importPortraitPng.addEventListener("click", () => ui.portraitPngFile.click());
     Object.values(ui.assetRefreshButtons).forEach((btn) => {
       btn.addEventListener("click", refreshAssetFiles);
     });
@@ -2680,11 +2980,13 @@
     ui.assetOpenButtons.tiles.addEventListener("click", () => openAssetFromServer("tiles"));
     ui.assetOpenButtons.map.addEventListener("click", () => openAssetFromServer("map"));
     ui.assetOpenButtons.objecttypes.addEventListener("click", () => openAssetFromServer("objecttypes"));
+    ui.assetOpenButtons.portrait.addEventListener("click", () => openAssetFromServer("portrait"));
     ui.assetSaveChars.addEventListener("click", () => saveAssetToServer("charset"));
     ui.assetSaveTiles.addEventListener("click", () => saveAssetToServer("tiles"));
     ui.assetSaveMap.addEventListener("click", () => saveAssetToServer("map"));
     ui.assetSaveObjectTypes.addEventListener("click", () => saveAssetToServer("objecttypes"));
-    ["charset", "tiles", "map", "objecttypes"].forEach((kind) => {
+    ui.assetSavePortrait.addEventListener("click", () => saveAssetToServer("portrait"));
+    ["charset", "tiles", "map", "objecttypes", "portrait"].forEach((kind) => {
       ui.assetFileLists[kind].addEventListener("change", () => {
         if (ui.assetFileLists[kind].value) {
           ui.assetSavePaths[kind].value = ui.assetFileLists[kind].value;
@@ -2718,6 +3020,20 @@
       if (!file) return;
       importObjectTypes(await file.arrayBuffer());
       ui.objectTypesFile.value = "";
+    });
+
+    ui.portraitFile.addEventListener("change", async () => {
+      const file = ui.portraitFile.files[0];
+      if (!file) return;
+      importPortrait(await file.arrayBuffer());
+      ui.portraitFile.value = "";
+    });
+
+    ui.portraitPngFile.addEventListener("change", async () => {
+      const file = ui.portraitPngFile.files[0];
+      if (!file) return;
+      await importPortraitPng(file);
+      ui.portraitPngFile.value = "";
     });
   }
 

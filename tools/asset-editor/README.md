@@ -6,6 +6,7 @@ Browser-based editor for:
 - per-tile properties (1 byte per tile)
 - fixed 20x11 room editing with tiles, 256 object slots, and room text
 - 256 fixed-size object type definitions with character/color graphics
+- monochrome character portraits stored as 2x2 hires sprite grids (48x42 px)
 
 Open `index.html` directly in a browser for local-only editing.
 
@@ -72,6 +73,24 @@ The server has no third-party dependencies and only exposes file operations unde
   - Use `Delete selected` beside the object fields to remove the selected room slot.
   - Edit a 256-byte pool of zero-terminated room strings; generated offsets
     are displayed for use by the C API.
+- Portrait mode:
+  - Each portrait is a monochrome 48x42-pixel image, edited as one canvas.
+  - Left mouse draws set (white) pixels, right mouse clears (black) pixels.
+  - A dashed cross shows the boundary between the four underlying 24x21
+    hires sprites; drawing crosses it seamlessly.
+  - `Clear Portrait` blanks the current portrait.
+  - Import a black-and-white PNG with `Import PNG`: it is scaled to 48x42 and
+    each pixel is thresholded (black is background, white is a set pixel).
+  - Portrait ID (0-255) selects which `assets/portraits/NN` file is being
+    edited; there is no in-editor multi-portrait browser, so switch IDs and
+    open/save each portrait individually.
+  - `Load Image` shows an arbitrary reference image (any format the browser
+    can decode) behind the pixel grid as an onion-skin underlay; only the
+    set (white) pixels are drawn over it, so unset areas trace through to the
+    reference. `Offset X/Y` (in portrait pixels), `Scale`, and `Opacity`
+    controls reposition/resize/fade it; the `Show reference image` checkbox
+    toggles it without discarding it. The image is edit-only: it is never
+    written to the portrait file and is not kept across a page reload.
 
 ## Binary formats
 
@@ -178,6 +197,42 @@ Per record:
 
 Width and height must be nonzero and `width * height` must not exceed 16.
 
+### Portrait file (`portraits/NN`)
+
+The file is exactly `256` bytes with no header or magic: it is the literal
+C64 memory layout of four consecutive hardware sprites, ready to be copied
+or `.incbin`'d directly into VIC sprite memory.
+
+Layout: four 64-byte hires-sprite blocks, back to back, in raster order:
+
+| Bytes | Sprite | Screen position |
+|---|---|---|
+| `0..63` | 0 | top-left quadrant |
+| `64..127` | 1 | top-right quadrant |
+| `128..191` | 2 | bottom-left quadrant |
+| `192..255` | 3 | bottom-right quadrant |
+
+Each 64-byte sprite block holds a standard 24x21 C64 hires sprite:
+- `63` bytes of pixel data: 21 rows of 3 bytes each (24 bits/row), MSB is the
+  leftmost pixel of the row, matching the charset file's bit convention.
+- `1` trailing pad byte (always `0`), matching the 64-byte-aligned block size
+  real sprite pointers expect.
+
+A bit set to `1` is a foreground (visible) pixel; `0` is transparent. The
+four sprites tile together with no gap into one 48x42 monochrome image
+(top-left, top-right, bottom-left, bottom-right quadrants of a 2x2 grid).
+
+Displaying a portrait needs one additional sprite that is not stored in this
+file: a solid-black backdrop. Fill a fifth sprite's 63 data bytes with `$FF`
+(color `$00`, black), place it at the same screen position as the four
+portrait sprites, and set both its X and Y expand bits (`$D01D`, `$D017`).
+Expanding a single 24x21 hires sprite by 2x in both axes covers exactly the
+same 48x42 area as the unexpanded 2x2 portrait grid, so it forms a solid
+black backdrop that shows through every transparent (`0`) portrait pixel.
+Draw the background sprite behind the four portrait sprites (lower priority,
+i.e. a higher sprite-priority number / later in `$D01B`'s ordering) so the
+portrait pixels remain visible on top of it.
+
 ## Notes
 
 - Tile editing can modify characters shared by multiple tiles.
@@ -199,5 +254,8 @@ Width and height must be nonzero and `width * height` must not exceed 16.
 - Editor state persists across reloads using browser `localStorage`.
 - Server-backed asset open/save is available only when served via `server.py`.
 - The left-side mode tabs use separate asset dropdowns and save paths for
-  charset, tile, room, and object-type files.
+  charset, tile, room, object-type, and portrait files.
 - Saving refuses to overwrite an existing asset if the server identifies it as another type or as ambiguous data.
+- Portrait files are recognized by living directly under `assets/portraits/`
+  and being exactly 256 bytes; save new portraits under that directory
+  (e.g. `portraits/00`) so they are detected correctly.

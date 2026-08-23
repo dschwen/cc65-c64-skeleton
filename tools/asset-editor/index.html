@@ -15,6 +15,7 @@
         <button id="mode-tile" class="mode-btn">Tile</button>
         <button id="mode-object" class="mode-btn">Objects</button>
         <button id="mode-room" class="mode-btn">Room</button>
+        <button id="mode-portrait" class="mode-btn">Portrait</button>
       </div>
       <div class="utility-controls">
         <label><input id="show-grid" type="checkbox" checked> Show room/test grid</label>
@@ -143,10 +144,39 @@
         <div class="stat-row"><span>Object slot</span><strong id="selected-object-slot">None</strong></div>
       </section>
 
+      <section id="side-portrait" class="side-panel hidden">
+        <h2>Portrait Files</h2>
+        <div class="button-grid">
+          <button id="export-portrait">Export Portrait</button>
+          <button id="import-portrait">Import Portrait</button>
+        </div>
+        <div class="button-grid">
+          <button id="import-portrait-png">Import PNG</button>
+        </div>
+        <label class="inline-field">Portrait asset
+          <select id="asset-file-list-portrait"></select>
+        </label>
+        <div class="inline-controls">
+          <button id="asset-refresh-portrait">Refresh</button>
+          <button id="asset-open-portrait">Open Portrait</button>
+        </div>
+        <label class="inline-field">Save portrait as
+          <input id="asset-save-path-portrait" type="text" value="portraits/00">
+        </label>
+        <div class="button-grid">
+          <button id="asset-save-portrait">Save Portrait</button>
+        </div>
+        <h2>Selected</h2>
+        <div class="stat-row"><span>Portrait ID</span><strong id="selected-portrait-id">0</strong></div>
+      </section>
+
       <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
       <input id="tiles-file" type="file" accept=".ctil,.bin" hidden>
       <input id="map-file" type="file" accept=".map,.cmap,.bin" hidden>
       <input id="object-types-file" type="file" accept=".cobj,.bin" hidden>
+      <input id="portrait-file" type="file" accept=".bin" hidden>
+      <input id="portrait-png-file" type="file" accept="image/png" hidden>
+      <input id="portrait-underlay-file" type="file" accept="image/*" hidden>
 
       <h2>Status</h2>
       <p id="status" class="status hidden"></p>
@@ -285,6 +315,40 @@
           </section>
         </div>
 
+      </section>
+
+      <section id="portrait-mode" class="mode-panel hidden">
+        <h2>Portrait Editor (2x2 hires sprites, 48x42)</h2>
+        <div class="inline-controls">
+          <label>Portrait ID <input id="portrait-id" type="number" min="0" max="255" value="0"></label>
+          <button id="portrait-clear">Clear Portrait</button>
+        </div>
+        <p class="hint">
+          Left click/drag paints white (set) pixels, right click/drag paints
+          black (background). The dashed cross marks the boundary between the
+          four underlying 24x21 hires sprites. In-game, a solid black sprite
+          stretched 2x horizontally and vertically sits behind these four
+          sprites as the portrait's backdrop.
+        </p>
+        <h3>Reference Image (onion skin)</h3>
+        <div class="inline-controls">
+          <label><input id="portrait-underlay-visible" type="checkbox"> Show reference image</label>
+          <button id="portrait-underlay-load">Load Image</button>
+          <button id="portrait-underlay-clear">Clear Image</button>
+        </div>
+        <div class="inline-controls">
+          <label>Offset X <input id="portrait-underlay-x" type="number" min="-200" max="200" value="0"></label>
+          <label>Offset Y <input id="portrait-underlay-y" type="number" min="-200" max="200" value="0"></label>
+          <label>Scale <input id="portrait-underlay-scale" type="number" min="0.05" max="8" step="0.05" value="1"></label>
+          <label>Opacity <input id="portrait-underlay-opacity" type="range" min="0" max="100" value="50"></label>
+        </div>
+        <p class="hint">
+          The reference image is a local editing aid only: it is never saved
+          to the portrait file and does not persist across a page reload.
+        </p>
+        <div class="row">
+          <canvas id="portrait-canvas" width="384" height="336"></canvas>
+        </div>
       </section>
     </section>
 

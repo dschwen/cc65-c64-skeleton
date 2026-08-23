@@ -36,6 +36,8 @@ def _asset_kinds(path: Path) -> list[str]:
         kinds.add("map")
     if len(data) == 256 * 64:
         kinds.add("objecttypes")
+    if len(data) == 256 and path.parent.name == "portraits":
+        kinds.add("portrait")
 
     if kinds:
         return sorted(kinds)

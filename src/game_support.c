@@ -8,29 +8,31 @@ void __fastcall__ platform_text_output_native(const char* text);
 uint8_t platform_text_output_color;
 uint8_t platform_text_output_line;
 
+#pragma code-name (push, "HIGHCODE")
 static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
                                 uint8_t wanted, uint8_t* found_slot) {
     PlatformObject* object;
     const PlatformObjectType* object_type;
-    uint8_t slot;
+    uint16_t slot;
+    uint16_t limit;
     uint8_t count;
 
     count = 0u;
-    slot = 0u;
-    do {
+    limit = platform_room_object_limit(&platform_room);
+    for (slot = 0u; slot < limit; ++slot) {
         object = &platform_room.objects[slot];
         if (object->type != 0u && object != platform_player &&
             platform_object_intersects_tile(object, tile_x, tile_y)) {
             object_type = platform_object_type_get(object->type);
             if ((object_type->reserved[0] & PLATFORM_OBJECT_FLAG_ACTOR) == 0u) {
-                if (count == wanted && found_slot != 0) *found_slot = slot;
+                if (count == wanted && found_slot != 0) *found_slot = (uint8_t)slot;
                 ++count;
             }
         }
-        ++slot;
-    } while (slot != 0u);
+    }
     return count;
 }
+#pragma code-name (pop)
 
 uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
     uint8_t count;

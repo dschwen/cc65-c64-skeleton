@@ -79,12 +79,18 @@ PlatformStorage platform_storage;
 uint8_t platform_storage_device;
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
+#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_object_columns;
+#pragma bss-name (pop)
 uint8_t native_object_rows;
+#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_object_row_skip;
+#pragma bss-name (pop)
 uint16_t native_object_screen_offset;
+#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_light_source_x;
 uint8_t native_light_source_y;
+#pragma bss-name (pop)
 uint8_t native_light_radius;
 uint8_t native_light_min_x;
 uint8_t native_light_min_y;
@@ -349,6 +355,17 @@ static void mark_object_cells(const PlatformObject* object) {
     }
 }
 
+uint16_t platform_room_object_limit(const PlatformRoom* room) {
+    uint16_t limit;
+
+    if (room == rendered_room) return rendered_object_limit;
+    limit = PLATFORM_ROOM_OBJECT_COUNT;
+    while (limit > 0u && room->objects[limit - 1u].type == 0u) {
+        --limit;
+    }
+    return limit;
+}
+
 static void redraw_dirty(const PlatformRoom* room,
                          const PlatformObject* player) {
     uint8_t i;
@@ -361,14 +378,7 @@ static void redraw_dirty(const PlatformRoom* room,
     uint16_t object_limit;
     uint16_t tile_offset;
 
-    if (room == rendered_room) {
-        object_limit = rendered_object_limit;
-    } else {
-        object_limit = PLATFORM_ROOM_OBJECT_COUNT;
-        while (object_limit > 0u && room->objects[object_limit - 1u].type == 0u) {
-            --object_limit;
-        }
-    }
+    object_limit = platform_room_object_limit(room);
     for (i = 0; i < dirty_count; ++i) {
         x = dirty_x[i];
         y = dirty_y[i];
@@ -914,8 +924,7 @@ void platform_lighting_rebuild(const PlatformRoom* room,
            sizeof(platform_brightness));
     if (room != 0) {
         wall_cache_prepare(room);
-        limit = room == rendered_room ? rendered_object_limit
-                                      : PLATFORM_ROOM_OBJECT_COUNT;
+        limit = platform_room_object_limit(room);
         for (i = 0; i < limit; ++i) {
             if (player == &room->objects[i]) continue;
             light_source_apply(room, &room->objects[i]);

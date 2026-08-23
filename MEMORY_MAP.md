@@ -29,8 +29,8 @@ always-visible RAM before rendering it.
 | Address | Size | Owner / status |
 |---|---:|---|
 | `$0000-$0001` | 2 | 6510 data-direction and banking ports |
-| `$0002-$001B` | 26 | cc65 zero page |
-| `$001C-$00FF` | 228 | KERNAL/cc65 machine state; not declared free |
+| `$0002-$001F` | 30 | cc65 zero page (26 bytes) plus 4 hot render/lighting scalars (`native_light_source_x/y`, `native_object_columns`, `native_object_row_skip`) |
+| `$0020-$00FF` | 224 | KERNAL/cc65 machine state; not declared free |
 | `$0100-$01FF` | 256 | hardware stack |
 | `$0200-$03FF` | 512 | KERNAL workspace, vectors, and disk-boot relocation |
 | `$0400-$07E7` | 1000 | screen matrix |
@@ -45,16 +45,16 @@ always-visible RAM before rendering it.
 | `$3900-$39F9` | 250 | compact lookup/native code |
 | `$39FA-$39FF` | 6 | free linker tail |
 | `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7CBA` | 16571 | resident platform code/RODATA |
-| `$7CBB-$7FFF` | 837 | free resident-code linker tail |
+| `$3C00-$7DA1` | 16802 | resident platform code/RODATA |
+| `$7DA2-$7FFF` | 606 | free resident-code linker tail |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
 | `$855D-$85F7` | 155 | compact native helpers |
 | `$85F8-$85FF` | 8 | free linker tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$98E7` | 3488 | resident game/main/shared room API |
-| `$98E8-$98FF` | 24 | free resident tail |
+| `$8B48-$981B` | 3284 | resident game/main/shared room API |
+| `$981C-$98FF` | 228 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room staging |
@@ -75,7 +75,7 @@ always-visible RAM before rendering it.
 | `$E000-$FFF9` | 8186 | object types 128-255 beneath KERNAL |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors; overlays type 255 reserved bytes |
 
-The 837-byte `HIGH` tail is the primary margin for modest resident-code growth;
+The 606-byte `HIGH` tail is the primary margin for modest resident-code growth;
 the smaller tails are unsuitable for general C code. Prefer room overlays or
 the inventory/story overlay for larger features, and recheck `build/game.map`
 after every change because cc65 can move code between segments.

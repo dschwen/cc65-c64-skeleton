@@ -260,6 +260,9 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
 uint16_t platform_room_object_count(const PlatformRoom* room,
                                     uint8_t actor_only);
 
+/* One past the highest populated slot index; cached for the rendered room. */
+uint16_t platform_room_object_limit(const PlatformRoom* room);
+
 /* Move a room-list record between two loaded rooms using the first free slot. */
 uint8_t platform_room_object_transfer(PlatformRoom* leaving,
                                       PlatformRoom* entering,

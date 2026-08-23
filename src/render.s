@@ -13,17 +13,17 @@
 
 .import _native_object_type
 .import _native_object_source
-.import _native_object_columns
+.importzp _native_object_columns
 .import _native_object_rows
-.import _native_object_row_skip
+.importzp _native_object_row_skip
 .import _native_object_screen_offset
 .import _platform_base_colors
 .import _platform_brightness
 .import _platform_light_colors
 .import _platform_light_distance
 .import _platform_frame_counter
-.import _native_light_source_x
-.import _native_light_source_y
+.importzp _native_light_source_x
+.importzp _native_light_source_y
 .import _native_light_radius
 .import _native_light_min_x
 .import _native_light_min_y

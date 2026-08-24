@@ -647,7 +647,8 @@ without moving the cursor. The cursor is an 18x18
 one-pixel monochrome frame in sprite slot 0, positioned one pixel outside the
 selected 16x16 tile. `tick()` cycles black, dark gray, gray, light gray, white,
 and back through the grays. Only sprite-0 bits in shared VIC registers are
-changed; sprites 1-7 remain available to game code.
+changed; sprites 6-7 remain available to game code. Sprites 1-5 are owned by
+the portrait API below.
 
 Pressing `T` uses the same cursor but clips it to the 3x3 tile neighborhood
 centered on the player's hotspot, including the tile underfoot. Return applies
@@ -655,6 +656,37 @@ the same LOS/light gate as Look. If several non-actor object footprints overlap
 the framed tile, the bottom display shows one name at a time; cursor keys cycle
 the choices, Return takes the displayed object, and `T` cancels. Removal still
 uses the transactional, save-aware `game_take_object()` path.
+
+## Portraits
+
+```c
+uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
+void platform_portrait_hide(void);
+```
+
+Fetches the 256-byte `portrait_id` asset (see
+`tools/asset-editor/README.md`) from the active storage backend — an
+EasyFlash ROML bank in 8 KiB mode, or disk file `P` + two hex digits — and
+displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
+copied directly from the asset (it is exactly their memory layout), and
+sprite 5 is filled with a constant solid bitmap, colored black, and expanded
+2x horizontally and vertically to form a 48x42 backdrop exactly matching the
+2x2 grid's footprint, so transparent portrait pixels show as black rather
+than the room behind it. `side` is `PLATFORM_PORTRAIT_LEFT` or
+`PLATFORM_PORTRAIT_RIGHT`; the portrait rests 16px from the top and from
+that side's edge of the 20x11 room. `platform_portrait_show()` blocks while
+it slides the sprite group down from off-screen to its resting position (a
+few frames); `platform_portrait_hide()` disables sprites 1-5 immediately,
+with no animation. Sprite 0 (look/take/use cursor) and sprites 6-7 are
+untouched by both calls, so a shown portrait and the look cursor can
+coexist. Loading a new portrait or hiding the current one does not restore
+whatever a previous portrait's sprite data looked like; each `show()` call
+fully repopulates sprites 1-5 from the requested asset.
+
+EasyFlash storage reserves banks 49-56 (8 KiB ROML mode, 32 portraits per
+bank) for the full 256-ID range, mirroring the room asset layout's fixed
+`bank = first_bank + id / per_bank` formula. See
+`EASYFLASH_CARTRIDGE.md` for the complete bank table.
 
 ## Raster IRQ and water animation
 

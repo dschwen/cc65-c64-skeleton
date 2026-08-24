@@ -17,11 +17,27 @@
 #define DIRTY_BYTES        110u
 #define DIRTY_CELL_LIMIT   32u
 #define ROOM_LFN           2u
+#define PORTRAIT_LFN       4u
 #define INITIAL_OBJECT_TYPE_COUNT 2u
 #define EF_FIRST_ROOM_BANK 3u
 #define EF_ROOMS_PER_BANK  6u
 #define EF_TYPE_BANK_0     46u
 #define EF_TYPE_BANK_1     47u
+#define EF_PORTRAIT_FIRST_BANK  49u
+#define EF_PORTRAITS_PER_BANK   32u
+
+#define PORTRAIT_FIRST_SPRITE   1u
+#define PORTRAIT_BG_SPRITE      5u
+#define PORTRAIT_SPRITE_WIDTH   24u
+#define PORTRAIT_SPRITE_HEIGHT  21u
+#define PORTRAIT_MARGIN         16u
+#define PORTRAIT_SLIDE_STEP     4u
+#define PORTRAIT_SCREEN_X       23u
+#define PORTRAIT_SCREEN_Y       49u
+#define PORTRAIT_SPRITE_DATA \
+    ((uint8_t*)(0x3a00u + PORTRAIT_FIRST_SPRITE * 64u))
+#define PORTRAIT_BG_DATA \
+    ((uint8_t*)(0x3a00u + PORTRAIT_BG_SPRITE * 64u))
 #define WALL_CACHE_QUADRANT_NW 0x01u
 #define WALL_CACHE_QUADRANT_NE 0x02u
 #define WALL_CACHE_QUADRANT_SW 0x04u
@@ -1591,5 +1607,118 @@ void platform_look_cursor_tick(void) {
 void platform_look_cursor_hide(void) {
     P_VIC(0x15) &= 0xfeu;
     look_cursor_visible = 0u;
+}
+#pragma code-name (pop)
+
+static uint8_t portrait_load_easyflash(uint8_t portrait_id) {
+    platform_ef_copy_bank =
+        (uint8_t)(EF_PORTRAIT_FIRST_BANK + portrait_id / EF_PORTRAITS_PER_BANK);
+    platform_ef_copy_offset =
+        (uint16_t)(portrait_id % EF_PORTRAITS_PER_BANK) * PLATFORM_PORTRAIT_BYTES;
+    platform_ef_copy_destination = (uint16_t)PORTRAIT_SPRITE_DATA;
+    platform_ef_copy_size = PLATFORM_PORTRAIT_BYTES;
+    platform_easyflash_copy_roml();
+    return PLATFORM_OK;
+}
+
+static uint8_t portrait_load_disk(uint8_t portrait_id) {
+    char filename[4];
+    uint8_t status;
+
+    filename[0] = 'P';
+    filename[1] = hex_digits[portrait_id >> 4];
+    filename[2] = hex_digits[portrait_id & 0x0fu];
+    filename[3] = '\0';
+    platform_memory_kernal();
+    if (cbm_open(PORTRAIT_LFN, platform_storage_device, CBM_READ, filename) != 0u) {
+        platform_memory_game();
+        return PLATFORM_ERR_IO;
+    }
+    status = read_exact(PORTRAIT_LFN, PORTRAIT_SPRITE_DATA, PLATFORM_PORTRAIT_BYTES);
+    cbm_close(PORTRAIT_LFN);
+    platform_memory_game();
+    return status;
+}
+
+/* left_x/right_x share the 9th (MSB) bit across sprites 1/3/5 and 2/4. */
+#pragma code-name (push, "UPPERCODE")
+static void portrait_position(uint16_t left_x, uint8_t top_y) {
+    uint16_t right_x;
+    uint8_t bottom_y;
+    uint8_t msb;
+
+    right_x = left_x + PORTRAIT_SPRITE_WIDTH;
+    bottom_y = (uint8_t)(top_y + PORTRAIT_SPRITE_HEIGHT);
+
+    P_VIC(2u) = (uint8_t)left_x;  P_VIC(3u) = top_y;
+    P_VIC(4u) = (uint8_t)right_x; P_VIC(5u) = top_y;
+    P_VIC(6u) = (uint8_t)left_x;  P_VIC(7u) = bottom_y;
+    P_VIC(8u) = (uint8_t)right_x; P_VIC(9u) = bottom_y;
+    P_VIC(10u) = (uint8_t)left_x; P_VIC(11u) = top_y;
+
+    msb = 0u;
+    if (left_x & 0x100u) msb |= 0x2au;
+    if (right_x & 0x100u) msb |= 0x14u;
+    P_VIC(0x10) = (P_VIC(0x10) & 0xc1u) | msb;
+}
+#pragma code-name (pop)
+
+#pragma code-name (push, "HIGHCODE")
+uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
+    uint16_t left_x;
+    uint8_t target_y;
+    uint8_t y;
+    uint8_t status;
+
+    if (side != PLATFORM_PORTRAIT_LEFT && side != PLATFORM_PORTRAIT_RIGHT) {
+        return PLATFORM_ERR_ARGUMENT;
+    }
+
+    status = platform_storage == PLATFORM_STORAGE_EASYFLASH
+                 ? portrait_load_easyflash(portrait_id)
+                 : portrait_load_disk(portrait_id);
+    if (status != PLATFORM_OK) return status;
+
+    memset(PORTRAIT_BG_DATA, 0xffu, 63u);
+    PORTRAIT_BG_DATA[63] = 0u;
+
+    P_SPRITE_POINTERS[1] = (uint8_t)(0x3a40u / 64u);
+    P_SPRITE_POINTERS[2] = (uint8_t)(0x3a80u / 64u);
+    P_SPRITE_POINTERS[3] = (uint8_t)(0x3ac0u / 64u);
+    P_SPRITE_POINTERS[4] = (uint8_t)(0x3b00u / 64u);
+    P_SPRITE_POINTERS[5] = (uint8_t)(0x3b40u / 64u);
+
+    P_VIC(0x17) = (P_VIC(0x17) & 0xc1u) | 0x20u; /* Y-expand: bg sprite only */
+    P_VIC(0x1b) &= 0xc1u;                        /* priority: all in front */
+    P_VIC(0x1c) &= 0xc1u;                        /* hires, no multicolor */
+    P_VIC(0x1d) = (P_VIC(0x1d) & 0xc1u) | 0x20u; /* X-expand: bg sprite only */
+    P_VIC(0x28) = 1u; /* sprite 1 (top-left) white */
+    P_VIC(0x29) = 1u; /* sprite 2 (top-right) white */
+    P_VIC(0x2a) = 1u; /* sprite 3 (bottom-left) white */
+    P_VIC(0x2b) = 1u; /* sprite 4 (bottom-right) white */
+    P_VIC(0x2c) = 0u; /* sprite 5 (background) black */
+
+    left_x = side == PLATFORM_PORTRAIT_LEFT
+                 ? PORTRAIT_SCREEN_X + PORTRAIT_MARGIN
+                 : PORTRAIT_SCREEN_X + PLATFORM_MAP_CHAR_WIDTH * 8u -
+                       PORTRAIT_MARGIN - PLATFORM_PORTRAIT_WIDTH;
+    target_y = PORTRAIT_SCREEN_Y + PORTRAIT_MARGIN;
+    y = (uint8_t)(PORTRAIT_SCREEN_Y - PLATFORM_PORTRAIT_HEIGHT);
+    portrait_position(left_x, y);
+    P_VIC(0x15) |= 0x3eu;
+
+    while (y < target_y) {
+        platform_wait_frame();
+        y = (uint8_t)(target_y - y > PORTRAIT_SLIDE_STEP
+                          ? y + PORTRAIT_SLIDE_STEP : target_y);
+        portrait_position(left_x, y);
+    }
+    return PLATFORM_OK;
+}
+#pragma code-name (pop)
+
+#pragma code-name (push, "UPPERCODE")
+void platform_portrait_hide(void) {
+    P_VIC(0x15) &= 0xc1u;
 }
 #pragma code-name (pop)

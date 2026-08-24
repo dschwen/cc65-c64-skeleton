@@ -397,9 +397,12 @@ The map reserves two rows of 40 characters for text. Story text wraps at word
 boundaries. If it needs more than two lines, the engine pauses for a keypress,
 scrolls, and continues. The second line does not begin with leftover whitespace.
 
-This works well for concise descriptions and short dialogue beats. It does not
-currently provide speaker portraits, speech balloons, conversation choices,
-or a dialogue history.
+This works well for concise descriptions and short dialogue beats. Room code
+can show a speaker portrait alongside it with `platform_portrait_show()`/
+`platform_portrait_hide()` (see `PLATFORM_API.md` and the asset editor's
+Portrait mode), but the two are not wired together automatically: there is
+still no speech balloon, conversation choice, or dialogue history system, and
+no generic rule for which portrait accompanies which text.
 
 ### Room text budget
 
@@ -520,7 +523,8 @@ the current light range.
 - Object lighting is fixed per global type and evaluated per full tile.
 - Inventory objects do not emit room light.
 - There is no Drop, Equip, item-combination, or inventory-target-map command.
-- There is no generic conversation choice UI or portrait display.
+- There is no generic conversation choice UI, and no automatic link between
+  dialogue text and the portrait API.
 - NPC schedules, AI, combat, game time, and quests are not generic systems yet.
 - A room has only 256 bytes of local text and about 1 KiB for bespoke behavior.
 - The automatic Look list is limited to two lines.

@@ -24,8 +24,11 @@ ROOM_CODES := $(addprefix $(ROOM_OUTDIR)/C,$(ROOM_IDS))
 C64_ASSET_OUTDIR := $(OUTDIR)/assets
 C64_ROOM_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/,$(ROOM_IDS))
 C64_OBJECT_TYPES := $(C64_ASSET_OUTDIR)/objects.cobj
+PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
+PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
+C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
 ROOM_CFG := cfg/room_overlay.cfg
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES) $(INVENTORY_MODULE)
+DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
@@ -87,6 +90,9 @@ $(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASS
 
 $(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
 	python3 tools/prepare_c64_assets.py room $< $@
+
+$(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
+	cp $< $@
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
@@ -202,7 +208,7 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) tools/pack_easyflash.py \
-		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(ROOM_CODES)
+		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --output $@

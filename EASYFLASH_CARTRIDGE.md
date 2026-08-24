@@ -413,6 +413,17 @@ RAM. On return, resident code restores the charset split and redraws the room.
 The disk build performs the same operation from the `IV` PRG. See
 `STORY_CODE_API.md` for the callable contract and restrictions.
 
+Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
+banks 49-56 in 8 KiB ROML mode, the same mode and fixed
+`bank = first_bank + id / per_bank` formula as rooms. Each 256-byte portrait
+is far smaller than a room, so one ROML page holds 32 portraits
+(`8192 / 256`), and 8 banks cover the full 256-ID range. `tools/pack_easyflash.py`
+reads each populated portrait from `assets/portraits/NN`, flattened to
+`PNN` alongside the other runtime assets; missing IDs are filled with `$FF`
+like missing rooms. The disk build copies the same flattened `PNN` files
+onto the D64 image; on disk, `platform_portrait_show()` opens `P` + two hex
+digits directly, mirroring the room loader's disk path.
+
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
 bank-switch routine and its copy loop must therefore execute from stable RAM.

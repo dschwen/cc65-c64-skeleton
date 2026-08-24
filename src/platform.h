@@ -18,6 +18,12 @@
 #define PLATFORM_OBJECT_CELL_COUNT    16u
 #define PLATFORM_NON_ACTOR_LIMIT      200u
 
+#define PLATFORM_PORTRAIT_BYTES       256u
+#define PLATFORM_PORTRAIT_WIDTH       48u
+#define PLATFORM_PORTRAIT_HEIGHT      42u
+#define PLATFORM_PORTRAIT_LEFT        0u
+#define PLATFORM_PORTRAIT_RIGHT       1u
+
 #define PLATFORM_TEXT_LINE_TOP        0u
 #define PLATFORM_TEXT_LINE_BOTTOM     1u
 
@@ -330,5 +336,16 @@ uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y);
 uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y);
 void platform_look_cursor_tick(void);
 void platform_look_cursor_hide(void);
+
+/*
+ * Fetch portrait_id (from cartridge or disk, matching the active storage
+ * backend) into sprites 1-5 and slide it in from the top of the screen to
+ * rest 16px from the top and side frame, in the PLATFORM_PORTRAIT_LEFT or
+ * PLATFORM_PORTRAIT_RIGHT corner. Sprite 0 (look/take/use cursor) and
+ * sprites 6-7 are untouched. Blocks until the slide-in finishes.
+ */
+uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
+/* Hide sprites 1-5 immediately (no animation). */
+void platform_portrait_hide(void);
 
 #endif

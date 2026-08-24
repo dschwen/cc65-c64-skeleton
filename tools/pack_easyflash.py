@@ -15,7 +15,11 @@ ROOM_BANKS = 43
 TYPE_BANK_0 = 46
 TYPE_BANK_1 = 47
 INVENTORY_BANK = 48
-OUTPUT_BANKS = 49
+PORTRAIT_BYTES = 256
+PORTRAITS_PER_BANK = 32
+FIRST_PORTRAIT_BANK = 49
+PORTRAIT_BANKS = 8
+OUTPUT_BANKS = FIRST_PORTRAIT_BANK + PORTRAIT_BANKS
 ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
 ROOM_CODE_ABI = 4
@@ -38,6 +42,16 @@ def load_room(asset_dir: Path, room_id: int) -> bytes:
         raise ValueError(f"{path}: expected {ROOM_BYTES} bytes, got {len(data)}")
     if data[:4] != bytes((20, 11, room_id, 3)):
         raise ValueError(f"{path}: invalid room header {data[:4].hex()}")
+    return data
+
+
+def load_portrait(asset_dir: Path, portrait_id: int) -> bytes:
+    path = asset_dir / f"P{portrait_id:02X}"
+    if not path.exists():
+        return bytes([0xFF]) * PORTRAIT_BYTES
+    data = path.read_bytes()
+    if len(data) != PORTRAIT_BYTES:
+        raise ValueError(f"{path}: expected {PORTRAIT_BYTES} bytes, got {len(data)}")
     return data
 
 
@@ -130,6 +144,11 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     inventory_data = load_inventory(inventory)
     start = INVENTORY_BANK * BANK_BYTES + ROML_BYTES
     image[start:start + len(inventory_data)] = inventory_data
+    for portrait_id in range(256):
+        bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
+        offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
+        start = bank * BANK_BYTES + offset
+        image[start : start + PORTRAIT_BYTES] = load_portrait(asset_dir, portrait_id)
     return bytes(image)
 
 

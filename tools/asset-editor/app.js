@@ -214,6 +214,7 @@
     objectHotspotY: document.getElementById("object-hotspot-y"),
     objectTypeLight: document.getElementById("object-type-light"),
     objectTypeActor: document.getElementById("object-type-actor"),
+    objectTypeNotTakeable: document.getElementById("object-type-not-takeable"),
     objectTypeList: document.getElementById("object-type-list"),
     objectToolChar: document.getElementById("object-tool-char"),
     objectToolHotspot: document.getElementById("object-tool-hotspot"),
@@ -1224,6 +1225,7 @@
     ui.objectHotspotY.value = String(type.hotspotY);
     ui.objectTypeLight.value = String(type.light);
     ui.objectTypeActor.checked = (type.flags & 1) !== 0;
+    ui.objectTypeNotTakeable.checked = (type.flags & 2) !== 0;
     ui.objectTypeList.value = String(state.selectedObjectType);
     ui.objectToolChar.classList.toggle("active", state.objectTool === "char");
     ui.objectToolHotspot.classList.toggle("active", state.objectTool === "hotspot");
@@ -1747,6 +1749,7 @@
     type.name = ui.objectTypeName.value.slice(0, 14);
     type.light = clampByte(Number(ui.objectTypeLight.value));
     type.flags = ui.objectTypeActor.checked ? (type.flags | 1) : (type.flags & 0xfe);
+    type.flags = ui.objectTypeNotTakeable.checked ? (type.flags | 2) : (type.flags & 0xfd);
     renderObjectTypeEditor();
     syncObjectTypeSelect();
     renderRoomObjectList();
@@ -2952,7 +2955,7 @@
     });
     [ui.objectTypeName, ui.objectTypeWidth, ui.objectTypeHeight,
       ui.objectHotspotX, ui.objectHotspotY, ui.objectTypeLight,
-      ui.objectTypeActor].forEach((control) => {
+      ui.objectTypeActor, ui.objectTypeNotTakeable].forEach((control) => {
       control.addEventListener("change", updateSelectedObjectType);
     });
 

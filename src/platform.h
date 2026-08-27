@@ -29,7 +29,12 @@
 #define PLATFORM_TEXT_LINE_TOP        0u
 #define PLATFORM_TEXT_LINE_BOTTOM     1u
 
+/* A PC/NPC actor; also gates conversation once a talk verb exists. Actors
+ * are never takeable regardless of PLATFORM_OBJECT_FLAG_NOT_TAKEABLE. */
 #define PLATFORM_OBJECT_FLAG_ACTOR    0x01u
+/* Excludes a non-actor object from Take: it never appears in the tile's
+ * take-candidate list, and game_take_object() rejects it defensively. */
+#define PLATFORM_OBJECT_FLAG_NOT_TAKEABLE 0x02u
 #define PLATFORM_TILE_BLOCKS_VIEW     0x02u
 #define PLATFORM_TILE_SOLID_LAND      0x04u
 

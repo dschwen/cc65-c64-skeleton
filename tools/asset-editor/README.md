@@ -53,7 +53,8 @@ The server has no third-party dependencies and only exposes file operations unde
   - Select a character from charset bank 0, choose a color, and click a cell to paint it.
   - Right-click a cell to make it transparent (character 0).
   - Use the hotspot tool to click the cell that anchors the object's room coordinate.
-  - Edit the 14-byte name, actor flag, and emitted-light byte; object type 0 remains reserved.
+  - Edit the 14-byte name, actor flag, not-takeable flag, and emitted-light
+    byte; object type 0 remains reserved.
 - Room mode:
   - Rooms are fixed at 20x11 tiles (40x22 half-tile/object coordinates).
   - Hover over the room canvas to display the zero-based tile coordinates used
@@ -191,7 +192,9 @@ Per record:
 - Byte 2..15: name, up to 14 bytes, zero-padded.
 - Byte 16..31: 16 row-major screen character codes; 0 is transparent.
 - Byte 32..47: 16 corresponding C64 color indices.
-- Byte 48: flags; bit 0 marks a PC/NPC actor.
+- Byte 48: flags; bit 0 marks a PC/NPC actor (also gates conversation once a
+  talk verb exists; actors are never takeable regardless of bit 1), bit 1
+  excludes a non-actor object from Take ("I cannot take this.").
 - Byte 49: emitted light amount; `0` means no light.
 - Byte 50..63: unused padding. `tools/pack_easyflash.py` drops these bytes at
   build time (see `PLATFORM_API.md`'s object-type hot/cold split) rather than

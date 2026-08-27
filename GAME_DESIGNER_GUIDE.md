@@ -216,13 +216,17 @@ example:
 
 ### Actors and takeable objects
 
-An object type can be marked as a PC/NPC actor. Actors cannot be taken and do
-not count against the room's 200 non-actor limit.
+An object type can be marked as a PC/NPC actor. Actors cannot be taken, do
+not count against the room's 200 non-actor limit, and (once a talk verb
+exists) are the only object types that can be talked to.
 
-There is not yet a separate **Takeable** property. At present, every non-actor
-object can be selected by the generic Take command. Use tile artwork for fixed
-scenery. If a visible environmental object must be non-takeable, call that out
-as an engine/story requirement rather than assuming the editor can express it.
+A separate **Not takeable** checkbox marks a non-actor object type as fixed
+scenery: the Take command's cursor never offers it as a candidate, and
+`game_take_object()` also rejects it if something tries anyway. If a tile has
+only not-takeable objects on it, pressing Take shows "I cannot take this."
+instead of "Nothing to take.". Use this for a visible environmental object
+that should never leave the room (a well, a statue, a locked chest) instead
+of relying on tile artwork alone.
 
 NPC movement, schedules, conversations, and combat behavior are not generic
 engine features yet. NPCs can be represented and room logic can react to them,
@@ -520,7 +524,6 @@ the current light range.
 - Only cardinal edge neighbors are stored directly.
 - Movement collision is tile-based and uses Solid land only.
 - Objects and NPCs do not inherently block movement.
-- All non-actor objects are currently takeable.
 - Object lighting is fixed per global type and evaluated per full tile.
 - Inventory objects do not emit room light.
 - There is no Drop, Equip, item-combination, or inventory-target-map command.

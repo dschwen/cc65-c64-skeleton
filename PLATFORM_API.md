@@ -125,7 +125,7 @@ the record index. Type 0 is reserved for an empty object slot.
 | 2 | 14 | name, zero-padded |
 | 16 | 16 | row-major character codes; 0 is transparent |
 | 32 | 16 | row-major C64 color indices |
-| 48 | 1 | flags; bit 0 means PC/NPC actor |
+| 48 | 1 | flags; bit 0 means PC/NPC actor, bit 1 means not takeable |
 | 49 | 1 | emitted light amount; 0 means no light |
 | 50 | 14 | unused padding; dropped at build time, not carried anywhere |
 
@@ -678,10 +678,15 @@ the portrait API below.
 
 Pressing `T` uses the same cursor but clips it to the 3x3 tile neighborhood
 centered on the player's hotspot, including the tile underfoot. Return applies
-the same LOS/light gate as Look. If several non-actor object footprints overlap
-the framed tile, the bottom display shows one name at a time; cursor keys cycle
-the choices, Return takes the displayed object, and `T` cancels. Removal still
-uses the transactional, save-aware `game_take_object()` path.
+the same LOS/light gate as Look. Actor objects and objects flagged
+`PLATFORM_OBJECT_FLAG_NOT_TAKEABLE` never appear as take candidates. If
+several takeable object footprints overlap the framed tile, the bottom
+display shows one name at a time; cursor keys cycle the choices, Return
+takes the displayed object, and `T` cancels. If the tile has no takeable
+object but does have a non-actor object that is flagged not takeable, Return
+shows "I cannot take this." instead of "Nothing to take.". Removal still
+uses the transactional, save-aware `game_take_object()` path, which also
+rejects actors and not-takeable objects defensively.
 
 ## Portraits
 

@@ -12,17 +12,17 @@ The normal gameplay mapping uses `$01` low bits `%101` (normally `$35`):
 | CPU range | Gameplay CPU view | Underlying RAM owner |
 |---|---|---|
 | `$A000-$BFFF` | RAM; BASIC ROM is out | overlays, work buffers, BSS, stack, journal |
-| `$D000-$DFFF` | VIC/SID/CIA/Color RAM I/O | object types 64-127 underneath I/O |
-| `$E000-$FFFF` | RAM; KERNAL ROM is out | object types 128-255 and RAM vectors |
+| `$D000-$DFFF` | VIC/SID/CIA/Color RAM I/O | hot object-type records 117-233 underneath I/O |
+| `$E000-$FFFF` | RAM; KERNAL ROM is out | hot object-type records 234-255 and RAM vectors |
 
 The engine already owns the RAM under both ROMs. `$36` temporarily maps the
 KERNAL in while leaving RAM at `$A000-$BFFF`; `$34` exposes RAM under I/O as
 well. Code changes only bits 0-2 of `$01` and preserves the cassette-port bits.
 
 RAM under I/O is not generally usable while drawing: selecting it hides the
-VIC, SID, CIA, EasyFlash registers, and Color RAM. Accesses to object types
-64-127 therefore run with interrupts disabled and stage a 64-byte record in
-always-visible RAM before rendering it.
+VIC, SID, CIA, EasyFlash registers, and Color RAM. Accesses to hot object-type
+records 117-233 therefore run with interrupts disabled and copy the 35-byte
+record to always-visible scratch before rendering it.
 
 ## Complete allocation
 
@@ -45,16 +45,16 @@ always-visible RAM before rendering it.
 | `$3900-$39F9` | 250 | compact lookup/native code |
 | `$39FA-$39FF` | 6 | free linker tail |
 | `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7AB4` | 16053 | resident platform code/RODATA |
-| `$7AB5-$7FFF` | 1355 | free resident-code linker tail |
+| `$3C00-$7B86` | 16263 | resident platform code/RODATA |
+| `$7B87-$7FFF` | 1145 | free resident-code linker tail |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
 | `$855D-$85F7` | 155 | compact native helpers |
 | `$85F8-$85FF` | 8 | free linker tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$98AC` | 3429 | resident game/main/shared room API |
-| `$98AD-$98FF` | 83 | free resident tail |
+| `$8B48-$987B` | 3380 | resident game/main/shared room API |
+| `$987C-$98FF` | 132 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room staging |
@@ -70,18 +70,20 @@ always-visible RAM before rendering it.
 | `$BA00-$BBFF` | 512 | cc65 software stack |
 | `$BC00-$BFE7` | 1000 | 200-record sparse room-object journal |
 | `$BFE8-$BFFF` | 24 | free journal-region tail |
-| `$C000-$CFFF` | 4096 | object types 0-63, normally visible |
-| `$D000-$DFFF` | 4096 | object types 64-127 beneath I/O |
-| `$E000-$FFF9` | 8186 | object types 128-255 beneath KERNAL |
-| `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors; overlays type 255 reserved bytes |
+| `$C000-$CFFE` | 4095 | hot object-type records, types 0-116, normally visible |
+| `$CFFF` | 1 | free linker tail |
+| `$D000-$DFFE` | 4095 | hot object-type records, types 117-233, beneath I/O |
+| `$DFFF` | 1 | free linker tail |
+| `$E000-$E301` | 770 | hot object-type records, types 234-255, beneath KERNAL |
+| `$E302-$FFF9` | 7416 | free; reclaimed from the pre-split 64-byte object-type table |
+| `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-The `HIGH` tail is the primary margin for modest resident-code growth. The
-portrait API previously consumed most of it (down to 76 bytes there, 29 in
-`UPPER`); retiring the disk asset-loading code paths (rooms, object types,
-portraits, the inventory overlay, and room code no longer have a disk
-fallback — see `PLATFORM_API.md` and `SAVE_GAME.md`) recovered most of that
-margin. Recheck `build/game.map` after every change because cc65 can move
-code between segments.
+The `HIGH` tail is the primary margin for modest resident-code growth. It has
+been through a wide swing this project: the portrait API drove it down to 76
+bytes (29 in `UPPER`), retiring the disk asset-loading paths recovered most
+of that, and the object-type hot/cold split (below) spent some of it back
+down to the current 1,145/132 bytes. Recheck `build/game.map` after every
+change because cc65 can move code between segments.
 
 ## RAM beneath BASIC and KERNAL
 
@@ -97,27 +99,22 @@ pieces are `$B4D9-$B4FF` (39 bytes), `$B9FD-$B9FF` (3 bytes), and
 
 ### KERNAL ROM: `$E000-$FFFF`
 
-All 8 KiB currently back object-type records 128-255. This RAM is visible in
-normal gameplay, and the raster IRQ already uses direct RAM vectors and saves
-its own A/X/Y registers. It disappears only while a KERNAL routine is mapped
-in. Data can safely live here if no code expects to access it during disk or
-keyboard KERNAL calls; code placed here must never map the KERNAL in while it
-is executing.
+Only `$E000-$E301` (770 bytes) backs object-type records now (types 234-255's
+hot fields); `$E302-$FFF9` is genuinely free. This RAM is visible in normal
+gameplay, and the raster IRQ already uses direct RAM vectors and saves its own
+A/X/Y registers. It disappears only while a KERNAL routine is mapped in. Data
+can safely live here if no code expects to access it during disk or keyboard
+KERNAL calls; code placed here must never map the KERNAL in while it is
+executing.
 
-Reclaiming this area means changing object-type storage. Current assets define
-only types 1-40, but the file/API intentionally reserves all 256 IDs. Practical
-options are:
-
-1. Limit resident types to 128 and reclaim 8 KiB, at the cost of losing IDs
-   128-255.
-2. Split a smaller resident table across `$C000-$CFFF` and part of
-   `$E000-$FFFF`, avoiding RAM under I/O and reclaiming the remaining pages.
-3. Keep 256 logical IDs but load/cache only types needed by the current room,
-   player, and inventory. This retains the platform contract but requires a
-   dependency list and an EasyFlash cache loader.
-
-The third option is the most flexible long-term design. Until that cache
-exists, `$E000-$FFFF` is not free RAM.
+Object-type storage was split (see `PLATFORM_API.md` and
+`EASYFLASH_CARTRIDGE.md`) into a 35-byte hot record (dimensions, hotspot,
+chars, colors, light) kept resident for all 256 IDs at a fixed 35-byte
+stride across `$C000-$E301`, and a 15-byte cold record (name, flags) that
+stays on EasyFlash bank 47 and is fetched on demand via
+`platform_object_type_info_get()`. This reclaimed 7,416 bytes versus the
+previous 64-byte-per-record resident table without dropping any of the 256
+logical IDs or requiring a per-room dependency list.
 
 ## Sprite allocation and portraits
 

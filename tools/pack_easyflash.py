@@ -14,6 +14,21 @@ FIRST_ROOM_BANK = 3
 ROOM_BANKS = 43
 TYPE_BANK_0 = 46
 TYPE_BANK_1 = 47
+# Each 64-byte objects.cobj record splits into a 35-byte hot part (resident,
+# see PlatformObjectType in src/platform.h) and a 15-byte cold part
+# (name+flags, fetched on demand via platform_object_type_info_get()); the
+# remaining 14 bytes are unused padding and are dropped. Keep these in sync
+# with src/platform.c's OBJECT_TYPE_* constants and src/platform.inc.
+OBJECT_TYPE_FILE_BYTES = 64
+OBJECT_TYPE_HOT_BYTES = 35
+OBJECT_TYPE_COLD_BYTES = 15
+OBJECT_TYPE_ZONE_A_COUNT = 117
+OBJECT_TYPE_ZONE_B_COUNT = 117
+OBJECT_TYPE_ZONE_AB_COUNT = OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT
+OBJECT_TYPE_ZONE_C_COUNT = 256 - OBJECT_TYPE_ZONE_AB_COUNT
+OBJECT_TYPE_ZONE_AB_BYTES = OBJECT_TYPE_ZONE_AB_COUNT * OBJECT_TYPE_HOT_BYTES
+OBJECT_TYPE_ZONE_C_BYTES = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_HOT_BYTES
+OBJECT_TYPE_COLD_BASE = OBJECT_TYPE_ZONE_C_BYTES
 INVENTORY_BANK = 48
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
@@ -31,6 +46,44 @@ INVENTORY_LOAD_ADDRESS = 0xA4E9
 INVENTORY_HEADER_BYTES = 16
 INVENTORY_MAX_BYTES = 0x0FF0
 INVENTORY_ABI = 1
+
+
+def split_object_type(record: bytes) -> tuple[bytes, bytes]:
+    """Split one 64-byte objects.cobj record into (hot 35B, cold 15B).
+
+    Layout (see the PlatformObjectType/PlatformObjectTypeInfo comment in
+    src/platform.h): byte 0 dimensions, byte 1 hotspot, bytes 2-15 name,
+    bytes 16-31 chars, bytes 32-47 colors, byte 48 flags, byte 49 light,
+    bytes 50-63 unused padding (dropped).
+    """
+    dimensions_hotspot = record[0:2]
+    name = record[2:16]
+    chars = record[16:32]
+    colors = record[32:48]
+    flags = record[48:49]
+    light = record[49:50]
+    hot = dimensions_hotspot + chars + colors + light
+    cold = name + flags
+    assert len(hot) == OBJECT_TYPE_HOT_BYTES
+    assert len(cold) == OBJECT_TYPE_COLD_BYTES
+    return hot, cold
+
+
+def build_object_type_banks(types: bytes) -> tuple[bytes, bytes]:
+    """Return (bank46, bank47) contents from a 16384-byte objects.cobj."""
+    expected = 256 * OBJECT_TYPE_FILE_BYTES
+    if len(types) != expected:
+        raise ValueError(f"expected {expected} bytes of object types, got {len(types)}")
+    hot_blob = bytearray()
+    cold_blob = bytearray()
+    for i in range(256):
+        record = types[i * OBJECT_TYPE_FILE_BYTES : (i + 1) * OBJECT_TYPE_FILE_BYTES]
+        hot, cold = split_object_type(record)
+        hot_blob += hot
+        cold_blob += cold
+    bank46 = bytes(hot_blob[:OBJECT_TYPE_ZONE_AB_BYTES])
+    bank47 = bytes(hot_blob[OBJECT_TYPE_ZONE_AB_BYTES:]) + bytes(cold_blob)
+    return bank46, bank47
 
 
 def load_room(asset_dir: Path, room_id: int) -> bytes:
@@ -136,10 +189,11 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         start = bank * BANK_BYTES + offset
         image[start : start + ROOM_BYTES] = load_room(asset_dir, room_id)
 
+    bank46, bank47 = build_object_type_banks(types)
     start = TYPE_BANK_0 * BANK_BYTES
-    image[start : start + ROML_BYTES] = types[:ROML_BYTES]
+    image[start : start + len(bank46)] = bank46
     start = TYPE_BANK_1 * BANK_BYTES
-    image[start : start + ROML_BYTES] = types[ROML_BYTES:]
+    image[start : start + len(bank47)] = bank47
     pack_room_code(image, code_dir, asset_dir)
     inventory_data = load_inventory(inventory)
     start = INVENTORY_BANK * BANK_BYTES + ROML_BYTES

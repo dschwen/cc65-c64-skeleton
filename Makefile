@@ -24,6 +24,7 @@ ROOM_CODES := $(addprefix $(ROOM_OUTDIR)/C,$(ROOM_IDS))
 C64_ASSET_OUTDIR := $(OUTDIR)/assets
 C64_ROOM_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/,$(ROOM_IDS))
 C64_OBJECT_TYPES := $(C64_ASSET_OUTDIR)/objects.cobj
+C64_OBJECT_TYPES_INITIAL := $(C64_ASSET_OUTDIR)/objects-initial.hot
 PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
 PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
 C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
@@ -38,7 +39,8 @@ LDFLAGS := -C $(CFG)
 
 SOURCES_C := $(filter-out src/sid.c,$(wildcard src/*.c))
 SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
-ASSETS := assets/charset.cchr assets/tiles.ctil $(C64_ASSET_OUTDIR)/00 $(C64_OBJECT_TYPES)
+ASSETS := assets/charset.cchr assets/tiles.ctil $(C64_ASSET_OUTDIR)/00 $(C64_OBJECT_TYPES) \
+          $(C64_OBJECT_TYPES_INITIAL)
 OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
            $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
 
@@ -87,6 +89,10 @@ $(C64_ASSET_OUTDIR):
 
 $(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
 	python3 tools/prepare_c64_assets.py objects $< $@
+
+# Count must match INITIAL_OBJECT_TYPE_COUNT in src/platform.c.
+$(C64_OBJECT_TYPES_INITIAL): $(C64_OBJECT_TYPES) tools/extract_initial_object_types.py
+	python3 tools/extract_initial_object_types.py --input $< --count 2 --output $@
 
 $(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
 	python3 tools/prepare_c64_assets.py room $< $@

@@ -422,12 +422,19 @@ bank-switch routine and its copy loop must therefore execute from stable RAM.
 
 ### Object-type table placement
 
-The 256 fixed 64-byte records occupy 16 KiB. Keeping them resident makes object
-drawing and collision predictable; fetching a type from EasyFlash for every
-object cell would be too expensive and would complicate IRQ safety.
+Only the fields object drawing and collision actually touch stay resident:
+a 35-byte hot record (dimensions, hotspot, chars, colors, light) for all 256
+IDs. Fetching a type from EasyFlash for every object cell would still be too
+expensive and would complicate IRQ safety, so the hot table is copied into
+RAM once at `platform_object_types_load()` and read directly after that.
 
-The table occupies the physical top 16 KiB (`$C000-$FFFF`), making CPU-port
-state part of the platform ABI:
+Name and the actor-flag byte (15 bytes/record) are not resident at all --
+they stay on EasyFlash bank 47 and are fetched with
+`platform_object_type_info_get()` only where Take/Use/Look text or an
+actor-flag check actually needs them (see `PLATFORM_API.md`). That table was
+originally the full 64-byte record occupying the physical top 16 KiB
+(`$C000-$FFFF`); the hot table alone needs only `$C000-$E301`, making
+CPU-port state part of the platform ABI just for that smaller range:
 
 - `$E000-$FFFF` is hidden by KERNAL ROM in the normal `$01` mapping;
 - `$D000-$DFFF` is hidden by I/O while VIC, SID, CIA, and EasyFlash registers
@@ -444,26 +451,36 @@ usual upper bits `$30`, the relevant mappings are `$37` for BASIC/KERNAL/I/O,
 `$E000` with I/O, and `$34` for RAM throughout `$A000-$FFFF` with I/O hidden.
 The full baseline table is in `GUIDE_cc65_C64.md`.
 
-The 64-byte type record size makes a `$C000` table particularly manageable:
+The 35-byte hot record size does not divide 4 KiB evenly (`4096 / 35 = 117`
+remainder 1), so each zone is sized to hold as many whole records as fit,
+leaving a 1-byte gap before the next zone rather than splitting a record
+across the I/O or KERNAL boundary:
 
 | Type IDs | Address range | Access policy |
 |---:|---|---|
-| `0-63` | `$C000-$CFFF` | always-visible RAM |
-| `64-127` | `$D000-$DFFF` | select all-RAM mapping briefly |
-| `128-255` | `$E000-$FFFF` | KERNAL out, I/O still visible |
+| `0-116` | `$C000-$CFFE` | always-visible RAM (1 free byte at `$CFFF`) |
+| `117-233` | `$D000-$DFFE` | select all-RAM mapping briefly (1 free byte at `$DFFF`) |
+| `234-255` | `$E000-$E301` | KERNAL out, I/O still visible |
 
-No record crosses a 4 KiB boundary. A renderer can access types 0-63 directly
-and types 128-255 while the gameplay mapping is `$35`. For types 64-127 it
-must disable interrupts, select the `$34`-equivalent low bits, copy the one
-64-byte record to an always-visible scratch record, restore `$35`, then render
-from scratch. It cannot draw directly while `$D000` RAM is selected because
-screen colors and VIC registers are hidden at the same time.
+`$E302-$FFF9` is free RAM, reclaimed from the pre-split table.
+
+A renderer can access types 0-116 directly, and types 234-255 while the
+gameplay mapping is `$35`. For types 117-233 it must disable interrupts,
+select the `$34`-equivalent low bits, copy the one 35-byte record to an
+always-visible scratch record, restore `$35`, then render from scratch. It
+cannot draw directly while `$D000` RAM is selected because screen colors and
+VIC registers are hidden at the same time.
 
 Loading the table needs the same staging rule. EasyFlash `$DE00/$DE02` vanish
-when I/O is hidden, so data destined for `$D000-$DFFF` must first be copied from
+when I/O is hidden, so data destined for `$D000-$DFFE` must first be copied from
 ROML to visible scratch RAM, then EasyFlash must be disabled before selecting
-all-RAM mode and copying the staged block to `$D000`. Disk reads should also
-stage that 4 KiB rather than point KERNAL I/O directly at `$D000`.
+all-RAM mode and copying the staged block to `$D000`.
+
+The cold name/flags table is never staged into RAM at all: it is read
+straight from EasyFlash bank 47 (right after that bank's 770 bytes of zone-C
+hot records) into a small scratch buffer with a plain ROML copy, the same
+primitive rooms and portraits use, whenever
+`platform_object_type_info_get()` is called.
 
 The final six bytes of type 255's reserved area are runtime-owned RAM vectors
 at `$FFFA-$FFFF`; type-table loaders restore them after writing the table.

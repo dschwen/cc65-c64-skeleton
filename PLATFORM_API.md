@@ -127,7 +127,7 @@ the record index. Type 0 is reserved for an empty object slot.
 | 32 | 16 | row-major C64 color indices |
 | 48 | 1 | flags; bit 0 means PC/NPC actor |
 | 49 | 1 | emitted light amount; 0 means no light |
-| 50 | 14 | reserved, must be preserved |
+| 50 | 14 | unused padding; dropped at build time, not carried anywhere |
 
 The editor stores names as ASCII. The same build preparation step converts the
 14-byte name fields to PETSCII before the game loads them.
@@ -137,8 +137,14 @@ exceed 16. Only the first `width * height` character/color entries are used.
 
 The 16 color bytes resolve an ambiguity in the original proposed record: an
 object graphic needs both a full eight-bit character code and a color. They
-occupy half of the originally proposed 32 future bytes. The remaining 16 bytes
-hold flags, emitted light, and 14 bytes reserved for later use.
+occupy half of the originally proposed 32 future bytes.
+
+This file format is authoring-only. `tools/pack_easyflash.py` splits every
+64-byte record at build time into the resident `PlatformObjectType` (35
+bytes: width/height, hotspot, chars, colors, light) and the cartridge-only
+`PlatformObjectTypeInfo` (15 bytes: name, flags); see "Object types: hot/cold
+split" below and `EASYFLASH_CARTRIDGE.md`. The 14 padding bytes are dropped
+by that split, not preserved anywhere.
 
 ## Initialization and loading
 
@@ -154,6 +160,7 @@ const char* platform_room_exit_description(const PlatformRoom* room,
                                            uint8_t direction);
 uint8_t platform_object_types_load(void);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
+const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
 ```
@@ -183,7 +190,8 @@ copy. The current asset defines it as actor type 1, "The Hero".
 reads into staging RAM, validates the 1,257-byte record, and only then commits
 it to the caller's room. Loading into the global `platform_room` also updates
 `platform_current_room` and rebinds `platform_player` to `platform_player_slot`.
-`platform_object_types_load()` reads all 16 KiB of the type list. Both return:
+`platform_object_types_load()` reads the resident hot fields for all 256
+types (see "Object types: hot/cold split" below). Both return:
 
 | Result | Meaning |
 |---|---|
@@ -203,6 +211,30 @@ if (result == PLATFORM_OK) {
     result = platform_room_load(&platform_room, 0x2a);
 }
 ```
+
+### Object types: hot/cold split
+
+Only the fields the render/collision path actually touches stay resident:
+`platform_object_type_get()` returns a 35-byte `PlatformObjectType`
+(dimensions, hotspot, chars, colors, light) for all 256 IDs, backed by three
+resident zones at a fixed 35-byte stride -- always-visible RAM for IDs
+0-116, RAM beneath I/O for 117-233 (copied to scratch with IRQs disabled),
+RAM beneath KERNAL for 234-255 (same). The returned pointer is only valid
+until the next call to either accessor below.
+
+Name and the actor-flag byte are not resident at all. Call
+`platform_object_type_info_get(type_id)` to fetch the 15-byte
+`PlatformObjectTypeInfo` (name, flags) directly from its fixed EasyFlash
+bank/offset -- a real cartridge bank-switch, heavier than
+`platform_object_type_get()`. Only call it from discrete, human-input-paced
+code (Take/Use/Look text, actor-flag checks before adding/counting objects),
+never per frame or per rendered cell. `PLATFORM_OBJECT_FLAG_ACTOR` now tests
+`info->flags`, not a field on the hot record.
+
+This reclaimed 7,416 bytes of RAM beneath KERNAL (`$E302-$FFF9`) that the
+previous 64-byte-per-record resident table fully occupied, without dropping
+any of the 256 logical type IDs. See `EASYFLASH_CARTRIDGE.md` for the bank
+layout `tools/pack_easyflash.py` produces.
 
 ### Dynamic-room storage contract
 

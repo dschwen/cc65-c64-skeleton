@@ -23,6 +23,23 @@
 #define EF_PORTRAIT_FIRST_BANK  49u
 #define EF_PORTRAITS_PER_BANK   32u
 
+/*
+ * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
+ * stride across the same three resident zones the old 64-byte records used:
+ * zone A (types 0-116) always visible at $C000, zone B (117-233) beneath
+ * I/O at $D000, zone C (234-255) beneath KERNAL at $E000. Cold records
+ * (PlatformObjectTypeInfo, 15 bytes) are never resident; they stay on
+ * EasyFlash bank 47 right after zone C's hot bytes. tools/pack_easyflash.py
+ * must lay bank 46/47 out exactly this way.
+ */
+#define OBJECT_TYPE_RECORD_BYTES     35u
+#define OBJECT_TYPE_ZONE_A_COUNT     117u
+#define OBJECT_TYPE_ZONE_B_COUNT     117u
+#define OBJECT_TYPE_ZONE_AB_COUNT    (OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT)
+#define OBJECT_TYPE_ZONE_C_COUNT     (PLATFORM_OBJECT_TYPE_COUNT - OBJECT_TYPE_ZONE_AB_COUNT)
+#define OBJECT_TYPE_COLD_BYTES       15u
+#define OBJECT_TYPE_COLD_BASE        (OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_RECORD_BYTES)
+
 #define PORTRAIT_FIRST_SPRITE   1u
 #define PORTRAIT_BG_SPRITE      5u
 #define PORTRAIT_SPRITE_WIDTH   24u
@@ -56,7 +73,6 @@ void raster_irq_resume(void);
 void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
-void __fastcall__ platform_object_type_stage(uint8_t type_id);
 void platform_easyflash_copy_roml(void);
 extern uint8_t platform_ef_copy_bank;
 extern uint16_t platform_ef_copy_offset;
@@ -85,9 +101,16 @@ uint8_t platform_current_room;
 uint8_t platform_player_slot;
 PlatformObject* platform_player;
 #pragma bss-name (push, "OBJECTTYPES")
-PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
+static PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
+#pragma bss-name (pop)
+#pragma bss-name (push, "OBJECTTYPES_B")
+static PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
+#pragma bss-name (pop)
+#pragma bss-name (push, "OBJECTTYPES_C")
+static PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
 #pragma bss-name (pop)
 PlatformObjectType platform_object_type_scratch;
+static PlatformObjectTypeInfo object_type_info_scratch;
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
 #pragma bss-name (push, "ZEROPAGE")
@@ -226,13 +249,39 @@ static uint8_t object_type_is_valid(const PlatformObjectType* type) {
            HOTSPOT_X(type) < width && HOTSPOT_Y(type) < height;
 }
 
-#pragma code-name (push, "UPPERCODE")
+#pragma code-name (push, "HIGHCODE")
 const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
-    if (type_id >= 64u && type_id < 128u) {
-        platform_object_type_stage(type_id);
-        return &platform_object_type_scratch;
+    uint8_t irq_status;
+
+    if (type_id < OBJECT_TYPE_ZONE_A_COUNT) {
+        return &object_types_a[type_id];
     }
-    return &platform_object_types[type_id];
+    irq_status = platform_irq_save_disable();
+    platform_memory_all_ram();
+    if (type_id < OBJECT_TYPE_ZONE_AB_COUNT) {
+        memcpy(&platform_object_type_scratch,
+               &object_types_b[type_id - OBJECT_TYPE_ZONE_A_COUNT],
+               sizeof(platform_object_type_scratch));
+    } else {
+        memcpy(&platform_object_type_scratch,
+               &object_types_c[type_id - OBJECT_TYPE_ZONE_AB_COUNT],
+               sizeof(platform_object_type_scratch));
+    }
+    platform_memory_game();
+    platform_irq_restore(irq_status);
+    return &platform_object_type_scratch;
+}
+#pragma code-name (pop)
+
+#pragma code-name (push, "HIGHCODE")
+const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
+    platform_ef_copy_bank = EF_TYPE_BANK_1;
+    platform_ef_copy_offset = OBJECT_TYPE_COLD_BASE +
+        (uint16_t)type_id * OBJECT_TYPE_COLD_BYTES;
+    platform_ef_copy_destination = (uint16_t)&object_type_info_scratch;
+    platform_ef_copy_size = OBJECT_TYPE_COLD_BYTES;
+    platform_easyflash_copy_roml();
+    return &object_type_info_scratch;
 }
 #pragma code-name (pop)
 
@@ -407,7 +456,7 @@ void platform_init(void) {
     if (!cartridge) {
         platform_object_types_clear();
         platform_memory_game();
-        memcpy(platform_object_types, initial_object_type_data,
+        memcpy(object_types_a, initial_object_type_data,
                INITIAL_OBJECT_TYPE_COUNT * sizeof(PlatformObjectType));
     } else {
         platform_memory_game();
@@ -531,26 +580,30 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 uint8_t platform_object_types_load(void) {
     uint8_t irq_status;
 
+    /* Zone A: types 0-116, bank 46 offset 0, direct to $C000 (never shadowed). */
     platform_ef_copy_bank = EF_TYPE_BANK_0;
     platform_ef_copy_offset = 0u;
-    platform_ef_copy_destination = 0xc000u;
-    platform_ef_copy_size = 4096u;
+    platform_ef_copy_destination = (uint16_t)object_types_a;
+    platform_ef_copy_size = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
 
-    platform_ef_copy_offset = 4096u;
+    /* Zone B: types 117-233, bank 46 offset 4095, staged via $A4E9 then to $D000. */
+    platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
-    platform_ef_copy_size = 4096u;
+    platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
     irq_status = platform_irq_save_disable();
     platform_memory_all_ram();
-    memcpy(&platform_object_types[64], P_OBJECT_TYPE_STAGE, 4096u);
+    memcpy(object_types_b, P_OBJECT_TYPE_STAGE,
+           OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES);
     platform_memory_game();
     platform_irq_restore(irq_status);
 
+    /* Zone C: types 234-255, bank 47 offset 0, direct to $E000 (KERNAL hidden). */
     platform_ef_copy_bank = EF_TYPE_BANK_1;
     platform_ef_copy_offset = 0u;
-    platform_ef_copy_destination = 0xe000u;
-    platform_ef_copy_size = 8192u;
+    platform_ef_copy_destination = (uint16_t)object_types_c;
+    platform_ef_copy_size = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
     raster_irq_vectors_restore();
     return PLATFORM_OK;
@@ -1007,7 +1060,7 @@ uint16_t platform_room_object_count(const PlatformRoom* room,
     count = 0;
     for (i = 0; i < PLATFORM_ROOM_OBJECT_COUNT; ++i) {
         if (room->objects[i].type == 0u) continue;
-        actor = platform_object_type_get(room->objects[i].type)->reserved[0] &
+        actor = platform_object_type_info_get(room->objects[i].type)->flags &
                 PLATFORM_OBJECT_FLAG_ACTOR;
         if (actor_only == 0u || (actor_only == 1u && actor) ||
             (actor_only == 2u && !actor)) {
@@ -1028,7 +1081,7 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
     }
     definition = platform_object_type_get(type);
     if (!object_type_is_valid(definition)) return PLATFORM_ERR_ARGUMENT;
-    is_actor = definition->reserved[0] & PLATFORM_OBJECT_FLAG_ACTOR;
+    is_actor = platform_object_type_info_get(type)->flags & PLATFORM_OBJECT_FLAG_ACTOR;
     if (!is_actor && platform_room_object_count(room, 2u) >= PLATFORM_NON_ACTOR_LIMIT) {
         return PLATFORM_ERR_LIMIT;
     }
@@ -1257,11 +1310,11 @@ static void look_append_count(uint8_t count) {
 }
 
 static void look_append_type_name(uint8_t type_id) {
-    const PlatformObjectType* type;
+    const PlatformObjectTypeInfo* info;
     uint8_t i;
-    type = platform_object_type_get(type_id);
-    for (i = 0u; i < sizeof(type->name) && type->name[i] != '\0'; ++i) {
-        look_append_char(type->name[i]);
+    info = platform_object_type_info_get(type_id);
+    for (i = 0u; i < sizeof(info->name) && info->name[i] != '\0'; ++i) {
+        look_append_char(info->name[i]);
     }
 }
 

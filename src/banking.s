@@ -5,7 +5,6 @@
 .export _platform_memory_game
 .export _platform_memory_kernal
 .export _platform_memory_all_ram
-.export _platform_object_type_stage
 .export _platform_easyflash_enable
 .export _platform_easyflash_enable_16
 .export _platform_easyflash_disable
@@ -20,7 +19,6 @@
 .export _platform_object_types_clear
 .export _platform_boot_is_easyflash
 
-.import _platform_object_type_scratch
 .import _raster_irq_resync
 
 .segment "DATA"
@@ -234,43 +232,3 @@ _platform_object_types_clear:
     plp
     rts
 
-; fastcall: A = type ID in the $D000-$DFFF quarter (64-127). Copy its
-; 64-byte record to always-visible scratch while I/O and IRQs are hidden.
-_platform_object_type_stage:
-    sec
-    sbc #64
-    pha
-    and #$03
-    tax
-    lda stage_low,x
-    sta @read+1
-    pla
-    lsr
-    lsr
-    clc
-    adc #$d0
-    sta @read+2
-
-    php
-    sei
-    lda CPU_PORT
-    pha
-    and #$f8
-    ora #CPU_MAP_ALL_RAM
-    sta CPU_PORT
-    ldx #0
-@copy:
-@read:
-    lda $d000,x
-    sta _platform_object_type_scratch,x
-    inx
-    cpx #OBJECT_TYPE_SIZE
-    bne @copy
-    pla
-    sta CPU_PORT
-    plp
-    rts
-
-.segment "RODATA"
-stage_low:
-    .byte $00, $40, $80, $c0

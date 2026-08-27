@@ -15,10 +15,10 @@ SCREEN_RAM          = $0400
 COLOR_RAM           = $d800
 TILE_DATA           = $3000
 TILE_PROPERTIES     = $3800
-OBJECT_TYPES        = $c000
-OBJECT_TYPE_SIZE    = 64
-OBJECT_TYPE_CHARS   = 16
-OBJECT_TYPE_COLORS  = 32
+; Resident PlatformObjectType layout (src/platform.h): dimensions, hotspot,
+; chars[16], colors[16], light. Keep these byte offsets synchronized with it.
+OBJECT_TYPE_CHARS   = 2
+OBJECT_TYPE_COLORS  = 18
 
 ROOM_TILES          = 13
 MAP_WIDTH_TILES     = 20

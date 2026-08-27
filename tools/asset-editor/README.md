@@ -193,7 +193,9 @@ Per record:
 - Byte 32..47: 16 corresponding C64 color indices.
 - Byte 48: flags; bit 0 marks a PC/NPC actor.
 - Byte 49: emitted light amount; `0` means no light.
-- Byte 50..63: reserved.
+- Byte 50..63: unused padding. `tools/pack_easyflash.py` drops these bytes at
+  build time (see `PLATFORM_API.md`'s object-type hot/cold split) rather than
+  shipping them to the cartridge, so the editor need not preserve them.
 
 Width and height must be nonzero and `width * height` must not exceed 16.
 

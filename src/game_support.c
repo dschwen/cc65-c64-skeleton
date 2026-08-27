@@ -12,7 +12,7 @@ uint8_t platform_text_output_line;
 static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
                                 uint8_t wanted, uint8_t* found_slot) {
     PlatformObject* object;
-    const PlatformObjectType* object_type;
+    const PlatformObjectTypeInfo* object_info;
     uint16_t slot;
     uint16_t limit;
     uint8_t count;
@@ -23,8 +23,8 @@ static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
         object = &platform_room.objects[slot];
         if (object->type != 0u && object != platform_player &&
             platform_object_intersects_tile(object, tile_x, tile_y)) {
-            object_type = platform_object_type_get(object->type);
-            if ((object_type->reserved[0] & PLATFORM_OBJECT_FLAG_ACTOR) == 0u) {
+            object_info = platform_object_type_info_get(object->type);
+            if ((object_info->flags & PLATFORM_OBJECT_FLAG_ACTOR) == 0u) {
                 if (count == wanted && found_slot != 0) *found_slot = (uint8_t)slot;
                 ++count;
             }
@@ -152,15 +152,15 @@ uint8_t game_inventory_remove(uint8_t type, uint8_t quantity) {
 uint8_t game_take_object(uint8_t slot) {
     PlatformObject* object;
     PlatformObject original;
-    const PlatformObjectType* object_type;
+    const PlatformObjectTypeInfo* object_info;
     uint8_t type;
     uint8_t result;
 
     object = &platform_room.objects[slot];
     type = object->type;
     if (type == 0u || object == platform_player) return PLATFORM_ERR_ARGUMENT;
-    object_type = platform_object_type_get(type);
-    if ((object_type->reserved[0] & PLATFORM_OBJECT_FLAG_ACTOR) != 0u) {
+    object_info = platform_object_type_info_get(type);
+    if ((object_info->flags & PLATFORM_OBJECT_FLAG_ACTOR) != 0u) {
         return PLATFORM_ERR_ARGUMENT;
     }
     original = *object;

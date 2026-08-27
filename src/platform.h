@@ -14,6 +14,8 @@
 #define PLATFORM_ROOM_FILE_BYTES      1257u
 #define PLATFORM_ROOM_FORMAT          3u
 #define PLATFORM_OBJECT_TYPE_COUNT    256u
+/* objects.cobj authored/file record size (see tools/asset-editor/README.md).
+ * The resident PlatformObjectType struct is smaller; see its comment below. */
 #define PLATFORM_OBJECT_TYPE_BYTES    64u
 #define PLATFORM_OBJECT_CELL_COUNT    16u
 #define PLATFORM_NON_ACTOR_LIMIT      200u
@@ -89,24 +91,39 @@ typedef struct PlatformObject {
 } PlatformObject;
 
 /*
- * Fixed 64-byte object-type record used by objects.cobj and the web editor.
+ * The 64-byte objects.cobj/web-editor record is split at build time
+ * (tools/pack_easyflash.py) into two EasyFlash-resident pieces so only the
+ * fields the render/collision path needs stay in scarce resident RAM:
+ *
+ * PlatformObjectType (35 bytes) is fully resident for all 256 IDs.
  * dimensions: high nibble width, low nibble height, in character cells.
  * hotspot:    high nibble x, low nibble y, relative to the graphic origin.
  * chars:      row-major screen character codes; 0 is transparent.
  * colors:     row-major C64 colors corresponding to chars.
- * reserved[0] stores PLATFORM_OBJECT_FLAG_* bits.
- * reserved[1] stores emitted light; 0 means the object emits no light.
- * Editor names are ASCII; build-prepared records contain PETSCII names.
+ * light:      emitted light; 0 means the object emits no light.
  * Width * height must be <= PLATFORM_OBJECT_CELL_COUNT.
+ *
+ * PlatformObjectTypeInfo (15 bytes) stays on the cartridge and is fetched on
+ * demand with platform_object_type_info_get() only where it is actually
+ * needed (Take/Use/Look text, actor-flag checks) -- never on the per-frame
+ * render/collision path. name is ASCII in the editor, PETSCII after the
+ * build-prepare step. flags holds PLATFORM_OBJECT_FLAG_* bits.
+ *
+ * The file's remaining 14 bytes per record are unused padding and are
+ * dropped entirely rather than carried into either resident form.
  */
 typedef struct PlatformObjectType {
     uint8_t dimensions;
     uint8_t hotspot;
-    char name[14];
     uint8_t chars[PLATFORM_OBJECT_CELL_COUNT];
     uint8_t colors[PLATFORM_OBJECT_CELL_COUNT];
-    uint8_t reserved[16];
+    uint8_t light;
 } PlatformObjectType;
+
+typedef struct PlatformObjectTypeInfo {
+    char name[14];
+    uint8_t flags;
+} PlatformObjectTypeInfo;
 
 /*
  * Exact 1,257-byte room file. Files are named 00 through FF.
@@ -142,7 +159,6 @@ extern PlatformRoom platform_room;
 extern uint8_t platform_current_room;
 extern uint8_t platform_player_slot;
 extern PlatformObject* platform_player;
-extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 extern volatile uint8_t platform_frame_counter;
 /* Unmodified character colors and one brightness level per 2x2 tile. */
 extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
@@ -152,7 +168,7 @@ extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
 extern const uint8_t platform_light_distance[16u * 16u];
 
-#define PLATFORM_OBJECT_LIGHT(type) ((type)->reserved[1])
+#define PLATFORM_OBJECT_LIGHT(type) ((type)->light)
 
 /*
  * Initialize VIC/banking state. If the EasyFlash cartridge boot marker is
@@ -183,8 +199,24 @@ const char* platform_room_exit_description(const PlatformRoom* room,
 /* Load all 256 fixed-size object types from EasyFlash. */
 uint8_t platform_object_types_load(void);
 
-/* Resolve a type record, staging IDs 64-127 from RAM beneath I/O. */
+/*
+ * Resolve the resident hot record. Most IDs point directly into resident
+ * RAM; a middle range is staged from RAM beneath I/O and a high range from
+ * RAM beneath KERNAL, each into the same scratch record (see platform.c for
+ * the exact ID boundaries). The returned pointer is only valid until the
+ * next call.
+ */
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
+
+/*
+ * Fetch the name/flags cold record directly from EasyFlash. This is a real
+ * cartridge bank-switch (heavier than platform_object_type_get()) and must
+ * only be called from discrete, human-input-paced code paths (Take/Use/Look
+ * text, actor-flag checks before adding/counting objects) -- never per
+ * frame or per rendered cell. The returned pointer is only valid until the
+ * next call.
+ */
+const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
 
 /*
  * Atomically replace the resident room while carrying one actor. The

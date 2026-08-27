@@ -1,30 +1,40 @@
 .setcpu "6502"
 .macpack longbranch
 
-.export _inventory_overlay_run_native
-.export _inventory_overlay_validate_native
-.export _inventory_validate_bss_bounds
-.export _inventory_validate_checksum
-.export _inventory_validate_invalid
+; Generic loaded-overlay entry/validator, shared by every overlay that uses
+; the 16-byte header/ABI convention at $A4E9 (inventory/story, save/load):
+; JMP vector, 2-byte magic, ABI byte, size/BSS-offset/BSS-size/checksum
+; words. platform_overlay_magic0/1 (src/platform.c) select which overlay's
+; magic is expected; each caller sets them before loading.
+
+.export _platform_overlay_run_native
+.export _platform_overlay_validate_native
+.export _platform_overlay_validate_bss_bounds
+.export _platform_overlay_validate_checksum
+.export _platform_overlay_validate_invalid
+
+.import _platform_overlay_magic0
+.import _platform_overlay_magic1
 
 .importzp ptr1, ptr2, tmp1, tmp2, tmp3, tmp4
 
-INVENTORY_ENTRY = $a4e9
-INVENTORY_VALIDATE_POST = $b9ca
+OVERLAY_ENTRY = $a4e9
+OVERLAY_VALIDATE_POST = $b9ca
 
 .segment "MIDCODE"
 
-; The overlay header starts with JMP inventory_overlay_run. Tail-calling that
-; vector lets the C function's RTS return directly to the resident C caller.
-_inventory_overlay_run_native:
-    jmp INVENTORY_ENTRY
+; The overlay header starts with JMP <overlay entry>. Tail-calling that
+; vector lets the loaded C function's RTS return directly to the resident
+; C caller.
+_platform_overlay_run_native:
+    jmp OVERLAY_ENTRY
 
 ; fastcall: AX = loaded payload size. Validate the fixed overlay header,
 ; checksum its loadable payload, and clear the linked BSS. Returns a platform
 ; status in A. This is deliberately native: cc65's generated 16-bit bounds
 ; and checksum loops cost several hundred resident bytes.
 .segment "STATEEXT"
-_inventory_overlay_validate_native:
+_platform_overlay_validate_native:
     sta tmp3
     stx tmp4
 
@@ -42,63 +52,63 @@ _inventory_overlay_validate_native:
     bcs @state_invalid
 
 @header:
-    lda INVENTORY_ENTRY
+    lda OVERLAY_ENTRY
     cmp #$4c
     bne @state_invalid
-    lda INVENTORY_ENTRY+3
-    cmp #$49
+    lda OVERLAY_ENTRY+3
+    cmp _platform_overlay_magic0
     bne @state_invalid
-    lda INVENTORY_ENTRY+4
-    cmp #$55
+    lda OVERLAY_ENTRY+4
+    cmp _platform_overlay_magic1
     bne @state_invalid
-    lda INVENTORY_ENTRY+5
+    lda OVERLAY_ENTRY+5
     cmp #$01
     bne @state_invalid
-    lda INVENTORY_ENTRY+6
+    lda OVERLAY_ENTRY+6
     cmp tmp3
     bne @state_invalid
-    lda INVENTORY_ENTRY+7
+    lda OVERLAY_ENTRY+7
     cmp tmp4
     bne @state_invalid
 
     ; Entry target must lie in [base, base + size).
-    lda INVENTORY_ENTRY+1
+    lda OVERLAY_ENTRY+1
     sta ptr1
-    lda INVENTORY_ENTRY+2
+    lda OVERLAY_ENTRY+2
     sta ptr1+1
-    cmp #>INVENTORY_ENTRY
+    cmp #>OVERLAY_ENTRY
     bcc @state_invalid
-    jne INVENTORY_VALIDATE_POST
+    jne OVERLAY_VALIDATE_POST
     lda ptr1
-    cmp #<INVENTORY_ENTRY
+    cmp #<OVERLAY_ENTRY
     bcc @state_invalid
-    jmp INVENTORY_VALIDATE_POST
+    jmp OVERLAY_VALIDATE_POST
 @state_invalid:
-    jmp _inventory_validate_invalid
+    jmp _platform_overlay_validate_invalid
 
 .segment "STATEEXT"
-_inventory_validate_bss_bounds:
+_platform_overlay_validate_bss_bounds:
     ; offset + BSS size must stay at or below $0ff0.
     clc
-    lda INVENTORY_ENTRY+8
-    adc INVENTORY_ENTRY+10
+    lda OVERLAY_ENTRY+8
+    adc OVERLAY_ENTRY+10
     sta ptr1
-    lda INVENTORY_ENTRY+9
-    adc INVENTORY_ENTRY+11
+    lda OVERLAY_ENTRY+9
+    adc OVERLAY_ENTRY+11
     sta ptr1+1
     cmp #$0f
-    jcc _inventory_validate_checksum
-    jne _inventory_validate_invalid
+    jcc _platform_overlay_validate_checksum
+    jne _platform_overlay_validate_invalid
     lda ptr1
     cmp #$f1
-    jcs _inventory_validate_invalid
-    jmp _inventory_validate_checksum
+    jcs _platform_overlay_validate_invalid
+    jmp _platform_overlay_validate_checksum
 
 .segment "UPPERCODE"
-_inventory_validate_checksum:
-    lda #<(INVENTORY_ENTRY+16)
+_platform_overlay_validate_checksum:
+    lda #<(OVERLAY_ENTRY+16)
     sta ptr1
-    lda #>(INVENTORY_ENTRY+16)
+    lda #>(OVERLAY_ENTRY+16)
     sta ptr1+1
     sec
     lda tmp3
@@ -135,23 +145,23 @@ _inventory_validate_checksum:
 
 @checksum_done:
     lda tmp1
-    cmp INVENTORY_ENTRY+12
-    jne _inventory_validate_invalid
+    cmp OVERLAY_ENTRY+12
+    jne _platform_overlay_validate_invalid
     lda tmp2
-    cmp INVENTORY_ENTRY+13
-    jne _inventory_validate_invalid
+    cmp OVERLAY_ENTRY+13
+    jne _platform_overlay_validate_invalid
 
     ; BSS pointer = base + relative offset; length = header BSS size.
     clc
-    lda #<INVENTORY_ENTRY
-    adc INVENTORY_ENTRY+8
+    lda #<OVERLAY_ENTRY
+    adc OVERLAY_ENTRY+8
     sta ptr1
-    lda #>INVENTORY_ENTRY
-    adc INVENTORY_ENTRY+9
+    lda #>OVERLAY_ENTRY
+    adc OVERLAY_ENTRY+9
     sta ptr1+1
-    lda INVENTORY_ENTRY+10
+    lda OVERLAY_ENTRY+10
     sta ptr2
-    lda INVENTORY_ENTRY+11
+    lda OVERLAY_ENTRY+11
     sta ptr2+1
     lda #0
 @clear_next:
@@ -177,7 +187,7 @@ _inventory_validate_checksum:
     lda #0
     tax
     rts
-_inventory_validate_invalid:
+_platform_overlay_validate_invalid:
     lda #2
     ldx #0
     rts

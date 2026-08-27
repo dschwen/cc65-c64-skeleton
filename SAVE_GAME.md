@@ -4,6 +4,25 @@ The save system separates immutable assets from mutable game state. Room files
 remain the original `00` through `FF` assets in EasyFlash ROM. A running game
 stores only object slots that differ from those base assets.
 
+**Current status:** F3 Load, the slot-list browser, and disk reads all work
+and are verified in VICE (confirmed against a real d64: peeking 16 candidate
+files on an empty disk correctly reports every slot empty, with no hang or
+corruption). F1 Save's UI, encoding, and KERNAL call sequence are all in
+place, but the disk **write** does not currently work: `platform_disk_write_block()`
+in `modules/disk_io.s` reports success (clean `READST`, byte count matches)
+after `CHKOUT`/`CHROUT`/`CLOSE`, but no file appears afterward -- confirmed
+both by inspecting the resulting `.d64` from outside VICE and by an
+immediate in-session readback of the same filename failing, and the drive's
+own error channel reporting 62 (FILE NOT FOUND) after a write the
+data-channel status had already claimed succeeded. The identical KERNAL call
+sequence (scratch, then `SETLFS`/`SETNAM"...,W"`/`OPEN`/`CHKOUT`/`CHROUT`/
+`CLOSE`) works correctly in a plain BASIC-booted VICE session against the
+same device and image, so this is specific to running from this game's
+cartridge/overlay context; root cause not yet found despite testing simpler
+filename forms, bypassing the scratch step, suspending the custom raster IRQ,
+and re-enabling the CIA1 jiffy-clock interrupt around the write. See the
+`KNOWN ISSUE` comment at the top of `modules/disk_io.s`.
+
 ## Implemented runtime layer
 
 `src/world.c` installs the room store/restore hooks used by
@@ -71,10 +90,11 @@ Header, 16 bytes:
 | 12 | 2 | 16-bit payload checksum |
 | 14 | 2 | reserved, zero |
 
-Payload prefix, 114 bytes:
+Payload prefix, 130 bytes:
 
 | Bytes | Meaning |
 |---:|---|
+| 16 | slot name: up to 16 printable characters (space, `0`-`9`, `A`-`Z`), zero-padded; unused trailing bytes are `0` |
 | 4 | turn |
 | 2 | day |
 | 1 each | hour, minute |
@@ -85,18 +105,30 @@ Payload prefix, 114 bytes:
 | 2 | room-delta count |
 
 The prefix is followed by `delta_count` five-byte records in journal order.
-The maximum v1 record is 1,130 bytes including its header. Pending transitions
+The maximum v1 record is 1,146 bytes including its header. Pending transitions
 and `game_entry_reason` are transient and are not serialized. A save request
 must finish or reject a pending room transition, then call
 `game_world_capture_current()` before encoding.
 
 ## Disk backend plan
 
-Each numbered save slot uses two files, for example `S0A` and `S0B`. Saving
-writes the older/invalid side with generation + 1, closes it, then verifies its
-header and checksum. Loading validates both files and chooses the newest valid
+8 numbered slots (`0`-`7`) are offered; F1 opens the Save menu, F3 opens the
+Load menu (both resident keys, wired in `src/main.c`, dispatching into an
+EasyFlash overlay -- see "Save/load overlay" below). Each slot uses two
+files on device 8, for example `S0A` and `S0B`. Saving writes the
+older/invalid side with generation + 1, closes it, then verifies its header
+and checksum. Loading validates both files and chooses the newest valid
 generation. A torn write therefore leaves the other file usable. The
 implementation should stream rather than require another 1.2 KiB buffer.
+
+Both menus open on a slot-list screen built by reading, for each slot's
+newest valid generation, only the 16-byte file header plus the leading 22
+payload-prefix bytes (name, then turn/day) -- enough to show a name and a
+short summary without decoding the whole record. An unreadable/absent slot
+shows as empty. Save additionally prompts for a name (defaulting to the
+slot's existing name, if any) before writing the complete record. Loading a
+slot runs the full transactional load below; saving over an occupied slot
+overwrites both its name and content.
 
 Loading is transactional:
 
@@ -116,6 +148,36 @@ The temporary decode area can reuse `$A4E9-$B4D8`, whose render buffers are
 rebuildable. Code performing the load cannot run from the room overlay while
 that overlay is replaced; it needs a resident trampoline or a dedicated save
 overlay with a resident completion step.
+
+## Save/load overlay
+
+`modules/saveload.c` is an independently linked overlay -- the disk I/O,
+slot-list UI, and name entry all live there, not resident, for the same
+reason as the inventory overlay (see `STORY_CODE_API.md`): it temporarily
+owns `$A4E9-$B4D8`, the same rebuildable render/lighting work RAM the
+inventory overlay uses, and the two never run at once. EasyFlash stores its
+loadable bytes in bank 48 ROML (the inventory overlay already owns that
+bank's ROMH half, so this adds no new bank), with its own 16-byte header
+(`SL` magic, ABI 1) validated by the same generic, resident overlay loader
+`game_inventory_show()` uses (`platform_overlay_load()`,
+`platform_overlay_validate_native()` in `src/platform.c`/`src/inventory_api.s`,
+parameterized by bank, ROML/ROMH half, and expected magic bytes -- resident
+code budget is too tight to duplicate that validator per overlay).
+
+`src/main.c` maps `PLATFORM_KEY_SAVE` (F1) and `PLATFORM_KEY_LOAD` (F3) to
+resident wrappers `game_save_show()`/`game_load_show()` (in
+`src/saveload_runtime.c`, mirroring `game_inventory_show()`): load and
+validate the overlay, run it in the requested mode, then restore the split
+charset and redraw exactly like the inventory overlay's wrapper.
+
+Inside the overlay, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
+`CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with
+`platform_memory_kernal()`/`platform_memory_game()` (already resident,
+previously unused) rather than a global `SEI`: KERNAL disk I/O needs
+interrupts enabled for its own timing, and the raster IRQ already has a
+`$0314`-vector entry point for exactly this "KERNAL mapped in" period (see
+`EASYFLASH_CARTRIDGE.md`'s IRQ/KERNAL independence section). All save
+storage uses device 8.
 
 ## No EasyFlash-flash save backend
 

@@ -30,6 +30,13 @@ OBJECT_TYPE_ZONE_AB_BYTES = OBJECT_TYPE_ZONE_AB_COUNT * OBJECT_TYPE_HOT_BYTES
 OBJECT_TYPE_ZONE_C_BYTES = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_HOT_BYTES
 OBJECT_TYPE_COLD_BASE = OBJECT_TYPE_ZONE_C_BYTES
 INVENTORY_BANK = 48
+# Save/load overlays don't fit as one; the browse/load overlay ("SL")
+# shares bank 48 with the inventory overlay (inventory occupies ROMH, this
+# occupies ROML), and the save-detail overlay ("SV": name entry + encode +
+# write) uses bank 47 ROMH, otherwise unused (bank 47 ROML holds the
+# object-type cold table). Neither costs an extra bank.
+SAVELOAD_BANK = 48
+SAVELOAD_SAVE_BANK = TYPE_BANK_1
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
@@ -220,25 +227,29 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
     image[start:start + RESOURCE_DIRECTORY_BYTES] = directory
 
 
-def load_inventory(path: Path) -> bytes:
+def load_overlay(path: Path, magic: bytes) -> bytes:
+    """Load and validate an independently linked $A4E9-window overlay
+    (inventory/story, save/load, ...); see tools/finalize_inventory_overlay.py,
+    which patches the size/BSS/checksum fields this function checks."""
     raw = path.read_bytes()
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != INVENTORY_LOAD_ADDRESS:
-        raise ValueError(f"{path}: invalid inventory load address")
+        raise ValueError(f"{path}: invalid overlay load address")
     data = raw[2:]
     if not INVENTORY_HEADER_BYTES <= len(data) <= INVENTORY_MAX_BYTES:
-        raise ValueError(f"{path}: invalid inventory size {len(data)}")
+        raise ValueError(f"{path}: invalid overlay size {len(data)}")
     if (data[0] != 0x4C or
-            data[3:6] != bytes((0x49, 0x55, INVENTORY_ABI)) or
+            data[3:6] != magic + bytes((INVENTORY_ABI,)) or
             int.from_bytes(data[6:8], "little") != len(data)):
-        raise ValueError(f"{path}: invalid inventory header")
+        raise ValueError(f"{path}: invalid overlay header")
     checksum = sum(data[INVENTORY_HEADER_BYTES:]) & 0xFFFF
     if checksum != int.from_bytes(data[12:14], "little"):
-        raise ValueError(f"{path}: invalid inventory checksum")
+        raise ValueError(f"{path}: invalid overlay checksum")
     return data
 
 
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
-                code_dir: Path, inventory: Path) -> bytes:
+                code_dir: Path, inventory: Path, saveload: Path,
+                saveload_save: Path) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -259,9 +270,15 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     start = TYPE_BANK_1 * BANK_BYTES
     image[start : start + len(bank47)] = bank47
     pack_room_code(image, code_dir, asset_dir)
-    inventory_data = load_inventory(inventory)
+    inventory_data = load_overlay(inventory, b"IU")
     start = INVENTORY_BANK * BANK_BYTES + ROML_BYTES
     image[start:start + len(inventory_data)] = inventory_data
+    saveload_data = load_overlay(saveload, b"SL")
+    start = SAVELOAD_BANK * BANK_BYTES
+    image[start:start + len(saveload_data)] = saveload_data
+    saveload_save_data = load_overlay(saveload_save, b"SV")
+    start = SAVELOAD_SAVE_BANK * BANK_BYTES + ROML_BYTES
+    image[start:start + len(saveload_save_data)] = saveload_save_data
     for portrait_id in range(256):
         bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
         offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
@@ -278,11 +295,14 @@ def main() -> None:
     parser.add_argument("--objects", type=Path, required=True)
     parser.add_argument("--room-code", type=Path, required=True)
     parser.add_argument("--inventory", type=Path, required=True)
+    parser.add_argument("--saveload", type=Path, required=True)
+    parser.add_argument("--saveload-save", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
-                    args.room_code, args.inventory)
+                    args.room_code, args.inventory, args.saveload,
+                    args.saveload_save)
     )
 
 

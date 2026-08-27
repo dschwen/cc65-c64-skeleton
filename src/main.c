@@ -193,6 +193,12 @@ int main(void) {
             case PLATFORM_KEY_INVENTORY:
                 game_inventory_show();
                 break;
+            case PLATFORM_KEY_SAVE:
+                game_save_show();
+                break;
+            case PLATFORM_KEY_LOAD:
+                game_load_show();
+                break;
         }
     }
 

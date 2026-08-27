@@ -73,13 +73,28 @@ INVENTORY_RESOLVER_OBJ := $(OUTDIR)/inventory-resolver.o
 INVENTORY_MODULE_CFG := cfg/inventory_overlay.cfg
 INVENTORY_MODULE_RAW := $(OUTDIR)/inventory.raw
 INVENTORY_MODULE := $(OUTDIR)/IV
+SAVELOAD_MODULE_C_OBJ := $(OUTDIR)/saveload-module.o
+SAVELOAD_DISK_OBJ := $(OUTDIR)/saveload-disk.o
+SAVELOAD_HEADER_OBJ := $(OUTDIR)/saveload-header.o
+SAVELOAD_RESOLVER_SRC := $(OUTDIR)/saveload-resolver.s
+SAVELOAD_RESOLVER_OBJ := $(OUTDIR)/saveload-resolver.o
+SAVELOAD_MODULE_CFG := cfg/saveload_overlay.cfg
+SAVELOAD_MODULE_RAW := $(OUTDIR)/saveload.raw
+SAVELOAD_MODULE := $(OUTDIR)/SL
+SAVELOAD_SAVE_MODULE_C_OBJ := $(OUTDIR)/saveload-save-module.o
+SAVELOAD_SAVE_HEADER_OBJ := $(OUTDIR)/saveload-save-header.o
+SAVELOAD_SAVE_RESOLVER_SRC := $(OUTDIR)/saveload-save-resolver.s
+SAVELOAD_SAVE_RESOLVER_OBJ := $(OUTDIR)/saveload-save-resolver.o
+SAVELOAD_SAVE_MODULE_CFG := cfg/saveload_save_overlay.cfg
+SAVELOAD_SAVE_MODULE_RAW := $(OUTDIR)/saveload-save.raw
+SAVELOAD_SAVE_MODULE := $(OUTDIR)/SV
 DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
 DISK_BOOT_CFG := cfg/disk_boot.cfg
 DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
-all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE)
+all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -182,6 +197,59 @@ $(INVENTORY_MODULE): $(INVENTORY_MODULE_RAW) \
 	python3 tools/finalize_inventory_overlay.py --input $< \
 		--map $(OUTDIR)/inventory.map --output $@
 
+$(SAVELOAD_MODULE_C_OBJ): modules/saveload.c src/game.h src/platform.h src/world.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(SAVELOAD_DISK_OBJ): modules/disk_io.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SAVELOAD_HEADER_OBJ): modules/saveload_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
+		$(SAVELOAD_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_HEADER_OBJ)
+
+$(SAVELOAD_RESOLVER_OBJ): $(SAVELOAD_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SAVELOAD_MODULE_RAW): $(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
+		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_RESOLVER_OBJ) $(SAVELOAD_MODULE_CFG)
+	$(LD65) -C $(SAVELOAD_MODULE_CFG) -m $(OUTDIR)/saveload.map -o $@ \
+		$(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
+		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_RESOLVER_OBJ)
+
+$(SAVELOAD_MODULE): $(SAVELOAD_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/saveload.map --magic SL --output $@
+
+$(SAVELOAD_SAVE_MODULE_C_OBJ): modules/saveload_save.c src/game.h src/platform.h src/world.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(SAVELOAD_SAVE_HEADER_OBJ): modules/saveload_save_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
+		$(SAVELOAD_SAVE_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_HEADER_OBJ)
+
+$(SAVELOAD_SAVE_RESOLVER_OBJ): $(SAVELOAD_SAVE_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SAVELOAD_SAVE_MODULE_RAW): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
+		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_RESOLVER_OBJ) $(SAVELOAD_SAVE_MODULE_CFG)
+	$(LD65) -C $(SAVELOAD_SAVE_MODULE_CFG) -m $(OUTDIR)/saveload-save.map -o $@ \
+		$(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
+		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_RESOLVER_OBJ)
+
+$(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/saveload-save.map --magic SV --output $@
+
 $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
@@ -219,12 +287,14 @@ $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
 $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
-$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) tools/pack_easyflash.py \
+$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
+		$(SAVELOAD_SAVE_MODULE) tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
-		--inventory $(INVENTORY_MODULE) --output $@
+		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
+		--saveload-save $(SAVELOAD_SAVE_MODULE) --output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"

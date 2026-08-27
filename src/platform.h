@@ -57,6 +57,8 @@
 #define PLATFORM_KEY_USE              85u
 #define PLATFORM_KEY_INVENTORY        73u
 #define PLATFORM_KEY_ENTER            13u
+#define PLATFORM_KEY_SAVE             133u /* F1 */
+#define PLATFORM_KEY_LOAD             134u /* F3 */
 
 #define PLATFORM_OK                   0u
 #define PLATFORM_ERR_IO               1u

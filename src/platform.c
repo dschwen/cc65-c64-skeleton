@@ -115,6 +115,8 @@ static PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
 PlatformObjectType platform_object_type_scratch;
 static PlatformObjectTypeInfo object_type_info_scratch;
 static uint8_t resource_directory_entry[RESOURCE_DIRECTORY_ENTRY_BYTES];
+uint8_t platform_overlay_magic0;
+uint8_t platform_overlay_magic1;
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
 #pragma bss-name (push, "ZEROPAGE")
@@ -341,6 +343,49 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
     for (i = 0u; i < size; ++i) sum += destination[i];
     if (sum != checksum) return 0u;
     return size;
+}
+#pragma code-name (pop)
+
+/*
+ * Generic loaded-overlay fetch, shared by every $A4E9-$B4D8 overlay (the
+ * inventory/story overlay and the save/load overlay): copy the fixed
+ * 16-byte header from the given EasyFlash bank/half, read its declared
+ * size, copy the complete payload, then hand off to the native validator
+ * (src/inventory_api.s) with the requested magic bytes. Resident code
+ * budget is too tight to duplicate this loader/validator per overlay.
+ */
+#define OVERLAY_BASE          ((uint8_t*)0xa4e9)
+#define OVERLAY_HEADER_BYTES  16u
+#define OVERLAY_MAX_BYTES     0x0ff0u
+
+uint8_t platform_overlay_validate_native(uint16_t loaded_size);
+
+#pragma code-name (push, "HIGHCODE")
+uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
+                              uint8_t magic0, uint8_t magic1) {
+    uint16_t size;
+
+    platform_overlay_magic0 = magic0;
+    platform_overlay_magic1 = magic1;
+
+    platform_ef_copy_bank = bank;
+    platform_ef_copy_offset = 0u;
+    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
+    platform_ef_copy_size = OVERLAY_HEADER_BYTES;
+    if (use_romh) platform_easyflash_copy_romh();
+    else platform_easyflash_copy_roml();
+    size = (uint16_t)OVERLAY_BASE[6] | ((uint16_t)OVERLAY_BASE[7] << 8);
+    if (size < OVERLAY_HEADER_BYTES || size > OVERLAY_MAX_BYTES) {
+        return PLATFORM_ERR_FORMAT;
+    }
+
+    platform_ef_copy_bank = bank;
+    platform_ef_copy_offset = 0u;
+    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
+    platform_ef_copy_size = size;
+    if (use_romh) platform_easyflash_copy_romh();
+    else platform_easyflash_copy_roml();
+    return platform_overlay_validate_native(size);
 }
 #pragma code-name (pop)
 

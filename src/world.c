@@ -109,4 +109,12 @@ uint8_t game_world_capture_current(void) {
     return world_store(&platform_room);
 }
 
+void game_world_disable_store_hook(void) {
+    platform_room_state_hooks(0, world_restore);
+}
+
+void game_world_enable_store_hook(void) {
+    platform_room_state_hooks(world_store, world_restore);
+}
+
 #pragma code-name (pop)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch and validate the independently linked inventory/story overlay."""
+"""Patch and validate an independently linked $A4E9-window overlay."""
 
 from __future__ import annotations
 
@@ -16,26 +16,35 @@ LOAD_ADDRESS = 0xA4E9
 MAX_BYTES = 0x0FF0
 HEADER_BYTES = 16
 ABI_VERSION = 1
+DEFAULT_MAGIC = "IU"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Patch and validate a $A4E9-window loaded overlay "
+                     "(inventory/story, save/load, ...)."
+    )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--map", dest="map_file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--magic", default=DEFAULT_MAGIC,
+                        help=f"2-character overlay magic (default {DEFAULT_MAGIC!r})")
     args = parser.parse_args()
+    if len(args.magic) != 2:
+        raise SystemExit("--magic must be exactly 2 characters")
+    magic = args.magic.encode("ascii")
 
     raw = bytearray(args.input.read_bytes())
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOAD_ADDRESS:
-        raise SystemExit("inventory overlay has an invalid PRG load address")
+        raise SystemExit("overlay has an invalid PRG load address")
     data = raw[2:]
     if len(data) < HEADER_BYTES or len(data) > MAX_BYTES:
         raise SystemExit(
-            f"inventory overlay size {len(data)} is outside "
+            f"overlay size {len(data)} is outside "
             f"{HEADER_BYTES}..{MAX_BYTES}"
         )
-    if (data[0] != 0x4C or data[3:6] != bytes((0x49, 0x55, ABI_VERSION))):
-        raise SystemExit("invalid inventory overlay header")
+    if (data[0] != 0x4C or data[3:6] != magic + bytes((ABI_VERSION,))):
+        raise SystemExit("invalid overlay header")
 
     bss_start = LOAD_ADDRESS + len(data)
     bss_size = 0
@@ -47,7 +56,7 @@ def main() -> None:
             break
     if (bss_start < LOAD_ADDRESS + len(data) or
             bss_start + bss_size > LOAD_ADDRESS + MAX_BYTES):
-        raise SystemExit("inventory BSS lies outside its overlay window")
+        raise SystemExit("overlay BSS lies outside its overlay window")
 
     struct.pack_into("<HHH", data, 6, len(data),
                      bss_start - LOAD_ADDRESS, bss_size)

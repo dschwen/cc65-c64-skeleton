@@ -1,4 +1,3 @@
-#include <cbm.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -16,8 +15,6 @@
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
 #define DIRTY_BYTES        110u
 #define DIRTY_CELL_LIMIT   32u
-#define ROOM_LFN           2u
-#define PORTRAIT_LFN       4u
 #define INITIAL_OBJECT_TYPE_COUNT 2u
 #define EF_FIRST_ROOM_BANK 3u
 #define EF_ROOMS_PER_BANK  6u
@@ -91,8 +88,6 @@ PlatformObject* platform_player;
 PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 #pragma bss-name (pop)
 PlatformObjectType platform_object_type_scratch;
-PlatformStorage platform_storage;
-uint8_t platform_storage_device;
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
 #pragma bss-name (push, "ZEROPAGE")
@@ -192,9 +187,6 @@ static uint8_t player_spawn_slot;
 static uint8_t player_spawn_type;
 static uint8_t look_length;
 static uint8_t look_truncated;
-#pragma rodata-name (push, "RODATA")
-static const char hex_digits[] = "0123456789ABCDEF";
-#pragma rodata-name (pop)
 #pragma rodata-name (push, "UPPERRODATA")
 static const char take_prompt_prefix[] = "Take: ";
 static const char take_prompt_arrows[] = "   < >";
@@ -222,21 +214,6 @@ static void write_screen_cell(uint8_t x, uint8_t y,
     P_COLOR_RAM[offset] = color;
 }
 #pragma code-name (pop)
-
-static uint8_t read_exact(uint8_t lfn, void* data, uint16_t size) {
-    uint8_t* out;
-    uint16_t total;
-    int got;
-
-    out = (uint8_t*)data;
-    total = 0;
-    while (total < size) {
-        got = cbm_read(lfn, out + total, size - total);
-        if (got <= 0) return PLATFORM_ERR_IO;
-        total += (uint16_t)got;
-    }
-    return PLATFORM_OK;
-}
 
 static uint8_t object_type_is_valid(const PlatformObjectType* type) {
     uint8_t width;
@@ -436,9 +413,8 @@ void platform_init(void) {
         platform_memory_game();
     }
     memcpy(&platform_room, initial_room_data, sizeof(platform_room));
-    platform_storage_init(cartridge ? PLATFORM_STORAGE_EASYFLASH : PLATFORM_STORAGE_DISK, 8u);
     if (cartridge) {
-        (void)platform_object_types_load(0, 0);
+        (void)platform_object_types_load();
         (void)platform_room_load(&platform_room, 0u);
     }
     platform_current_room = 0;
@@ -449,13 +425,6 @@ void platform_init(void) {
     player_spawn_type = platform_player->type;
     raster_irq_install();
 }
-
-#pragma code-name (push, "LOWCODE")
-void platform_storage_init(PlatformStorage storage, uint8_t device) {
-    platform_storage = storage;
-    platform_storage_device = device;
-}
-#pragma code-name (pop)
 
 #pragma code-name (push, "LOWCODE")
 void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
@@ -489,24 +458,6 @@ static uint8_t room_validate(const PlatformRoom* room, uint8_t room_id) {
     return PLATFORM_OK;
 }
 
-static uint8_t room_load_disk(uint8_t room_id) {
-    char filename[3];
-    uint8_t status;
-
-    filename[0] = hex_digits[room_id >> 4];
-    filename[1] = hex_digits[room_id & 0x0f];
-    filename[2] = '\0';
-    platform_memory_kernal();
-    if (cbm_open(ROOM_LFN, platform_storage_device, CBM_READ, filename) != 0u) {
-        platform_memory_game();
-        return PLATFORM_ERR_IO;
-    }
-    status = read_exact(ROOM_LFN, &room_stage, sizeof(room_stage));
-    cbm_close(ROOM_LFN);
-    platform_memory_game();
-    return status;
-}
-
 static uint8_t room_load_easyflash(uint8_t room_id) {
     platform_ef_copy_bank =
         (uint8_t)(EF_FIRST_ROOM_BANK + room_id / EF_ROOMS_PER_BANK);
@@ -520,8 +471,7 @@ static uint8_t room_load_easyflash(uint8_t room_id) {
 
 static uint8_t room_stage_load(uint8_t room_id) {
     uint8_t status;
-    status = platform_storage == PLATFORM_STORAGE_EASYFLASH
-                 ? room_load_easyflash(room_id) : room_load_disk(room_id);
+    status = room_load_easyflash(room_id);
     if (status != PLATFORM_OK) return status;
     return room_validate(&room_stage, room_id);
 }
@@ -578,7 +528,7 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
     return PLATFORM_OK;
 }
 
-static uint8_t object_types_load_easyflash(void) {
+uint8_t platform_object_types_load(void) {
     uint8_t irq_status;
 
     platform_ef_copy_bank = EF_TYPE_BANK_0;
@@ -604,38 +554,6 @@ static uint8_t object_types_load_easyflash(void) {
     platform_easyflash_copy_roml();
     raster_irq_vectors_restore();
     return PLATFORM_OK;
-}
-
-uint8_t platform_object_types_load(const char* filename, uint8_t device) {
-    uint8_t status;
-    uint8_t irq_status;
-    uint16_t i;
-    if (platform_storage == PLATFORM_STORAGE_EASYFLASH) {
-        return object_types_load_easyflash();
-    }
-    if (filename == 0) return PLATFORM_ERR_ARGUMENT;
-    platform_memory_kernal();
-    if (cbm_open(ROOM_LFN, device, CBM_READ, filename) != 0u) {
-        platform_memory_game();
-        return PLATFORM_ERR_IO;
-    }
-    status = PLATFORM_OK;
-    for (i = 0; i < PLATFORM_OBJECT_TYPE_COUNT; ++i) {
-        status = read_exact(ROOM_LFN, &platform_object_type_scratch,
-                            sizeof(platform_object_type_scratch));
-        if (status != PLATFORM_OK) break;
-        irq_status = platform_irq_save_disable();
-        if (i >= 64u && i < 128u) platform_memory_all_ram();
-        else platform_memory_game();
-        memcpy(&platform_object_types[i], &platform_object_type_scratch,
-               sizeof(platform_object_type_scratch));
-        platform_memory_kernal();
-        platform_irq_restore(irq_status);
-    }
-    cbm_close(ROOM_LFN);
-    raster_irq_vectors_restore();
-    platform_memory_game();
-    return status;
 }
 
 void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y) {
@@ -1621,25 +1539,6 @@ static uint8_t portrait_load_easyflash(uint8_t portrait_id) {
     return PLATFORM_OK;
 }
 
-static uint8_t portrait_load_disk(uint8_t portrait_id) {
-    char filename[4];
-    uint8_t status;
-
-    filename[0] = 'P';
-    filename[1] = hex_digits[portrait_id >> 4];
-    filename[2] = hex_digits[portrait_id & 0x0fu];
-    filename[3] = '\0';
-    platform_memory_kernal();
-    if (cbm_open(PORTRAIT_LFN, platform_storage_device, CBM_READ, filename) != 0u) {
-        platform_memory_game();
-        return PLATFORM_ERR_IO;
-    }
-    status = read_exact(PORTRAIT_LFN, PORTRAIT_SPRITE_DATA, PLATFORM_PORTRAIT_BYTES);
-    cbm_close(PORTRAIT_LFN);
-    platform_memory_game();
-    return status;
-}
-
 /* left_x/right_x share the 9th (MSB) bit across sprites 1/3/5 and 2/4. */
 #pragma code-name (push, "UPPERCODE")
 static void portrait_position(uint16_t left_x, uint8_t top_y) {
@@ -1674,9 +1573,7 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
         return PLATFORM_ERR_ARGUMENT;
     }
 
-    status = platform_storage == PLATFORM_STORAGE_EASYFLASH
-                 ? portrait_load_easyflash(portrait_id)
-                 : portrait_load_disk(portrait_id);
+    status = portrait_load_easyflash(portrait_id);
     if (status != PLATFORM_OK) return status;
 
     memset(PORTRAIT_BG_DATA, 0xffu, 63u);

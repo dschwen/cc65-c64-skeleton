@@ -11,13 +11,10 @@
 #define INVENTORY_COLOR         ((uint8_t*)0xd800)
 #define INVENTORY_VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 
-void platform_memory_game(void);
-void platform_memory_kernal(void);
 void platform_easyflash_copy_romh(void);
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
 void inventory_overlay_run_native(void);
-uint16_t inventory_disk_load_native(void);
 uint8_t __fastcall__ inventory_overlay_validate_native(uint16_t loaded_size);
 extern uint8_t platform_ef_copy_bank;
 extern uint16_t platform_ef_copy_offset;
@@ -25,16 +22,6 @@ extern uint16_t platform_ef_copy_destination;
 extern uint16_t platform_ef_copy_size;
 
 #pragma code-name (push, "UPPERCODE")
-
-static uint8_t inventory_load_disk(void) {
-    uint16_t size;
-
-    platform_memory_kernal();
-    size = inventory_disk_load_native();
-    platform_memory_game();
-    if (size == 0u) return PLATFORM_ERR_IO;
-    return inventory_overlay_validate_native(size);
-}
 
 static uint8_t inventory_load_easyflash(void) {
     uint16_t size;
@@ -62,8 +49,7 @@ void game_inventory_show(void) {
 
     platform_look_cursor_hide();
     INVENTORY_VIC_CTRL1 &= 0xefu;
-    result = platform_storage == PLATFORM_STORAGE_EASYFLASH
-                 ? inventory_load_easyflash() : inventory_load_disk();
+    result = inventory_load_easyflash();
     if (result == PLATFORM_OK) inventory_overlay_run_native();
 
     INVENTORY_VIC_CTRL1 &= 0xefu;

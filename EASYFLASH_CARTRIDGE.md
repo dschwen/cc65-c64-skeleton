@@ -318,24 +318,19 @@ The CRT first copies the common PRG to RAM and disables EasyFlash. During
 gameplay the storage backend temporarily selects 8 KiB mode to copy rooms and
 object types from runtime ROML asset banks.
 
-The implemented runtime presents one logical room-loading operation with two
-storage implementations:
+All game-asset reads (rooms, object types, portraits, the inventory/story
+overlay, room code) are EasyFlash-only:
 
 ```c
-typedef enum PlatformStorage {
-    PLATFORM_STORAGE_DISK,
-    PLATFORM_STORAGE_EASYFLASH
-} PlatformStorage;
-
-void platform_storage_init(PlatformStorage storage, uint8_t device);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 ```
 
-The disk backend retains the current two-hex-digit filename and `cbm_read()`
-behavior. The EasyFlash backend obtains the same 1,257-byte record from an
-asset bank. Game and rendering code must not care which backend supplied it.
-The boot loader can leave a signature byte in reserved RAM so the common PRG
-can select the EasyFlash backend when it was launched from a CRT.
+`platform_room_load()` obtains the 1,257-byte record from its fixed ROML bank
+and offset (see the asset packing table below). Disk KERNAL I/O is reserved
+for save games (`SAVE_GAME.md`); it is not an alternate asset source. If the
+EasyFlash boot marker is absent at startup, `platform_init()` does not attempt
+a disk fallback for assets — it keeps the tiny room-00/types-0-1 placeholder
+baked into the PRG.
 
 Only the current room is resident for drawing. `platform_room_enter()` stages
 and validates the destination, checks the arrival tile, prepares its overlay,
@@ -410,8 +405,7 @@ independently linked overlay. `tools/pack_easyflash.py` puts its loadable bytes
 at bank 48 ROMH offset zero. Pressing `I` copies and validates that overlay at
 `$A4E9`; its execution temporarily replaces rebuildable render/lighting work
 RAM. On return, resident code restores the charset split and redraws the room.
-The disk build performs the same operation from the `IV` PRG. See
-`STORY_CODE_API.md` for the callable contract and restrictions.
+See `STORY_CODE_API.md` for the callable contract and restrictions.
 
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
@@ -420,9 +414,7 @@ is far smaller than a room, so one ROML page holds 32 portraits
 (`8192 / 256`), and 8 banks cover the full 256-ID range. `tools/pack_easyflash.py`
 reads each populated portrait from `assets/portraits/NN`, flattened to
 `PNN` alongside the other runtime assets; missing IDs are filled with `$FF`
-like missing rooms. The disk build copies the same flattened `PNN` files
-onto the D64 image; on disk, `platform_portrait_show()` opens `P` + two hex
-digits directly, mirroring the room loader's disk path.
+like missing rooms.
 
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
@@ -553,10 +545,17 @@ does not require overlay bookkeeping. Movement should be profiled separately:
 dirty-cell recomposition, not the full map blitter, is the relevant path for
 actors.
 
-## Flash saves are a separate feature
+## Flash saves are a separate feature (and are not planned)
 
 EasyFlash flash ROM is not writable like RAM. An initialized C variable placed
 in a cartridge segment is immutable game data, not a live save slot.
+
+This project has decided against ever building a flash-save driver: saves are
+disk-only on every build, cartridge included (see `SAVE_GAME.md`). Beyond the
+real implementation cost below, some emulators require an explicit extra step
+to persist cartridge RAM/flash writes back to the `.crt` file, which is the
+opposite of what a save system needs. The list below stays as reference for
+why this is genuinely hard, not as a to-do list.
 
 A production flash-save implementation needs at least:
 
@@ -616,5 +615,6 @@ space. This was the cause of the first black-screen cartridge build.
   the available portion of bank 2.
 - PRG load and entry addresses are hard-coded in the bootstrap.
 - EasyFlash remains off except during bounded runtime asset copies.
-- There is no flash-save implementation.
+- There is no flash-save implementation, and none is planned; saves are
+  disk-only (see `SAVE_GAME.md`).
 - CRT structure and bounded VICE cold boots are part of verification.

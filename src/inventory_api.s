@@ -3,22 +3,14 @@
 
 .export _inventory_overlay_run_native
 .export _inventory_overlay_validate_native
-.export _inventory_disk_load_native
 .export _inventory_validate_bss_bounds
 .export _inventory_validate_checksum
 .export _inventory_validate_invalid
 
 .importzp ptr1, ptr2, tmp1, tmp2, tmp3, tmp4
-.import _platform_storage_device
 
 INVENTORY_ENTRY = $a4e9
 INVENTORY_VALIDATE_POST = $b9ca
-SETLFS = $ffba
-SETNAM = $ffbd
-LOAD   = $ffd5
-
-.segment "RODATA"
-inventory_filename: .byte "IV"
 
 .segment "MIDCODE"
 
@@ -188,34 +180,4 @@ _inventory_validate_checksum:
 _inventory_validate_invalid:
     lda #2
     ldx #0
-    rts
-
-.segment "HIGHCODE"
-
-; KERNAL LOAD with secondary address 1 honors the module's $A4E9 PRG header.
-; Return its loaded payload size in AX, or zero on a KERNAL error.
-_inventory_disk_load_native:
-    lda #2
-    ldx #<inventory_filename
-    ldy #>inventory_filename
-    jsr SETNAM
-    ldy #1
-    tya
-    ldx _platform_storage_device
-    jsr SETLFS
-    lda #0
-    jsr LOAD
-    bcs @load_error
-    txa
-    sec
-    sbc #<INVENTORY_ENTRY
-    pha
-    tya
-    sbc #>INVENTORY_ENTRY
-    tax
-    pla
-    rts
-@load_error:
-    lda #0
-    tax
     rts

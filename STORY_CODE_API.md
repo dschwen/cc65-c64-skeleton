@@ -36,9 +36,9 @@ Reusable engine constants remain in `game.h` or `platform.h`.
 ## Inventory overlay contract
 
 `modules/inventory.c`, `modules/inventory.s`, and `story/story.c` are linked as
-one overlay at `$A4E9-$B4D8`. Disk builds store it as the `IV` PRG; EasyFlash
-stores its loadable bytes in bank 48 ROMH. The resident loader checks its ABI,
-load size, entry vector, BSS bounds, and payload checksum before execution.
+one overlay at `$A4E9-$B4D8`. EasyFlash stores its loadable bytes in bank 48
+ROMH. The resident loader checks its ABI, load size, entry vector, BSS
+bounds, and payload checksum before execution.
 
 The overlay replaces rebuildable rendering and lighting buffers. While
 `story_use_inventory()` runs, it may safely use `GameState`, inventory,

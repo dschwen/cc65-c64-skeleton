@@ -45,16 +45,16 @@ always-visible RAM before rendering it.
 | `$3900-$39F9` | 250 | compact lookup/native code |
 | `$39FA-$39FF` | 6 | free linker tail |
 | `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7FB3` | 17300 | resident platform code/RODATA |
-| `$7FB4-$7FFF` | 76 | free resident-code linker tail |
+| `$3C00-$7AB4` | 16053 | resident platform code/RODATA |
+| `$7AB5-$7FFF` | 1355 | free resident-code linker tail |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
 | `$855D-$85F7` | 155 | compact native helpers |
 | `$85F8-$85FF` | 8 | free linker tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$98E2` | 3483 | resident game/main/shared room API |
-| `$98E3-$98FF` | 29 | free resident tail |
+| `$8B48-$98AC` | 3429 | resident game/main/shared room API |
+| `$98AD-$98FF` | 83 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room staging |
@@ -75,11 +75,12 @@ always-visible RAM before rendering it.
 | `$E000-$FFF9` | 8186 | object types 128-255 beneath KERNAL |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors; overlays type 255 reserved bytes |
 
-The `HIGH` tail is the primary margin for modest resident-code growth, but the
-portrait API (see below) consumed most of it: only 76 bytes remain there and
-29 in `UPPER`. Further resident-code growth will very likely need to move
-existing code into a room, inventory/story, or new overlay rather than grow
-in place. Recheck `build/game.map` after every change because cc65 can move
+The `HIGH` tail is the primary margin for modest resident-code growth. The
+portrait API previously consumed most of it (down to 76 bytes there, 29 in
+`UPPER`); retiring the disk asset-loading code paths (rooms, object types,
+portraits, the inventory overlay, and room code no longer have a disk
+fallback — see `PLATFORM_API.md` and `SAVE_GAME.md`) recovered most of that
+margin. Recheck `build/game.map` after every change because cc65 can move
 code between segments.
 
 ## RAM beneath BASIC and KERNAL
@@ -113,7 +114,7 @@ options are:
    `$E000-$FFFF`, avoiding RAM under I/O and reclaiming the remaining pages.
 3. Keep 256 logical IDs but load/cache only types needed by the current room,
    player, and inventory. This retains the platform contract but requires a
-   dependency list and a disk/EasyFlash cache loader.
+   dependency list and an EasyFlash cache loader.
 
 The third option is the most flexible long-term design. Until that cache
 exists, `$E000-$FFFF` is not free RAM.

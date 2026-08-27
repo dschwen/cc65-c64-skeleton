@@ -1,8 +1,8 @@
 # Save-game architecture
 
 The save system separates immutable assets from mutable game state. Room files
-remain the original `00` through `FF` assets on disk or in EasyFlash ROM. A
-running game stores only object slots that differ from those base assets.
+remain the original `00` through `FF` assets in EasyFlash ROM. A running game
+stores only object slots that differ from those base assets.
 
 ## Implemented runtime layer
 
@@ -117,15 +117,17 @@ rebuildable. Code performing the load cannot run from the room overlay while
 that overlay is replaced; it needs a resident trampoline or a dedicated save
 overlay with a resident completion step.
 
-## EasyFlash backend plan
+## No EasyFlash-flash save backend
 
-The runtime schema is backend-neutral. Native cartridge saves should use the
-official EasyFlash EAPI copied to RAM, not ordinary stores to ROM addresses.
-The flash backend should reserve whole erase sectors for A/B records, keep its
-program/erase routine and IRQ-independent completion path in RAM, and use the
-same generation/checksum selection as disk. Until that driver exists,
-EasyFlash builds can use a writable disk device for saves without changing the
-serialized format.
+Saves are disk-only, on EasyFlash builds too: no native flash-write (EAPI)
+save driver is planned. Building one is nontrivial (whole-erase-sector A/B
+records, an IRQ-independent program/erase path in RAM) for a benefit that
+does not hold up: EasyFlash cartridge storage is otherwise read-only for this
+game, and some emulators require an extra explicit step to persist cartridge
+RAM/flash writes back to the `.crt`, which is exactly the failure mode a save
+system must not have. A cartridge build still writes saves through ordinary
+disk KERNAL I/O, same as a disk build, using a disk device attached at
+runtime purely for save storage.
 
 ## Capacity policy
 

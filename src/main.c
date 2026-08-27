@@ -18,9 +18,6 @@ static uint8_t cursor_max_y;
 
 int main(void) {
     platform_init();
-    if (platform_storage == PLATFORM_STORAGE_DISK) {
-        (void)platform_object_types_load("OBJECTS.COBJ", platform_storage_device);
-    }
     game_state_init();
     game_world_init();
     (void)game_room_code_load_current();

@@ -27,7 +27,7 @@ programmer connects that design to the room.
 | Lighting | Four tile-level brightness levels with light-blocking walls |
 | Vision | 360-degree line of sight; opaque tiles hide what lies behind them |
 | Persistent story state | Global story flags and in-memory room changes |
-| Saved games | Data format is designed, but disk/cartridge save writing is not yet implemented |
+| Saved games | Data format is designed; disk save writing (the only save path) is not yet implemented |
 
 ## A world made of rooms
 
@@ -465,8 +465,9 @@ can remember at most **200 changed object slots across the whole world**. This
 is separate from the per-room limit of 200 non-actor objects.
 
 The save-file structure has been designed, but writing and loading saves from
-disk or EasyFlash is not finished. At present, progress is not expected to
-survive ending the emulator or powering off the C64.
+disk is not finished (saves are disk-only; there is no cartridge-flash save
+path, by design). At present, progress is not expected to survive ending the
+emulator or powering off the C64.
 
 ## Puzzle patterns that fit the engine
 
@@ -530,7 +531,7 @@ the current light range.
 - The automatic Look list is limited to two lines.
 - Only 32 distinct inventory stacks can be carried.
 - Only 200 room-object differences can be remembered globally during a run.
-- Persistent disk and cartridge save writing is not implemented yet.
+- Persistent disk save writing (the only planned save path) is not implemented yet.
 
 These are platform boundaries, not prohibitions. A story can request an engine
 extension, but it should identify that dependency before maps and dialogue are

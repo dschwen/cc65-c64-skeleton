@@ -60,11 +60,6 @@
 #define PLATFORM_ERR_BLOCKED          6u
 #define PLATFORM_ERR_NOT_FOUND        7u
 
-#define PLATFORM_STORAGE_DISK         0u
-#define PLATFORM_STORAGE_EASYFLASH    1u
-
-typedef uint8_t PlatformStorage;
-
 #define PLATFORM_TRANSITION_NONE      0u
 #define PLATFORM_TRANSITION_TOP       1u
 #define PLATFORM_TRANSITION_LEFT      2u
@@ -149,8 +144,6 @@ extern uint8_t platform_player_slot;
 extern PlatformObject* platform_player;
 extern PlatformObjectType platform_object_types[PLATFORM_OBJECT_TYPE_COUNT];
 extern volatile uint8_t platform_frame_counter;
-extern PlatformStorage platform_storage;
-extern uint8_t platform_storage_device;
 /* Unmodified character colors and one brightness level per 2x2 tile. */
 extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 extern uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
@@ -162,14 +155,13 @@ extern const uint8_t platform_light_distance[16u * 16u];
 #define PLATFORM_OBJECT_LIGHT(type) ((type)->reserved[1])
 
 /*
- * Initialize VIC/banking state and select disk or EasyFlash from the cartridge
- * boot marker. The current player is room object slot 0, so platform_player
+ * Initialize VIC/banking state. If the EasyFlash cartridge boot marker is
+ * absent, the platform falls back to the room-00/types-0-1 data baked into
+ * the PRG rather than loading anything further; disk is not a fallback asset
+ * source. The current player is room object slot 0, so platform_player
  * points inside platform_room.objects rather than holding a detached copy.
  */
 void platform_init(void);
-
-/* Select the backend used by subsequent room loads. */
-void platform_storage_init(PlatformStorage storage, uint8_t device);
 
 /* Optional transition hooks; either may reject a transition with an error. */
 void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
@@ -178,7 +170,7 @@ void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
 /* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 
-/* Load a fixed-size room from the configured disk or EasyFlash backend. */
+/* Load a fixed-size room from EasyFlash. */
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 
 /* Resolve one enabled cardinal neighbor; returns PLATFORM_ERR_NOT_FOUND otherwise. */
@@ -188,8 +180,8 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 const char* platform_room_exit_description(const PlatformRoom* room,
                                            uint8_t direction);
 
-/* Load all 256 fixed-size object types from a sequential file. */
-uint8_t platform_object_types_load(const char* filename, uint8_t device);
+/* Load all 256 fixed-size object types from EasyFlash. */
+uint8_t platform_object_types_load(void);
 
 /* Resolve a type record, staging IDs 64-127 from RAM beneath I/O. */
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);

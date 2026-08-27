@@ -144,7 +144,6 @@ hold flags, emitted light, and 14 bytes reserved for later use.
 
 ```c
 void platform_init(void);
-void platform_storage_init(PlatformStorage storage, uint8_t device);
 void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
                                PlatformRoomRestoreHook restore_hook);
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
@@ -153,7 +152,7 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
 const char* platform_room_exit_description(const PlatformRoom* room,
                                            uint8_t direction);
-uint8_t platform_object_types_load(const char* filename, uint8_t device);
+uint8_t platform_object_types_load(void);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
@@ -166,10 +165,10 @@ aborts the transition without removing the current player.
 
 Call `platform_init()` once before other platform APIs. It selects VIC bank 0,
 sets border/background black, selects the tile charset, installs the raster IRQ,
-and initializes the platform. Room `00` and types 0-1 provide the standalone
-PRG fallback; a cartridge loads the complete room/type data from EasyFlash.
-These
-globals are established:
+and initializes the platform. Room `00` and types 0-1 baked into the PRG are a
+placeholder fallback for the (unexpected) case where the EasyFlash cartridge
+boot marker is absent; the real room/type data always loads from EasyFlash.
+These globals are established:
 
 ```c
 platform_current_room = 0;
@@ -180,12 +179,10 @@ platform_player = &platform_room.objects[0];
 Thus the player is the actual slot-0 object from room `00`, not a detached
 copy. The current asset defines it as actor type 1, "The Hero".
 
-`platform_room_load()` dispatches through `platform_storage`. The disk backend
-opens the two-digit filename; the EasyFlash backend selects the fixed ROML bank
-and offset. Both read into staging RAM, validate the 1,257-byte record, and only
-then commit it to the caller's room.
-Loading into the global `platform_room` also updates `platform_current_room`
-and rebinds `platform_player` to `platform_player_slot`.
+`platform_room_load()` selects the fixed ROML bank and offset for `room_id`,
+reads into staging RAM, validates the 1,257-byte record, and only then commits
+it to the caller's room. Loading into the global `platform_room` also updates
+`platform_current_room` and rebinds `platform_player` to `platform_player_slot`.
 `platform_object_types_load()` reads all 16 KiB of the type list. Both return:
 
 | Result | Meaning |
@@ -201,7 +198,7 @@ Example:
 uint8_t result;
 
 platform_init();
-result = platform_object_types_load("OBJECTS.COBJ", 8);
+result = platform_object_types_load();
 if (result == PLATFORM_OK) {
     result = platform_room_load(&platform_room, 0x2a);
 }
@@ -210,10 +207,11 @@ if (result == PLATFORM_OK) {
 ### Dynamic-room storage contract
 
 The platform loads rooms throughout gameplay rather than preloading all 256
-rooms. The storage-neutral API dispatches the same logical load to a disk or
-EasyFlash backend. EasyFlash rooms are immutable base records copied
-from banked ROM into the single resident `platform_room`; disk rooms retain the
-same `00`-`FF` names and binary format.
+rooms. Rooms are immutable base records copied from banked EasyFlash ROM into
+the single resident `platform_room`. All game-asset reads (rooms, object
+types, portraits, the inventory/story overlay, room code) are EasyFlash-only;
+disk KERNAL I/O is reserved for save games (see `SAVE_GAME.md`), which is
+specified but not yet implemented.
 
 A room transition using one resident buffer follows this order:
 
@@ -242,11 +240,6 @@ The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
 Room-specific handlers, `GameState`, and the room-code ABI are specified in
 `ROOM_CODE_API.md`.
-
-For disk gameplay, the room files must be present on the generated D64. The
-default `make d64` rule adds `res/*` plus the prepared hexadecimal rooms and
-`objects.cobj` from `build/assets/`. Embedding startup room `00` in the PRG does not make the
-remaining rooms available to KERNAL I/O.
 
 ## Map and room drawing
 
@@ -352,10 +345,11 @@ lighting invalidates and recreates the cache.
 
 `platform_base_colors`, `platform_brightness`, room staging, and the internal
 wall cache live in `$A000-$BFFF` RAM beneath BASIC ROM. They are accessible in
-the normal gameplay mapping (`$01` low bits `101`) but temporarily hidden while
-the disk backend maps BASIC/KERNAL ROM. Platform storage functions own those
-mapping intervals; game code must not access these buffers concurrently with a
-KERNAL storage call.
+the normal gameplay mapping (`$01` low bits `101`) but temporarily hidden
+whenever `platform_memory_kernal()` maps BASIC/KERNAL ROM in for a KERNAL call
+(disk save I/O, once implemented, is the only caller). Code bracketing such a
+call owns that mapping interval; game code must not access these buffers
+concurrently with it.
 
 Emitter propagation is native assembly. C resolves the potentially banked
 object-type record, clamps the radius, and prepares a clipped rectangle. The
@@ -665,9 +659,8 @@ void platform_portrait_hide(void);
 ```
 
 Fetches the 256-byte `portrait_id` asset (see
-`tools/asset-editor/README.md`) from the active storage backend — an
-EasyFlash ROML bank in 8 KiB mode, or disk file `P` + two hex digits — and
-displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
+`tools/asset-editor/README.md`) from its fixed EasyFlash ROML bank (8 KiB
+mode) and displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
 copied directly from the asset (it is exactly their memory layout), and
 sprite 5 is filled with a constant solid bitmap, colored black, and expanded
 2x horizontally and vertically to form a 48x42 backdrop exactly matching the
@@ -744,11 +737,13 @@ using `make asset-editor`.
 
 The following are deliberately not hidden behind incomplete contracts:
 
-- disk A/B save-file I/O and native EasyFlash EAPI persistence;
+- disk A/B save-file I/O (see `SAVE_GAME.md`) — decided as the only save path;
+  native EasyFlash EAPI flash-save persistence is deliberately not planned
+  (no driver exists, and some emulators need an extra step to persist cartridge
+  writes, so cartridge storage stays read-only for game assets);
 - the trigger-destination table format;
 - collision policy beyond existing tile property bits;
 - scheduling and update cadence for NPCs;
-- flash-save integration and failure recovery;
 - whether transition tables live in room files, a global asset, or game code.
 
 These should be specified before extending the binary formats. The rendering,

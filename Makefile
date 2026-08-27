@@ -28,6 +28,9 @@ C64_OBJECT_TYPES_INITIAL := $(C64_ASSET_OUTDIR)/objects-initial.hot
 PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
 PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
 C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
+RESOURCE_ASSETS := $(wildcard assets/resources/[0-9A-F][0-9A-F])
+RESOURCE_IDS := $(notdir $(RESOURCE_ASSETS))
+C64_RESOURCE_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/R,$(RESOURCE_IDS))
 ROOM_CFG := cfg/room_overlay.cfg
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
@@ -98,6 +101,9 @@ $(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR
 	python3 tools/prepare_c64_assets.py room $< $@
 
 $(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
+	cp $< $@
+
+$(C64_ASSET_OUTDIR)/R%: assets/resources/% | $(C64_ASSET_OUTDIR)
 	cp $< $@
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
@@ -214,7 +220,8 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) tools/pack_easyflash.py \
-		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES)
+		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
+		$(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --output $@

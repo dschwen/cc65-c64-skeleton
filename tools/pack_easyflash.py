@@ -34,7 +34,17 @@ PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
 PORTRAIT_BANKS = 8
-OUTPUT_BANKS = FIRST_PORTRAIT_BANK + PORTRAIT_BANKS
+# Generic sparse resource directory: 256 read-only, variable-size blobs for
+# future variable-size/sparse content (see platform_resource_fetch() in
+# src/platform.c). Reserves every remaining EasyFlash bank up to the 64-bank
+# hardware limit, so no banks remain free after this pool.
+RESOURCE_DIRECTORY_BANK = FIRST_PORTRAIT_BANK + PORTRAIT_BANKS
+RESOURCE_FIRST_BANK = RESOURCE_DIRECTORY_BANK
+RESOURCE_LAST_BANK = 63
+RESOURCE_HALF_BYTES = ROML_BYTES
+RESOURCE_DIRECTORY_ENTRY_BYTES = 8
+RESOURCE_DIRECTORY_BYTES = 256 * RESOURCE_DIRECTORY_ENTRY_BYTES
+OUTPUT_BANKS = RESOURCE_LAST_BANK + 1
 ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
 ROOM_CODE_ABI = 4
@@ -156,6 +166,60 @@ def pack_room_code(image: bytearray, code_dir: Path, asset_dir: Path) -> None:
     image[start:start + ROOM_CODE_DIRECTORY_BYTES] = directory
 
 
+def load_resource(asset_dir: Path, resource_id: int) -> bytes | None:
+    path = asset_dir / f"R{resource_id:02X}"
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    if not 1 <= len(data) <= RESOURCE_HALF_BYTES:
+        raise ValueError(f"{path}: invalid resource size {len(data)}")
+    return data
+
+
+def pack_resources(image: bytearray, asset_dir: Path) -> None:
+    """Pack sparse, variable-size resources into banks RESOURCE_FIRST_BANK-
+    RESOURCE_LAST_BANK behind a 256-entry directory at the head of
+    RESOURCE_DIRECTORY_BANK's ROML half.
+
+    Each 8-byte directory entry is (bank, mode, offset lo/hi, length lo/hi,
+    checksum lo/hi); mode 0 selects the bank's ROML half, mode 1 its ROMH
+    half. Entries are packed first-fit in ID order and a resource never
+    crosses an 8 KiB half, so it never spans an EasyFlash bank switch.
+    """
+    directory = bytearray([0xFF]) * RESOURCE_DIRECTORY_BYTES
+    bank = RESOURCE_DIRECTORY_BANK
+    mode = 0
+    offset = RESOURCE_DIRECTORY_BYTES
+
+    for resource_id in range(256):
+        data = load_resource(asset_dir, resource_id)
+        if data is None:
+            continue
+        if offset + len(data) > RESOURCE_HALF_BYTES:
+            mode += 1
+            offset = 0
+            if mode > 1:
+                mode = 0
+                bank += 1
+        if bank > RESOURCE_LAST_BANK:
+            raise ValueError(
+                "generic resources exceed reserved EasyFlash banks "
+                f"{RESOURCE_FIRST_BANK}-{RESOURCE_LAST_BANK}")
+
+        checksum = sum(data) & 0xFFFF
+        entry = bytes((bank, mode, offset & 0xFF, offset >> 8,
+                       len(data) & 0xFF, len(data) >> 8,
+                       checksum & 0xFF, checksum >> 8))
+        start = resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES
+        directory[start:start + RESOURCE_DIRECTORY_ENTRY_BYTES] = entry
+        destination = bank * BANK_BYTES + mode * RESOURCE_HALF_BYTES + offset
+        image[destination:destination + len(data)] = data
+        offset += len(data)
+
+    start = RESOURCE_DIRECTORY_BANK * BANK_BYTES
+    image[start:start + RESOURCE_DIRECTORY_BYTES] = directory
+
+
 def load_inventory(path: Path) -> bytes:
     raw = path.read_bytes()
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != INVENTORY_LOAD_ADDRESS:
@@ -203,6 +267,7 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
         start = bank * BANK_BYTES + offset
         image[start : start + PORTRAIT_BYTES] = load_portrait(asset_dir, portrait_id)
+    pack_resources(image, asset_dir)
     return bytes(image)
 
 

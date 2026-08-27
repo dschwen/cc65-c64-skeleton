@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 LABEL = re.compile(r"^al\s+([0-9A-Fa-f]{6})\s+\.(\S+)$")
-NAME = re.compile(r'^\s+Name:\s+"([^"]+)"$')
+NAME = re.compile(r'^\s+Name:\s*"([^"]+)"$')
 
 
 def labels(path: Path) -> dict[str, int]:

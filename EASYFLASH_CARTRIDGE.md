@@ -416,6 +416,44 @@ reads each populated portrait from `assets/portraits/NN`, flattened to
 `PNN` alongside the other runtime assets; missing IDs are filled with `$FF`
 like missing rooms.
 
+### Generic resource directory
+
+Rooms, object types, and portraits all use a fixed `bank = first_bank +
+id / per_bank` formula because each is fixed-size and fully populated.
+Future content that is variable-size or sparse (dialogue, quest text, and
+similar) does not fit that formula, so it uses a directory instead, the
+same idea as the room-code directory above but for plain data rather than
+executable overlays.
+
+Banks 57-63 (the last 7 of the 64 available EasyFlash banks) are reserved
+for this pool; no banks remain free after it. `RESOURCE_DIRECTORY_BANK`
+(57) ROML holds a 256-entry, 8-byte-per-entry directory (2048 bytes, `$FF`
+for an unpopulated ID) at offset zero, matching the room-code entry
+layout: bank, mode, offset (little-endian), length (little-endian), and a
+16-bit sum-of-bytes checksum (little-endian). Mode selects which 8 KiB half
+of that bank holds the payload -- `0` for ROML, `1` for ROMH -- so, unlike
+room code, a resource can land in either half of a bank. `tools/pack_easyflash.py`
+packs populated resources first-fit in ID order, starting right after the
+directory in bank 57's ROML half and filling each 8 KiB half completely
+before moving to the next; a resource is capped at one 8 KiB half
+(`PLATFORM_RESOURCE_MAX_BYTES`, `$2000`) and therefore never crosses an
+EasyFlash bank switch. Source files live at `assets/resources/NN` (raw
+bytes, no header) and are flattened to `RNN` alongside the other runtime
+assets, mirroring the portrait convention.
+
+`platform_resource_fetch(id, destination, capacity)` (see `PLATFORM_API.md`)
+reads the directory entry, then copies the payload with the same
+`platform_easyflash_copy_roml()`/`copy_romh()` primitives rooms, object
+types, and portraits already use, validates it against the stored
+checksum, and returns the actual length or `0` if the ID is unpopulated,
+oversized for `capacity`, or fails its checksum.
+
+Placing a resource that must exceed one 8 KiB half is a known future
+extension (a copy routine that increments `EASYFLASH_BANK` mid-copy when
+crossing into a contiguous next bank) and is not implemented; today every
+resource is bounded to one half so a naive byte-for-byte copy under one
+bank selection is always correct.
+
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
 bank-switch routine and its copy loop must therefore execute from stable RAM.
@@ -627,7 +665,10 @@ space. This was the cause of the first black-screen cartridge build.
 
 ## Current limitations
 
-- Runtime room banks are fixed at 3-45; type pages are banks 46-47.
+- Runtime room banks are fixed at 3-45; type pages are banks 46-47;
+  portraits are banks 49-56; the generic resource directory reserves
+  banks 57-63, the last banks the hardware supports -- no banks remain
+  free after it.
 - The complete PRG payload must fit in `$3D00` bytes of bank 0, bank 1, and
   the available portion of bank 2.
 - PRG load and entry addresses are hard-coded in the bootstrap.

@@ -367,14 +367,30 @@ void platform_look_cursor_tick(void);
 void platform_look_cursor_hide(void);
 
 /*
- * Fetch portrait_id (from cartridge or disk, matching the active storage
- * backend) into sprites 1-5 and slide it in from the top of the screen to
- * rest 16px from the top and side frame, in the PLATFORM_PORTRAIT_LEFT or
- * PLATFORM_PORTRAIT_RIGHT corner. Sprite 0 (look/take/use cursor) and
- * sprites 6-7 are untouched. Blocks until the slide-in finishes.
+ * Fetch portrait_id from cartridge into sprites 1-5 and slide it in from the
+ * top of the screen to rest 16px from the top and side frame, in the
+ * PLATFORM_PORTRAIT_LEFT or PLATFORM_PORTRAIT_RIGHT corner. Sprite 0
+ * (look/take/use cursor) and sprites 6-7 are untouched. Blocks until the
+ * slide-in finishes.
  */
 uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
 /* Hide sprites 1-5 immediately (no animation). */
 void platform_portrait_hide(void);
+
+/*
+ * Generic sparse cartridge resource directory: 256 read-only,
+ * variable-size blobs (id 0-255) reserved for future variable-size or
+ * sparse content that does not belong in a fixed-formula table like rooms,
+ * portraits, or object types (e.g. dialogue or quest text). A resource is
+ * guaranteed to fit within one 8 KiB EasyFlash ROML/ROMH half, so a fetch
+ * never spans an EasyFlash bank switch. See EASYFLASH_CARTRIDGE.md.
+ *
+ * Copies resource_id into destination (up to capacity bytes) and returns
+ * its actual length, or 0 if the ID is unpopulated, does not fit in
+ * capacity, or fails its stored checksum.
+ */
+#define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
+uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
+                                  uint16_t capacity);
 
 #endif

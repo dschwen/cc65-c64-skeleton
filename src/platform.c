@@ -22,6 +22,8 @@
 #define EF_TYPE_BANK_1     47u
 #define EF_PORTRAIT_FIRST_BANK  49u
 #define EF_PORTRAITS_PER_BANK   32u
+#define EF_RESOURCE_DIRECTORY_BANK   57u
+#define RESOURCE_DIRECTORY_ENTRY_BYTES 8u
 
 /*
  * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
@@ -74,6 +76,7 @@ void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
 void platform_easyflash_copy_roml(void);
+void platform_easyflash_copy_romh(void);
 extern uint8_t platform_ef_copy_bank;
 extern uint16_t platform_ef_copy_offset;
 extern uint16_t platform_ef_copy_destination;
@@ -111,6 +114,7 @@ static PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
 #pragma bss-name (pop)
 PlatformObjectType platform_object_type_scratch;
 static PlatformObjectTypeInfo object_type_info_scratch;
+static uint8_t resource_directory_entry[RESOURCE_DIRECTORY_ENTRY_BYTES];
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
 #pragma bss-name (push, "ZEROPAGE")
@@ -282,6 +286,61 @@ const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
     platform_ef_copy_size = OBJECT_TYPE_COLD_BYTES;
     platform_easyflash_copy_roml();
     return &object_type_info_scratch;
+}
+#pragma code-name (pop)
+
+/*
+ * Generic sparse resource directory: 256 read-only, variable-size blobs
+ * across EasyFlash banks 57-63, indexed by a fixed 256-entry, 8-byte-per-
+ * entry directory at the head of bank 57's ROML half. tools/pack_easyflash.py
+ * places entries first-fit into ROML/ROMH halves in bank order and never
+ * splits a resource across a bank switch (see EASYFLASH_CARTRIDGE.md).
+ * Entry layout: bank, mode (0 = ROML half, 1 = ROMH half), offset within
+ * that half (little-endian), length (little-endian), 16-bit sum-of-bytes
+ * checksum (little-endian).
+ */
+#pragma code-name (push, "HIGHCODE")
+uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
+                                  uint16_t capacity) {
+    uint8_t bank;
+    uint8_t mode;
+    uint16_t offset;
+    uint16_t size;
+    uint16_t checksum;
+    uint16_t sum;
+    uint16_t i;
+
+    platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
+    platform_ef_copy_offset = (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
+    platform_ef_copy_destination = (uint16_t)resource_directory_entry;
+    platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
+    platform_easyflash_copy_roml();
+    if (resource_directory_entry[0] == 0xffu) return 0u;
+
+    bank = resource_directory_entry[0];
+    mode = resource_directory_entry[1];
+    offset = (uint16_t)resource_directory_entry[2] |
+             ((uint16_t)resource_directory_entry[3] << 8);
+    size = (uint16_t)resource_directory_entry[4] |
+           ((uint16_t)resource_directory_entry[5] << 8);
+    checksum = (uint16_t)resource_directory_entry[6] |
+               ((uint16_t)resource_directory_entry[7] << 8);
+    if (mode > 1u || size == 0u || size > capacity ||
+        offset + size > PLATFORM_RESOURCE_MAX_BYTES) {
+        return 0u;
+    }
+
+    platform_ef_copy_bank = bank;
+    platform_ef_copy_offset = offset;
+    platform_ef_copy_destination = (uint16_t)destination;
+    platform_ef_copy_size = size;
+    if (mode == 0u) platform_easyflash_copy_roml();
+    else platform_easyflash_copy_romh();
+
+    sum = 0u;
+    for (i = 0u; i < size; ++i) sum += destination[i];
+    if (sum != checksum) return 0u;
+    return size;
 }
 #pragma code-name (pop)
 

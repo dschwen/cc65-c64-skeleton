@@ -718,6 +718,31 @@ bank) for the full 256-ID range, mirroring the room asset layout's fixed
 `bank = first_bank + id / per_bank` formula. See
 `EASYFLASH_CARTRIDGE.md` for the complete bank table.
 
+## Generic cartridge resources
+
+```c
+#define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
+uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
+                                  uint16_t capacity);
+```
+
+Rooms, object types, and portraits all use a fixed-formula bank/offset
+because each is fixed-size and fully populated across all 256 IDs. This
+call is for content that is not: sparse, variable-size data such as future
+dialogue or quest text. `resource_id` is looked up in a 256-entry directory
+reserved in EasyFlash banks 57-63 (see `EASYFLASH_CARTRIDGE.md`); resource
+files are unstructured bytes (no ABI, unlike room code) and are placed by
+`tools/pack_easyflash.py` from `assets/resources/NN`.
+
+Copies up to `capacity` bytes into `destination` and returns the actual
+length on success. Returns `0` if `resource_id` is unpopulated, its stored
+length exceeds `capacity`, or the copied bytes fail the directory's stored
+checksum -- callers should treat `0` as "resource not available" and must
+not assume `destination` was left unmodified in that case. A resource
+never exceeds `PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH
+half), so a fetch is always a single bank selection, never a multi-bank
+copy.
+
 ## Raster IRQ and water animation
 
 The complete raster interrupt implementation is assembly in `src/irq.s`. It

@@ -347,7 +347,7 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
 #pragma code-name (pop)
 
 /*
- * Generic loaded-overlay fetch, shared by every $A4E9-$B4D8 overlay (the
+ * Generic loaded-overlay fetch, shared by every $A4E9-$B4FF overlay (the
  * inventory/story overlay and the save/load overlay): copy the fixed
  * 16-byte header from the given EasyFlash bank/half, read its declared
  * size, copy the complete payload, then hand off to the native validator
@@ -356,7 +356,7 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
  */
 #define OVERLAY_BASE          ((uint8_t*)0xa4e9)
 #define OVERLAY_HEADER_BYTES  16u
-#define OVERLAY_MAX_BYTES     0x0ff0u
+#define OVERLAY_MAX_BYTES     0x1017u
 
 uint8_t platform_overlay_validate_native(uint16_t loaded_size);
 

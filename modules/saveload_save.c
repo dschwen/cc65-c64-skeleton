@@ -6,7 +6,7 @@
 /* Independently linked save-detail overlay ("SV"): name entry, record
  * encode, and the disk write for the slot chosen by the browse overlay
  * (modules/saveload.c, "SL") -- a separate overlay because the two
- * together do not fit the shared 4080-byte $A4E9 RAM window. See
+ * together do not fit the shared 4119-byte $A4E9 RAM window. See
  * SAVE_GAME.md. Same constraints as modules/saveload.c: no runtime
  * library, so no memcpy/memset, no library string/number formatting, no
  * division/modulo by a non-power-of-two, and no storing a 16-bit value
@@ -17,18 +17,29 @@
 #define SAVE_HEADER_BYTES    16u
 #define SAVE_PREFIX_BYTES    130u
 #define SAVE_DELTA_BYTES     5u
-/* Must match modules/saveload.c's decoder cap. */
-#define SAVE_MAX_DELTAS      26u
+#define SAVE_MAX_DELTAS      200u
 #define SAVE_MAX_BYTES       (SAVE_HEADER_BYTES + SAVE_PREFIX_BYTES + \
                               SAVE_MAX_DELTAS * SAVE_DELTA_BYTES)
 #define SAVE_PEEK_BYTES      (SAVE_HEADER_BYTES + SAVE_NAME_BYTES + 6u)
 #define SAVE_FORMAT_VERSION  1u
+#define SAVE_SLOT_COUNT      8u
+#define SAVE_INDEX_HEADER_BYTES 10u
+#define SAVE_INDEX_ENTRY_BYTES  17u
+#define SAVE_INDEX_BYTES \
+    (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
+#define SAVE_INDEX_RAM       ((uint8_t*)0xa000)
+#define SAVE_RECORD_RAM      ((uint8_t*)0xa000)
+
+#define FILE_C 0x43u
+#define FILE_I 0x49u
+#define FILE_S 0x53u
 
 #define SCREEN        ((uint8_t*)0x0400)
 #define COLOR         ((uint8_t*)0xd800)
 #define SCREEN_COLS   40u
 #define SCREEN_ROWS   25u
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
+#define NAME_SCREEN   ((uint8_t*)0x059f)
 
 void platform_memory_kernal(void);
 void platform_memory_game(void);
@@ -36,19 +47,18 @@ void raster_irq_suspend(void);
 void raster_irq_resume(void);
 
 extern uint8_t platform_disk_slot;
-extern uint8_t platform_disk_side;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
 extern uint16_t platform_disk_got;
 void platform_disk_read_block(void);
 void platform_disk_write_block(void);
+void platform_disk_index_write_block(void);
 
-static uint8_t record_buffer[SAVE_MAX_BYTES];
+/* The full 1,146-byte record uses room-stage RAM at $A000. Preserve the
+ * browser's 146-byte index here before record encoding overwrites it. */
+#define record_buffer SAVE_RECORD_RAM
+static uint8_t index_buffer[SAVE_INDEX_BYTES];
 static uint8_t name_buffer[SAVE_NAME_BYTES];
-
-static uint16_t peek_generation;
-static uint8_t write_target_side;
-static uint16_t write_target_generation;
 
 static uint16_t get16(const uint8_t* p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -94,18 +104,16 @@ static uint8_t name_is_printable(uint8_t ch) {
     return ch == 32u || (ch >= 48u && ch <= 57u) || (ch >= 65u && ch <= 90u);
 }
 
-static uint16_t disk_read_bytes(uint8_t slot, uint8_t side, uint16_t want) {
+static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
-    platform_disk_side = side;
     platform_disk_buffer = record_buffer;
     platform_disk_want = want;
     platform_disk_read_block();
     return platform_disk_got;
 }
 
-static uint8_t disk_write_bytes(uint8_t slot, uint8_t side, uint16_t size) {
+static uint8_t disk_write_bytes(uint8_t slot, uint16_t size) {
     platform_disk_slot = slot;
-    platform_disk_side = side;
     platform_disk_buffer = record_buffer;
     platform_disk_want = size;
     platform_disk_write_block();
@@ -113,30 +121,30 @@ static uint8_t disk_write_bytes(uint8_t slot, uint8_t side, uint16_t size) {
     return 1u;
 }
 
-static uint8_t header_valid(uint16_t got) {
-    return got >= SAVE_HEADER_BYTES &&
-           record_buffer[0] == 'C' && record_buffer[1] == '6' &&
-           record_buffer[2] == '4' && record_buffer[3] == 'S' &&
-           record_buffer[4] == SAVE_FORMAT_VERSION;
-}
-
-static uint8_t peek_side(uint8_t slot, uint8_t side) {
-    uint16_t got;
-
-    got = disk_read_bytes(slot, side, SAVE_PEEK_BYTES);
-    if (!header_valid(got) || got < SAVE_PEEK_BYTES) return 0u;
-    peek_generation = get16(record_buffer + 6);
+static uint8_t disk_index_write(void) {
+    platform_disk_buffer = index_buffer;
+    platform_disk_want = SAVE_INDEX_BYTES;
+    platform_disk_index_write_block();
+    if (platform_disk_got != SAVE_INDEX_BYTES) return 0u;
     return 1u;
 }
 
-static uint8_t load_full(uint8_t slot, uint8_t side) {
+static uint8_t header_valid(uint16_t got) {
+    return got >= SAVE_HEADER_BYTES &&
+           (record_buffer[0] == FILE_C || record_buffer[0] == 0xc3u) &&
+           record_buffer[1] == '6' && record_buffer[2] == '4' &&
+           (record_buffer[3] == FILE_S || record_buffer[3] == 0xd3u) &&
+           record_buffer[4] == SAVE_FORMAT_VERSION;
+}
+
+static uint8_t load_full(uint8_t slot) {
     uint16_t got;
     uint16_t payload_len;
     uint16_t checksum;
     uint16_t computed;
     uint16_t i;
 
-    got = disk_read_bytes(slot, side, SAVE_MAX_BYTES);
+    got = disk_read_bytes(slot, SAVE_MAX_BYTES);
     if (!header_valid(got)) return 0u;
     payload_len = get16(record_buffer + 10);
     if ((uint16_t)(SAVE_HEADER_BYTES + payload_len) != got) return 0u;
@@ -147,34 +155,26 @@ static uint8_t load_full(uint8_t slot, uint8_t side) {
     return 1u;
 }
 
-static void pick_write_target(uint8_t slot) {
-    uint16_t gen_a;
-    uint16_t gen_b;
-    uint8_t valid_a;
-    uint8_t valid_b;
+static uint16_t index_checksum(const uint8_t* index) {
+    uint16_t sum;
+    uint8_t i;
 
-    gen_a = 0u;
-    gen_b = 0u;
-    valid_a = peek_side(slot, 'A');
-    if (valid_a) gen_a = peek_generation;
-    valid_b = peek_side(slot, 'B');
-    if (valid_b) gen_b = peek_generation;
-    if (!valid_a) {
-        write_target_side = 'A';
-        write_target_generation = (uint16_t)((valid_b ? gen_b : 0u) + 1u);
-    } else if (!valid_b) {
-        write_target_side = 'B';
-        write_target_generation = (uint16_t)(gen_a + 1u);
-    } else if (gen_a <= gen_b) {
-        write_target_side = 'A';
-        write_target_generation = (uint16_t)(gen_b + 1u);
-    } else {
-        write_target_side = 'B';
-        write_target_generation = (uint16_t)(gen_a + 1u);
+    sum = 0u;
+    for (i = SAVE_INDEX_HEADER_BYTES; i < SAVE_INDEX_BYTES; ++i) {
+        sum += index[i];
     }
+    return sum;
 }
 
-static uint16_t encode_record(const uint8_t* name, uint16_t generation) {
+static uint8_t* index_entry(uint8_t slot) {
+    uint8_t* entry;
+
+    entry = index_buffer + SAVE_INDEX_HEADER_BYTES;
+    while (slot-- != 0u) entry += SAVE_INDEX_ENTRY_BYTES;
+    return entry;
+}
+
+static uint16_t encode_record(const uint8_t* name) {
     uint8_t* p;
     uint8_t* q;
     uint16_t i;
@@ -182,14 +182,14 @@ static uint16_t encode_record(const uint8_t* name, uint16_t generation) {
     uint16_t checksum;
 
     p = record_buffer;
-    p[0] = 'C';
+    p[0] = FILE_C;
     p[1] = '6';
     p[2] = '4';
-    p[3] = 'S';
+    p[3] = FILE_S;
     p[4] = SAVE_FORMAT_VERSION;
     p[5] = 0u;
-    p[6] = (uint8_t)generation;
-    p[7] = (uint8_t)(generation >> 8);
+    p[6] = 0u;
+    p[7] = 0u;
     p[8] = 0u;
     p[9] = 0u;
     p[14] = 0u;
@@ -247,14 +247,29 @@ static uint16_t encode_record(const uint8_t* name, uint16_t generation) {
 
 static uint8_t save_slot(uint8_t slot, const uint8_t* name) {
     uint16_t total;
+    uint8_t i;
     uint8_t ok;
+    uint8_t status;
+    uint8_t* entry;
 
-    (void)game_world_capture_current();
+    status = game_world_capture_current();
+    if (status != PLATFORM_OK) return 0u;
     if (game_world_delta_count > SAVE_MAX_DELTAS) return 0u;
-    pick_write_target(slot);
-    total = encode_record(name, write_target_generation);
-    ok = disk_write_bytes(slot, write_target_side, total);
-    if (ok) ok = load_full(slot, write_target_side);
+    total = encode_record(name);
+
+    platform_memory_kernal();
+    ok = disk_write_bytes(slot, total);
+    if (ok) ok = load_full(slot);
+    platform_memory_game();
+    if (!ok) return 0u;
+
+    entry = index_entry(slot);
+    entry[0] = 1u;
+    for (i = 0u; i < SAVE_NAME_BYTES; ++i) entry[1u + i] = name[i];
+    put16(index_buffer + 8, index_checksum(index_buffer));
+    platform_memory_kernal();
+    ok = disk_index_write();
+    platform_memory_game();
     return ok;
 }
 
@@ -272,15 +287,15 @@ static uint8_t enter_name(uint8_t* name) {
     length = 0u;
     while (length < SAVE_NAME_BYTES && name[length] != 0u) ++length;
 
-    for (;;) {
-        clear_screen();
-        put_string(4u, 10u, "SAVE NAME:", 1u);
-        for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
-            put_char((uint8_t)(15u + i), 10u,
-                    i < length ? name[i] : (uint8_t)'_', 7u);
-        }
-        put_string(4u, 12u, "RETURN confirm   RUN/STOP cancel", 1u);
+    clear_screen();
+    put_string(4u, 10u, "SAVE NAME:", 1u);
+    for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
+        put_char((uint8_t)(15u + i), 10u,
+                 i < length ? name[i] : (uint8_t)'.', 7u);
+    }
+    put_string(4u, 12u, "RETURN confirm   RUN/STOP cancel", 1u);
 
+    for (;;) {
         wait_key_release();
         do {
             platform_wait_frame();
@@ -293,11 +308,16 @@ static uint8_t enter_name(uint8_t* name) {
         }
         if (key == 3u) return 0u; /* RUN/STOP */
         if (key == 20u) { /* DEL */
-            if (length != 0u) --length;
+            if (length != 0u) {
+                --length;
+                NAME_SCREEN[length] = platform_text_screen_code('.');
+            }
             continue;
         }
         if (name_is_printable(key) && length < SAVE_NAME_BYTES) {
-            name[length++] = key;
+            name[length] = key;
+            NAME_SCREEN[length] = platform_text_screen_code((char)key);
+            ++length;
         }
     }
 }
@@ -306,30 +326,19 @@ void saveload_save_overlay_run(void) {
     uint8_t slot;
     uint8_t i;
     uint8_t have_name;
+    uint8_t* entry;
 
     slot = saveload_selected_slot;
     platform_text_screen_enter();
     VIC_CTRL1 |= 0x10u;
 
-    platform_memory_kernal();
-    have_name = peek_side(slot, 'A');
-    {
-        uint16_t gen_a;
-        uint8_t valid_b;
-        uint16_t gen_b;
-        gen_a = have_name ? peek_generation : 0u;
-        valid_b = peek_side(slot, 'B');
-        gen_b = valid_b ? peek_generation : 0u;
-        if (valid_b && (!have_name || gen_b > gen_a)) {
-            have_name = peek_side(slot, 'B');
-        } else if (have_name) {
-            have_name = peek_side(slot, 'A');
-        }
-    }
-    platform_memory_game();
-
+    copy_bytes(index_buffer, SAVE_INDEX_RAM, SAVE_INDEX_BYTES);
+    index_buffer[0] = FILE_C;
+    index_buffer[3] = FILE_I;
+    entry = index_entry(slot);
+    have_name = entry[0];
     for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
-        name_buffer[i] = have_name ? record_buffer[SAVE_HEADER_BYTES + i] : 0u;
+        name_buffer[i] = have_name ? entry[1u + i] : 0u;
     }
 
     if (!enter_name(name_buffer)) {
@@ -337,10 +346,9 @@ void saveload_save_overlay_run(void) {
         return;
     }
 
+    clear_screen();
     raster_irq_suspend();
-    platform_memory_kernal();
     i = save_slot(slot, name_buffer);
-    platform_memory_game();
     raster_irq_resume();
 
     clear_screen();

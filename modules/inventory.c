@@ -48,10 +48,24 @@ static void wait_key_release(void) {
     } while (platform_input_poll() != 0u);
 }
 
-static void inventory_draw(void) {
-    uint8_t i;
+static void inventory_cursor_draw(uint8_t index, uint8_t visible) {
     uint8_t row;
     uint16_t cursor;
+
+    row = index;
+    cursor = 80u;
+    if (row >= INVENTORY_COLUMN_ROWS) {
+        row -= INVENTORY_COLUMN_ROWS;
+        cursor += 20u;
+    }
+    cursor += (uint16_t)row * 40u;
+    INVENTORY_SCREEN[cursor] =
+        platform_text_screen_code(visible ? '>' : ' ');
+    INVENTORY_COLOR[cursor] = visible ? 1u : 0u;
+}
+
+static void inventory_draw(void) {
+    uint8_t i;
 
     clear_cells((uint16_t)INVENTORY_BODY_ROWS * 40u, 1u);
     copy_screen(INVENTORY_SCREEN + 15u, inventory_title,
@@ -77,20 +91,13 @@ static void inventory_draw(void) {
     if (inventory_selected >= inventory_count) {
         inventory_selected = inventory_count - 1u;
     }
-    row = inventory_selected;
-    cursor = 80u;
-    if (row >= INVENTORY_COLUMN_ROWS) {
-        row -= INVENTORY_COLUMN_ROWS;
-        cursor += 20u;
-    }
-    cursor += (uint16_t)row * 40u;
-    INVENTORY_SCREEN[cursor] = platform_text_screen_code('>');
-    INVENTORY_COLOR[cursor] = 1u;
+    inventory_cursor_draw(inventory_selected, 1u);
 }
 
 void inventory_overlay_run(void) {
     uint8_t key;
     uint8_t slot;
+    uint8_t old_selected;
 
     inventory_selected = 0u;
     platform_text_screen_enter();
@@ -105,6 +112,7 @@ void inventory_overlay_run(void) {
         if (key == 0u) continue;
         if (key == PLATFORM_KEY_INVENTORY) break;
 
+        old_selected = inventory_selected;
         if (key == PLATFORM_KEY_CURSOR_UP) {
             if (inventory_selected != 0u &&
                 inventory_selected != INVENTORY_COLUMN_ROWS) {
@@ -130,12 +138,18 @@ void inventory_overlay_run(void) {
                 game_text_write(PLATFORM_TEXT_LINE_TOP,
                                 "You cannot use that.", 1u);
             }
+            inventory_draw();
+            wait_key_release();
+            continue;
         } else {
             wait_key_release();
             continue;
         }
 
-        inventory_draw();
+        if (inventory_selected != old_selected) {
+            inventory_cursor_draw(old_selected, 0u);
+            inventory_cursor_draw(inventory_selected, 1u);
+        }
         wait_key_release();
     }
 

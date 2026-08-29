@@ -36,7 +36,7 @@ Reusable engine constants remain in `game.h` or `platform.h`.
 ## Inventory overlay contract
 
 `modules/inventory.c`, `modules/inventory.s`, and `story/story.c` are linked as
-one overlay at `$A4E9-$B4D8`. EasyFlash stores its loadable bytes in bank 48
+one overlay at `$A4E9-$B4FF`. EasyFlash stores its loadable bytes in bank 48
 ROMH. The resident loader checks its ABI, load size, entry vector, BSS
 bounds, and payload checksum before execution.
 
@@ -53,6 +53,6 @@ room, and rebuilds lighting/visibility. Therefore inventory mutations made by
 story code are visible immediately after closing the inventory.
 
 The overlay header is 16 bytes (`IU`, ABI 1) followed by loadable code/data and
-linked BSS. `build/inventory.map` is the authoritative size report. The current
-module occupies only about 1.1 KiB including its PRG load header, leaving most
-of the 4,080-byte overlay window available for story logic.
+linked BSS. `build/inventory.map` is the authoritative size report. The
+4,119-byte `$A4E9-$B4FF` window is shared by independently loaded overlays;
+only one may be active at a time.

@@ -13,7 +13,7 @@ SEGMENT = re.compile(
     r"^(BSS)\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+"
 )
 LOAD_ADDRESS = 0xA4E9
-MAX_BYTES = 0x0FF0
+MAX_BYTES = 0x1017
 HEADER_BYTES = 16
 ABI_VERSION = 1
 DEFAULT_MAGIC = "IU"

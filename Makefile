@@ -15,6 +15,8 @@ CARTCONV ?= cartconv
 DISK_NAME ?= GAME
 PRG_NAME  ?= GAME
 CART_NAME ?= GAME
+SAVE_DISK ?= $(OUTDIR)/saves.d64
+SAVE_DISK_NAME ?= SAVES
 RES_DIR ?= res
 ROOM_ASSETS := $(wildcard assets/[0-9A-F][0-9A-F])
 ROOM_SOURCES := $(wildcard rooms/[0-9A-F][0-9A-F].c)
@@ -322,8 +324,11 @@ run: $(OUT_D64)
 run-d64: $(OUT_D64)
 	$(VICE) -autostart $(OUT_D64)
 
-run-cartridge: $(OUT_CRT)
-	$(VICE) -cartcrt $(OUT_CRT)
+$(SAVE_DISK): | $(OUTDIR)
+	$(C1541) -format "$(SAVE_DISK_NAME),00" d64 $@
+
+run-cartridge: $(OUT_CRT) $(SAVE_DISK)
+	$(VICE) -cartcrt $(OUT_CRT) -8 $(SAVE_DISK)
 
 asset-editor:
 	python3 tools/asset-editor/server.py --host $(ASSET_EDITOR_HOST) --port $(ASSET_EDITOR_PORT)

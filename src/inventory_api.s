@@ -38,17 +38,18 @@ _platform_overlay_validate_native:
     sta tmp3
     stx tmp4
 
-    ; 16 <= size <= $0ff0.
-    cpx #$10
+    ; 16 <= size <= $1017.
+    cpx #$11
     bcs @state_invalid
     cpx #$00
     bne @check_max
     cmp #$10
     bcc @state_invalid
 @check_max:
-    cpx #$0f
+    cpx #$10
     bcc @header
-    cmp #$f1
+    bne @state_invalid
+    cmp #$18
     bcs @state_invalid
 
 @header:
@@ -88,7 +89,7 @@ _platform_overlay_validate_native:
 
 .segment "STATEEXT"
 _platform_overlay_validate_bss_bounds:
-    ; offset + BSS size must stay at or below $0ff0.
+    ; offset + BSS size must stay at or below $1017.
     clc
     lda OVERLAY_ENTRY+8
     adc OVERLAY_ENTRY+10
@@ -96,11 +97,11 @@ _platform_overlay_validate_bss_bounds:
     lda OVERLAY_ENTRY+9
     adc OVERLAY_ENTRY+11
     sta ptr1+1
-    cmp #$0f
+    cmp #$10
     jcc _platform_overlay_validate_checksum
     jne _platform_overlay_validate_invalid
     lda ptr1
-    cmp #$f1
+    cmp #$18
     jcs _platform_overlay_validate_invalid
     jmp _platform_overlay_validate_checksum
 

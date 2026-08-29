@@ -106,6 +106,10 @@ extern uint8_t saveload_overlay_mode;
  * the actual write. Kept resident because loading a new overlay blob
  * overwrites the previous one's own static variables. */
 extern uint8_t saveload_selected_slot;
+/* The load overlay sets this after placing a validated record at $A000.
+ * Resident code consumes the record only after the overlay has returned;
+ * room loading reuses and overwrites the overlay/staging memory. */
+extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 

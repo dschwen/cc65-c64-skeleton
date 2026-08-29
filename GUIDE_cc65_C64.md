@@ -287,8 +287,8 @@ linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-specific code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A4E8` | destination-room staging |
-| `$A4E9-$B4D8` | rebuildable work RAM; inventory/story overlay while active |
+| `$A000-$A4E8` | destination-room or save-record/index staging |
+| `$A4E9-$B4FF` | rebuildable work RAM; inventory/story overlay while active |
 | `$B500-$B80C` | ordinary platform BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | cc65 software stack |
@@ -373,12 +373,13 @@ visible while leaving BASIC hidden and these regions readable.
 visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
 rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
 room-code copies are implemented in assembly because ROMH temporarily hides
-both the C stack and BSS. `$ADF9-$B4D8` is the current 1,760-byte WORKRAM tail.
+both the C stack and BSS. `$ADF9-$B4FF` is the current 1,799-byte WORKRAM tail.
 Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current `HIGH` segment has about 837 bytes of linker margin; inspect
-`build/game.map` before adding resident logic. Cursor helpers deliberately use
+The current `HIGH` segment has about 158 bytes of linker margin and `UPPER`
+has about 39 bytes; inspect `build/game.map` before adding resident logic.
+Cursor helpers deliberately use
 the remaining pre-charset and `$3900` gaps while the sprite bitmap area remains
 reserved for all eight hardware sprites.
 

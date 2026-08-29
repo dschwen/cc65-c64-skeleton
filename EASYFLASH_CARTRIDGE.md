@@ -34,12 +34,18 @@ Outputs:
 | `build/game-ef.bin` | Packed executable and runtime asset banks |
 | `build/game-ef.map` | Cartridge bootstrap linker map |
 | `build/game.crt` | EasyFlash CRT image for emulators or EasyProg |
+| `build/saves.d64` | writable development save disk, created on first cartridge run |
 
 Run it in VICE:
 
 ```bash
 make run-cartridge
 ```
+
+This also creates (once) and attaches `build/saves.d64` as writable device 8
+storage. Cartridge saves are disk-backed. Override the path with
+`SAVE_DISK=/path/to/saves.d64`; deleting the file or running `make clean`
+starts with an empty development save disk.
 
 Override the cartridge name stored in the CRT header with:
 

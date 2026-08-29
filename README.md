@@ -61,6 +61,7 @@ See `STORY_CODE_API.md` for map Use hooks and global inventory-item behavior.
 
 Output:
 - `build/game.crt`
+- `build/saves.d64` (created by `make run-cartridge`, retained between runs)
 - `build/game-ef-base.bin` (raw executable banks 0-2)
 - `build/game-ef.bin` (packed executable and runtime asset banks)
 
@@ -69,13 +70,14 @@ Run via Makefile targets:
 ```bash
 make run      # builds and autostarts the complete D64
 make run-d64  # same explicit disk workflow
-make run-cartridge # attaches build/game.crt
+make run-cartridge # attaches game.crt and persistent build/saves.d64
 ```
 
 Useful overrides:
 ```bash
 make VICE=x64
 make DISK_NAME=MYGAME PRG_NAME=MYGAME d64
+make SAVE_DISK=/path/to/saves.d64 run-cartridge
 make RES_DIR=assets d64
 make DISK_EXTRA_FILES= d64
 ```

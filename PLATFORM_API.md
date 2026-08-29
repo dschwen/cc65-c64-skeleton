@@ -50,7 +50,7 @@ room-transition logic even when a graphic extends in several directions.
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging |
-| `$A4E9-$B4D8` | rebuildable work RAM; inventory/story overlay while active |
+| `$A4E9-$B4FF` | rebuildable work RAM; inventory/story/save overlay while active |
 | `$B500-$B80C` | ordinary resident BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | cc65 software stack |
@@ -799,7 +799,7 @@ using `make asset-editor`.
 
 The following are deliberately not hidden behind incomplete contracts:
 
-- disk A/B save-file I/O (see `SAVE_GAME.md`) — decided as the only save path;
+- disk save-file and one-block index I/O (see `SAVE_GAME.md`) -- the only save path;
   native EasyFlash EAPI flash-save persistence is deliberately not planned
   (no driver exists, and some emulators need an extra step to persist cartridge
   writes, so cartridge storage stays read-only for game assets);

@@ -36,8 +36,8 @@ record to always-visible scratch before rendering it.
 | `$0400-$07E7` | 1000 | screen matrix |
 | `$07E8-$07F7` | 16 | unused screen-block tail; available only for tiny fixed state |
 | `$07F8-$07FF` | 8 | sprite pointers 0-7 |
-| `$0801-$1FAB` | 6059 | startup, low code, C runtime, and initialized data |
-| `$1FAC-$1FFF` | 84 | free low-program linker tail |
+| `$0801-$1FEB` | 6123 | startup, low code, C runtime, and initialized data |
+| `$1FEC-$1FFF` | 20 | free low-program linker tail |
 | `$2000-$27FF` | 2048 | tile charset |
 | `$2800-$2FFF` | 2048 | text charset |
 | `$3000-$37FF` | 2048 | 256 tile definitions |
@@ -45,23 +45,23 @@ record to always-visible scratch before rendering it.
 | `$3900-$39F9` | 250 | compact lookup/native code |
 | `$39FA-$39FF` | 6 | free linker tail |
 | `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7B86` | 16263 | resident platform code/RODATA |
-| `$7B87-$7FFF` | 1145 | free resident-code linker tail |
+| `$3C00-$7F61` | 17250 | resident platform code/RODATA |
+| `$7F62-$7FFF` | 158 | free resident-code linker tail |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
-| `$855D-$85F7` | 155 | compact native helpers |
-| `$85F8-$85FF` | 8 | free linker tail |
+| `$855D-$85FB` | 159 | compact native helpers |
+| `$85FC-$85FF` | 4 | free linker tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$987B` | 3380 | resident game/main/shared room API |
-| `$987C-$98FF` | 132 | free resident tail |
+| `$8B48-$98D8` | 3473 | resident game/main/shared room API |
+| `$98D9-$98FF` | 39 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
-| `$A000-$A4E8` | 1257 | destination-room staging |
+| `$A000-$A4E8` | 1257 | destination-room or save-record/index staging |
 | `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
-| `$ADF9-$B4D8` | 1760 | free work-RAM/overlay tail |
-| `$B4D9-$B4FF` | 39 | unallocated gap |
-| `$B500-$B80C` | 781 | resident BSS; currently full |
+| `$ADF9-$B4FF` | 1799 | free work-RAM/overlay tail |
+| `$B500-$B7EC` | 749 | resident BSS |
+| `$B7ED-$B80C` | 32 | free BSS-region tail |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
 | `$B87E-$B87F` | 2 | reserved fill before fixed pager entry |
 | `$B880-$B9C9` | 330 | bottom-text pager |
@@ -78,24 +78,24 @@ record to always-visible scratch before rendering it.
 | `$E302-$FFF9` | 7416 | free; reclaimed from the pre-split 64-byte object-type table |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-The `HIGH` tail is the primary margin for modest resident-code growth. It has
-been through a wide swing this project: the portrait API drove it down to 76
-bytes (29 in `UPPER`), retiring the disk asset-loading paths recovered most
-of that, and the object-type hot/cold split (below) spent some of it back
-down to the current 1,145/132 bytes. Recheck `build/game.map` after every
-change because cc65 can move code between segments.
+The remaining resident margins are small: 158 bytes in `HIGH`, 39 bytes in
+`UPPER`, and 20 bytes below the charsets. Save/load's resident completion
+step and the object-type hot/cold split consumed most of the earlier margin.
+Recheck `build/game.map` after every change because cc65 can move code between
+segments.
 
 ## RAM beneath BASIC and KERNAL
 
 ### BASIC ROM: `$A000-$BFFF`
 
 All 8 KiB are already exposed as RAM. The render buffers and inventory/story
-overlay deliberately share `$A4E9-$B4D8`: the overlay may overwrite render
+overlay deliberately share `$A4E9-$B4FF`: the overlay may overwrite render
 state because the resident wrapper redraws the room after it returns. Full-tile
 lighting reduced active `WORKBSS` to `$A4E9-$ADF8`, leaving a contiguous
-1,760-byte tail for future work buffers or overlay growth. Other unallocated
-pieces are `$B4D9-$B4FF` (39 bytes), `$B9FD-$B9FF` (3 bytes), and
-`$BFE8-$BFFF` (24 bytes).
+1,799-byte tail for future work buffers or overlay growth. `$A000-$A4E8`
+stages either a destination room or a complete save record; those uses never
+overlap. Other unallocated pieces are `$B7ED-$B80C` (32 bytes),
+`$B9FD-$B9FF` (3 bytes), and `$BFE8-$BFFF` (24 bytes).
 
 ### KERNAL ROM: `$E000-$FFFF`
 

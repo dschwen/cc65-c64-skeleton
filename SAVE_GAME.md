@@ -4,24 +4,14 @@ The save system separates immutable assets from mutable game state. Room files
 remain the original `00` through `FF` assets in EasyFlash ROM. A running game
 stores only object slots that differ from those base assets.
 
-**Current status:** F3 Load, the slot-list browser, and disk reads all work
-and are verified in VICE (confirmed against a real d64: peeking 16 candidate
-files on an empty disk correctly reports every slot empty, with no hang or
-corruption). F1 Save's UI, encoding, and KERNAL call sequence are all in
-place, but the disk **write** does not currently work: `platform_disk_write_block()`
-in `modules/disk_io.s` reports success (clean `READST`, byte count matches)
-after `CHKOUT`/`CHROUT`/`CLOSE`, but no file appears afterward -- confirmed
-both by inspecting the resulting `.d64` from outside VICE and by an
-immediate in-session readback of the same filename failing, and the drive's
-own error channel reporting 62 (FILE NOT FOUND) after a write the
-data-channel status had already claimed succeeded. The identical KERNAL call
-sequence (scratch, then `SETLFS`/`SETNAM"...,W"`/`OPEN`/`CHKOUT`/`CHROUT`/
-`CLOSE`) works correctly in a plain BASIC-booted VICE session against the
-same device and image, so this is specific to running from this game's
-cartridge/overlay context; root cause not yet found despite testing simpler
-filename forms, bypassing the scratch step, suspending the custom raster IRQ,
-and re-enabling the CIA1 jiffy-clock interrupt around the write. See the
-`KNOWN ISSUE` comment at the top of `modules/disk_io.s`.
+**Current status:** F1 Save, F3 Load, the slot-list browser, and disk I/O all
+work and are verified in VICE against real `.d64` images. The former save
+failure was a target-character-set bug: `cl65 -t c64` encoded assembly
+`'W'` as high PETSCII `$D7`, so CBM DOS did not recognize `,W` as write mode.
+`modules/disk_io.s` now emits DOS command/mode letters as explicit low
+PETSCII bytes. After closing a save file, it reads the complete record back
+and validates its length and checksum. See `SAVE_DISK_WRITE_BUG.md` for the
+investigation.
 
 ## Implemented runtime layer
 
@@ -85,7 +75,7 @@ Header, 16 bytes:
 | 0 | 4 | ASCII `C64S` |
 | 4 | 1 | format version, initially 1 |
 | 5 | 1 | flags, initially 0 |
-| 6 | 4 | monotonically increasing generation |
+| 6 | 4 | reserved, zero |
 | 10 | 2 | payload byte count |
 | 12 | 2 | 16-bit payload checksum |
 | 14 | 2 | reserved, zero |
@@ -110,56 +100,76 @@ and `game_entry_reason` are transient and are not serialized. A save request
 must finish or reject a pending room transition, then call
 `game_world_capture_current()` before encoding.
 
-## Disk backend plan
+## Disk backend
 
 8 numbered slots (`0`-`7`) are offered; F1 opens the Save menu, F3 opens the
 Load menu (both resident keys, wired in `src/main.c`, dispatching into an
-EasyFlash overlay -- see "Save/load overlay" below). Each slot uses two
-files on device 8, for example `S0A` and `S0B`. Saving writes the
-older/invalid side with generation + 1, closes it, then verifies its header
-and checksum. Loading validates both files and chooses the newest valid
-generation. A torn write therefore leaves the other file usable. The
-implementation should stream rather than require another 1.2 KiB buffer.
+EasyFlash overlay -- see "Save/load overlay" below). Storage is device 8.
+Each slot has one sequential file named `S0` through `S7`.
 
-Both menus open on a slot-list screen built by reading, for each slot's
-newest valid generation, only the 16-byte file header plus the leading 22
-payload-prefix bytes (name, then turn/day) -- enough to show a name and a
-short summary without decoding the whole record. An unreadable/absent slot
-shows as empty. Save additionally prompts for a name (defaulting to the
-slot's existing name, if any) before writing the complete record. Loading a
-slot runs the full transactional load below; saving over an occupied slot
-overwrites both its name and content.
+`SINDEX` is a 146-byte, one-disk-block directory cache. Opening Save or Load
+normally reads only this file, rather than probing every slot:
 
-Loading is transactional:
+| Offset | Bytes | Meaning |
+|---:|---:|---|
+| 0 | 4 | ASCII `C64I` |
+| 4 | 1 | format version, 1 |
+| 5 | 1 | entry size, 17 |
+| 6 | 1 | slot count, 8 |
+| 7 | 1 | reserved, zero |
+| 8 | 2 | checksum of bytes 10-145 |
+| 10 | 136 | eight entries: present byte plus 16-byte zero-padded name |
 
-1. decode and validate the complete candidate into temporary game state and
-   journal storage;
-2. validate all object types, slots, coordinates, counts, and health/mana
-   bounds;
-3. temporarily disable the leaving-room store hook;
-4. load the saved base room and apply the candidate journal;
-5. insert the saved player through the normal room transition path;
-6. load and activate that room's code overlay;
-7. commit `GameState` and the journal only after every step succeeds;
-8. set `game_entry_reason = GAME_ENTRY_LOAD`, redraw, and call `enter_room()`
-   followed by `enter_tile()`.
+If `SINDEX` is absent or corrupt, the browser probes `S0` through `S7` once,
+reads only each record header and name, rebuilds `SINDEX`, and then uses the
+normal cached path. The recovery scan is intentionally exceptional because
+eight missing-file timeouts are slow on a 1541.
 
-The temporary decode area can reuse `$A4E9-$B4D8`, whose render buffers are
-rebuildable. Code performing the load cannot run from the room overlay while
-that overlay is replaced; it needs a resident trampoline or a dedicated save
-overlay with a resident completion step.
+Saving scratches and replaces `Sn`, closes it, reads the complete file back,
+and validates its declared size and payload checksum. Only then does it
+update and replace `SINDEX`. This deliberately uses one file per slot rather
+than A/B generations: it halves directory clutter and I/O, but an interrupted
+overwrite can lose that slot. A failed or partial index write is detected on
+the next browser open and triggers the recovery scan.
+
+KERNAL `CLOSE` only finishes sending the close request; a 1541 may still be
+writing its final block and directory entry. The assembly writer therefore
+opens and reads DOS status channel 15 after every data-file close. Record
+readback and the final `Saved.` result occur only after DOS reports completion.
+
+`make run-cartridge` creates `build/saves.d64` if needed and attaches it as
+device 8. Launching `game.crt` by another method also requires a writable disk
+image in drive 8; the EasyFlash image itself is not writable save storage.
+
+The slot browser draws its screen once. Cursor movement changes only the old
+and new caret cells. The inventory overlay uses the same incremental-caret
+approach; it redraws the list only after `use` because story code may have
+changed inventory contents.
+
+Loading reads and validates the complete `Sn` record into `$A000-$A4E8`.
+The browse overlay then returns before the room transition starts. This order
+is mandatory: `platform_room_enter()` uses `$A000` for room staging and
+`$A4E9` for room-code staging, so calling it while the save/load overlay was
+still executing at `$A4E9` caused a reset/blue-screen crash. Resident code in
+`src/saveload_runtime.c` now copies the decoded game state and journal to
+their permanent locations, disables the leaving-room capture hook, enters
+the saved room, restores the hook, sets `GAME_ENTRY_LOAD`, and invokes the
+room's `enter_room()` and `enter_tile()` hooks.
 
 ## Save/load overlay
 
-`modules/saveload.c` is an independently linked overlay -- the disk I/O,
-slot-list UI, and name entry all live there, not resident, for the same
-reason as the inventory overlay (see `STORY_CODE_API.md`): it temporarily
-owns `$A4E9-$B4D8`, the same rebuildable render/lighting work RAM the
-inventory overlay uses, and the two never run at once. EasyFlash stores its
-loadable bytes in bank 48 ROML (the inventory overlay already owns that
-bank's ROMH half, so this adds no new bank), with its own 16-byte header
-(`SL` magic, ABI 1) validated by the same generic, resident overlay loader
-`game_inventory_show()` uses (`platform_overlay_load()`,
+The implementation uses two independently linked overlays because their
+combined UI and disk code does not fit the shared 4,119-byte window:
+
+- `modules/saveload.c` (`SL`) provides the slot browser and full Load read;
+- `modules/saveload_save.c` (`SV`) provides name entry, encoding, Save,
+  readback verification, and index update.
+
+They temporarily own `$A4E9-$B4FF`, the same rebuildable render/lighting RAM
+used by the inventory overlay, and never run together. `SL` is stored in
+EasyFlash bank 48 ROML. `SV` is stored in bank 47 ROMH. Each has a 16-byte
+header (ABI 1) validated by the generic resident overlay loader also used by
+`game_inventory_show()` (`platform_overlay_load()`,
 `platform_overlay_validate_native()` in `src/platform.c`/`src/inventory_api.s`,
 parameterized by bank, ROML/ROMH half, and expected magic bytes -- resident
 code budget is too tight to duplicate that validator per overlay).
@@ -170,14 +180,16 @@ resident wrappers `game_save_show()`/`game_load_show()` (in
 validate the overlay, run it in the requested mode, then restore the split
 charset and redraw exactly like the inventory overlay's wrapper.
 
-Inside the overlay, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
+Inside the overlays, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
 `CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with
 `platform_memory_kernal()`/`platform_memory_game()` (already resident,
 previously unused) rather than a global `SEI`: KERNAL disk I/O needs
 interrupts enabled for its own timing, and the raster IRQ already has a
 `$0314`-vector entry point for exactly this "KERNAL mapped in" period (see
 `EASYFLASH_CARTRIDGE.md`'s IRQ/KERNAL independence section). All save
-storage uses device 8.
+storage uses device 8. Assembly reloads cc65's `ptr1` after KERNAL calls;
+low zero page belongs to the KERNAL during those calls and cannot safely hold
+a live C pointer.
 
 ## No EasyFlash-flash save backend
 
@@ -193,9 +205,9 @@ runtime purely for save storage.
 
 ## Capacity policy
 
-The initial global journal limit is 200 changed object slots. It is deliberately
-smaller than the per-room object address space and bounded so memory use is
-predictable. Type 0 slots cost a record just like additions or movement. When
-the journal is full, save-aware mutations and room transitions fail without
-discarding prior state. Future formats can raise the limit or compact known
-one-shot items into game flags while retaining v1 load compatibility.
+The global journal and v1 file format both support 200 changed object slots.
+The maximum record is 1,146 bytes and fits in the 1,257-byte `$A000-$A4E8`
+room-staging area. Type 0 slots cost a record just like additions or movement.
+When the journal is full, save-aware mutations and room transitions fail
+without discarding prior state. Future formats can compact known one-shot
+items into game flags while retaining v1 load compatibility.

@@ -85,7 +85,7 @@ static uint8_t world_restore(PlatformRoom* room) {
 
 #pragma code-name (pop)
 
-#pragma code-name (push, "LOWCODE")
+#pragma code-name (push, "UPPERCODE")
 
 void game_world_reset(void) {
     game_world_delta_count = 0u;

@@ -548,33 +548,30 @@ void platform_init(void) {
     P_VIC(0x20) = 0;
     P_VIC(0x21) = 0;
     P_VIC(0x18) = 0x18;
-    look_cursor_visible = 0;
     P_VIC(0x15) = 0;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
     memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
     platform_global_light = PLATFORM_LIGHT_FULL;
-    wall_count = 0u;
-    wall_cache_room = 0;
+    /* look_cursor_visible/wall_count/wall_cache_room are plain BSS globals,
+     * already 0 from the C runtime's zero-init - platform_init() runs
+     * exactly once, first thing in main(), so nothing could have dirtied
+     * them yet. */
     (void)platform_irq_save_disable();
     if (!cartridge) {
         platform_object_types_clear();
-        platform_memory_game();
         memcpy(object_types_a, initial_object_type_data,
                INITIAL_OBJECT_TYPE_COUNT * sizeof(PlatformObjectType));
-    } else {
-        platform_memory_game();
     }
+    platform_memory_game();
     memcpy(&platform_room, initial_room_data, sizeof(platform_room));
     if (cartridge) {
         (void)platform_object_types_load();
         (void)platform_room_load(&platform_room, 0u);
     }
-    platform_current_room = 0;
-    platform_player_slot = 0;
-    platform_player = &platform_room.objects[platform_player_slot];
-    player_spawn_room = platform_current_room;
-    player_spawn_slot = platform_player_slot;
+    /* platform_current_room/platform_player_slot/player_spawn_room/
+     * player_spawn_slot are plain BSS globals, already 0 - see above. */
+    platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
     raster_irq_install();
 }
@@ -644,7 +641,6 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
 
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
     uint8_t status;
-    if (room == 0) return PLATFORM_ERR_ARGUMENT;
     status = room_stage_load(room_id);
     if (status != PLATFORM_OK) return status;
     room_commit(room, room_id);
@@ -1781,7 +1777,7 @@ void platform_portrait_hide(void) {
     P_VIC(0x15) &= 0xc1u;
     if (rain_paused_for_portrait) {
         rain_paused_for_portrait = 0u;
-        platform_rain_enable();
+        platform_rain_enable(0);
     }
 }
 #pragma code-name (pop)

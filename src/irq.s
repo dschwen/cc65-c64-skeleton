@@ -6,7 +6,8 @@
 .export _raster_irq_suspend, _raster_irq_resume
 .export _platform_frame_counter
 .export _platform_text_screen_enter, _platform_text_screen_leave
-.export _platform_rain_enable, _platform_rain_disable, _platform_rain_is_active
+.export _platform_rain_enable, _platform_rain_activate
+.export _platform_rain_disable, _platform_rain_is_active
 
 .import _platform_text_area_clear_native
 
@@ -39,6 +40,8 @@ RAIN_POINTER    = RAIN_BITMAP / 64
 RAIN_MASK       = $fe      ; sprites 1-7; portraits borrow 1-5 (mutually exclusive with rain)
 RAIN_COUNT      = 7
 RAIN_STEP       = 20
+RAIN_X_OFFSET   = 23       ; map's left edge in sprite-X coordinates (tile 0)
+RAIN_X_MAX_LO   = 87       ; respawn once x_hi=1 and x_lo>=this: x >= 343, the map's right edge
 
 .segment "BSS"
 _platform_frame_counter: .res 1
@@ -46,8 +49,10 @@ platform_text_screen_active: .res 1
 platform_raster_irq_active: .res 1
 platform_rain_active: .res 1
 rain_x_lo: .res RAIN_COUNT+1   ; index 0 unused; 1-7 map to sprites 1-7
+rain_x_hi: .res RAIN_COUNT+1   ; sprite X's 9th X-position bit (0 or 1)
 rain_y: .res RAIN_COUNT+1
 rain_seed: .res 1
+rain_setup_hook: .res 2
 
 .segment "CODE"
 
@@ -201,6 +206,10 @@ _raster_irq_suspend:
     rts
 
 .segment "STATEEXT"
+_platform_rain_is_active:
+    lda platform_rain_active
+    rts
+
 _raster_irq_resume:
     php
     sei
@@ -257,10 +266,14 @@ raster_irq_body:
     lda #0
     sta VIC_RASTER
 
-    ; The tile charset is no longer visible below this split. Rain sprites
-    ; are ordinary (non-multiplexed) VIC sprites now, so they stay wherever
-    ; rain_advance last placed them. Rain advances every frame; water
-    ; remains at half the frame rate.
+    ; The tile charset (and the map) is no longer visible below this split,
+    ; so hide rain here rather than let it run over the status text rows;
+    ; @top_of_frame turns it back on for the map. Rain advances every frame;
+    ; water remains at half the frame rate.
+    lda platform_rain_active
+    beq @text_no_rain
+    jsr rain_hide_sprites
+@text_no_rain:
     inc _platform_frame_counter
     jsr weather_animate
     jmp @done
@@ -270,6 +283,11 @@ raster_irq_body:
     bne @top_uses_text
     lda #TILE_MEMPTR
     sta VIC_MEMPTR
+    lda platform_rain_active
+    beq @top_schedule_text
+    lda VIC_SPR_ENABLE
+    ora #RAIN_MASK
+    sta VIC_SPR_ENABLE
     jmp @top_schedule_text
 @top_uses_text:
     lda #TEXT_MEMPTR
@@ -310,6 +328,34 @@ direct_reset_entry:
     sta CPU_PORT
     jmp $fce2
 
+rain_hide_sprites:
+    lda VIC_SPR_ENABLE
+    and #<~RAIN_MASK
+    sta VIC_SPR_ENABLE
+    rts
+
+.segment "CODE"
+; Returns a uniformly random sprite-X position in [23,342] (the map's full
+; pixel width, RAIN_X_OFFSET to RAIN_X_OFFSET+319): A = rain_x_hi (0 or 1),
+; Y = rain_x_lo. 320 isn't a power of two, so this draws a 9-bit value 0-511
+; from two PRNG calls and rejects (retries) the 192 values outside the
+; target range, leaving every one of the 320 valid positions equally likely.
+rain_pick_x:
+@retry:
+    jsr rain_prng
+    tay
+    jsr rain_prng
+    and #1
+    bne @high_half
+    cpy #RAIN_X_OFFSET
+    bcc @retry               ; low half: reject x_lo < 23
+    rts
+@high_half:
+    cpy #RAIN_X_OFFSET+64    ; 342-256+1
+    bcs @retry               ; high half: reject x_lo >= 87
+    rts
+
+
 ; Rain now owns one dedicated hardware sprite per streak (1-7) instead of
 ; multiplexing two sprites across bands, because portraits (the only other
 ; user of sprites 1-5) are never shown while rain is running: room entry
@@ -318,45 +364,49 @@ direct_reset_entry:
 ; repositioning unnecessary - each streak's position is just written straight
 ; to its own sprite's VIC registers once a frame.
 .segment "HIGHCODE"
-; rain_x_lo/rain_y are indexed directly by sprite number (1-7); index 0 is
-; unused. That lets the setup loop below double as the initial-seed fill
-; (both walk sprites 7..1), and rain_advance address VIC sprite N's
-; registers ($D000+2N) with no +1/-1 translation anywhere.
+; A/X = a room's rain_setup() (fastcall: A=low, X=high), or 0/0 to reuse
+; whichever setup was last registered (the portrait-resume path's case,
+; since it never has a setup of its own to give - see platform.h). Sprite
+; pointer/color/VIC-attribute setup lives in room code, not here: it only
+; ever needs to run synchronously from room entry or from the
+; portrait-resume hook, both of which are guaranteed to have the relevant
+; room's own EasyFlash bank still paged in, so it's safe to move out of the
+; always-resident budget. The per-frame code below cannot follow it there:
+; it runs from the raster IRQ, which can fire while a *different* bank is
+; paged in (inventory, save/load), so it must stay resident.
 _platform_rain_enable:
+    cmp #0
+    bne @store
+    cpx #0
+    beq @use_existing
+@store:
+    sta rain_setup_hook
+    stx rain_setup_hook+1
+@use_existing:
+    lda rain_setup_hook
+    ora rain_setup_hook+1
+    beq _platform_rain_activate
+    jsr rain_call_hook
+; rain_x_lo/rain_y are indexed directly by sprite number (1-7); index 0 is
+; unused, letting rain_advance address VIC sprite N's registers ($D000+2N)
+; with no +1/-1 translation anywhere.
+_platform_rain_activate:
     lda #1
     sta platform_rain_active
     ldx #7
-@setup:
-    lda #RAIN_POINTER
-    sta SPRITE_POINTERS,x
-    lda #6                  ; dark blue
-    sta $d027,x
+@fill:
     lda #255                ; past the respawn threshold: rain_advance below
     sta rain_y,x             ; will seed a fresh random position for it
     dex
-    bne @setup
-    lda VIC_SPR_YEXP
-    and #<~RAIN_MASK
-    sta VIC_SPR_YEXP
-    lda VIC_SPR_PRIO
-    ora #RAIN_MASK
-    sta VIC_SPR_PRIO
-    lda VIC_SPR_MC
-    and #<~RAIN_MASK
-    sta VIC_SPR_MC
-    lda VIC_SPR_XEXP         ; native width: the bitmap is already a true
-    and #<~RAIN_MASK         ; 45-degree diagonal, one bit per row
-    sta VIC_SPR_XEXP
-    lda VIC_SPR_ENABLE
-    ora #RAIN_MASK
-    sta VIC_SPR_ENABLE
+    bne @fill
     jmp rain_advance
 
 ; Advance all seven streaks by (RAIN_STEP,RAIN_STEP) and write the result
 ; straight to sprite X's own VIC registers. Any streak that leaves the screen
-; respawns on the top or left edge: the edge coordinate is fixed at 0, the
-; position along the edge is random. Called once per frame from
-; weather_animate; returns via the caller's rts (tail call from enable).
+; respawns on the top or left edge: on the left edge X is fixed at 0 (just
+; off the left border); on the top edge Y is fixed at 0 and X is uniformly
+; random across the map's full width via rain_pick_x. Called once per frame
+; from weather_animate; returns via the caller's rts (tail call from enable).
 rain_advance:
     lda platform_rain_active
     bne :+
@@ -373,20 +423,41 @@ rain_advance:
     clc
     adc #RAIN_STEP
     sta rain_x_lo,x
+    bcc @check_hi
+    inc rain_x_hi,x
+@check_hi:
+    lda rain_x_hi,x
+    beq @write
+    lda rain_x_lo,x
+    cmp #RAIN_X_MAX_LO
     bcc @write
 @respawn:
     jsr rain_prng
     bmi @spawn_left
+    jsr rain_pick_x          ; A = rain_x_hi, Y = rain_x_lo (final map-relative X)
+    sta rain_x_hi,x
+    tya
     sta rain_x_lo,x
     lda #0
     sta rain_y,x
     jmp @write
 @spawn_left:
-    and #$7f
+    and #$7f                 ; reuse the edge-choice byte's low bits for Y
     sta rain_y,x
     lda #0
     sta rain_x_lo,x
+    sta rain_x_hi,x
 @write:
+    lda rain_bit_mask,x
+    ldy rain_x_hi,x
+    beq @clear_msb
+    ora $d010
+    jmp @store_msb
+@clear_msb:
+    eor #$ff
+    and $d010
+@store_msb:
+    sta $d010
     txa
     asl
     tay
@@ -399,6 +470,12 @@ rain_advance:
     rts
 
 .segment "RAINCODE"
+; Tail-jumps to the room's registered setup callback; its own rts returns
+; to whichever instruction follows the jsr that reached here (native 6502
+; indirect JMP - no runtime call-through-pointer helper needed).
+rain_call_hook:
+    jmp (rain_setup_hook)
+
 ; Animate water once every other frame and advance rain every frame. This
 ; segment shares sprite slot 7's old bitmap storage, which is free now that
 ; rain uses sprites 1-7 directly instead of multiplexing through slot 7.
@@ -428,10 +505,6 @@ _platform_rain_disable:
     sta VIC_SPR_ENABLE
     rts
 
-_platform_rain_is_active:
-    lda platform_rain_active
-    rts
-
 ; 8-bit Galois LFSR; cheap PRNG for streak respawn placement.
 rain_prng:
     lda rain_seed
@@ -441,6 +514,9 @@ rain_prng:
 :
     sta rain_seed
     rts
+
+rain_bit_mask:
+    .byte $00, $02, $04, $08, $10, $20, $40, $80
 
 .segment "CODE"
 kernal_irq_entry:

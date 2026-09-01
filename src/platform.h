@@ -389,8 +389,22 @@ void platform_portrait_hide(void);
  * platform_portrait_show()/hide() pause and resume rain automatically around
  * a conversation. Room entry disables rain before calling the destination's
  * enter_room().
+ *
+ * The sprite pointer/color/VIC-attribute setup is deliberately NOT part of
+ * the always-resident code: it only ever needs to run synchronously from
+ * room entry or from the portrait-resume path, both of which are guaranteed
+ * to still have the calling room's own EasyFlash bank paged in, so it lives
+ * in that room's own code instead (see rooms/00.c's rain_setup() for the
+ * pattern) and is passed in here as a callback:
+ *
+ *   static void rain_setup(void) { <sprite pointer/color/attribute pokes> }
+ *   void enter_room(void) { platform_rain_enable(rain_setup); }
+ *
+ * Pass 0 to reuse whichever setup callback was last registered (this is
+ * what the portrait-resume path does - it never has its own setup to give).
  */
-void platform_rain_enable(void);
+void __fastcall__ platform_rain_enable(void (*setup)(void));
+void platform_rain_activate(void);
 void platform_rain_disable(void);
 uint8_t platform_rain_is_active(void);
 

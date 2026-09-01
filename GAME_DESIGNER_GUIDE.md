@@ -160,6 +160,20 @@ repeating texture. Any map or object graphic using character 14 will animate;
 setting the tile's Water property alone does not create animation. Other
 terrain animation needs additional character tricks or story-specific work.
 
+### Rain
+
+Rooms may opt into a fast rain layer: seven dark-blue diagonal streaks, each
+a single static line, each starting at a random position along the top or
+left edge and moving quickly down and to the right, respawning on a fresh
+random edge position whenever one leaves the screen. It does not change the
+map's tiles, object art, colors, lighting, or collision. Room 00 currently
+demonstrates the effect. Rain is atmospheric only: it does not make terrain
+wet, affect visibility, extinguish lights, or change story state unless the
+room's story design adds those consequences. Rain automatically pauses
+whenever a conversation portrait is shown (they share hardware sprites) and
+resumes when the portrait closes, so room and dialogue authors do not need to
+manage this themselves.
+
 ## Objects and actors
 
 Objects are reusable visual and story entities placed over the tile map. The

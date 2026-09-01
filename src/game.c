@@ -40,6 +40,7 @@ void game_enter_tile(void) {
 }
 
 void game_enter_room(void) {
+    platform_rain_disable();
     game_room_enter_room_native();
 }
 

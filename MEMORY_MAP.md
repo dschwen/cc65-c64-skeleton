@@ -36,32 +36,31 @@ record to always-visible scratch before rendering it.
 | `$0400-$07E7` | 1000 | screen matrix |
 | `$07E8-$07F7` | 16 | unused screen-block tail; available only for tiny fixed state |
 | `$07F8-$07FF` | 8 | sprite pointers 0-7 |
-| `$0801-$1FEB` | 6123 | startup, low code, C runtime, and initialized data |
-| `$1FEC-$1FFF` | 20 | free low-program linker tail |
+| `$0801-$1FFF` | 6143 | startup, low code, C runtime, and initialized data |
 | `$2000-$27FF` | 2048 | tile charset |
 | `$2800-$2FFF` | 2048 | text charset |
 | `$3000-$37FF` | 2048 | 256 tile definitions |
 | `$3800-$38FF` | 256 | tile properties |
-| `$3900-$39F9` | 250 | compact lookup/native code |
-| `$39FA-$39FF` | 6 | free linker tail |
-| `$3A00-$3BFF` | 512 | eight aligned 64-byte sprite bitmap slots |
-| `$3C00-$7F61` | 17250 | resident platform code/RODATA |
-| `$7F62-$7FFF` | 158 | free resident-code linker tail |
+| `$3900-$39FF` | 256 | compact lookup/native code |
+| `$3A00-$3B7F` | 384 | cursor and portrait sprite bitmap slots 0-5 |
+| `$3B80-$3BBF` | 64 | fixed rain streak bitmap shared by hardware sprites 1-7 |
+| `$3BC0-$3BFF` | 64 | compact rain-advance/water-animation code in sprite slot 7 storage |
+| `$3C00-$7FFF` | 17408 | resident platform code/RODATA |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
 | `$855D-$85FB` | 159 | compact native helpers |
 | `$85FC-$85FF` | 4 | free linker tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$98D8` | 3473 | resident game/main/shared room API |
-| `$98D9-$98FF` | 39 | free resident tail |
+| `$8B48-$98FE` | 3511 | resident game/main/shared room API |
+| `$98FF` | 1 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room or save-record/index staging |
 | `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
 | `$ADF9-$B4FF` | 1799 | free work-RAM/overlay tail |
-| `$B500-$B7EC` | 749 | resident BSS |
-| `$B7ED-$B80C` | 32 | free BSS-region tail |
+| `$B500-$B7EE` | 751 | resident BSS |
+| `$B7EF-$B80C` | 30 | free BSS-region tail |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
 | `$B87E-$B87F` | 2 | reserved fill before fixed pager entry |
 | `$B880-$B9C9` | 330 | bottom-text pager |
@@ -78,11 +77,12 @@ record to always-visible scratch before rendering it.
 | `$E302-$FFF9` | 7416 | free; reclaimed from the pre-split 64-byte object-type table |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-The remaining resident margins are small: 158 bytes in `HIGH`, 39 bytes in
-`UPPER`, and 20 bytes below the charsets. Save/load's resident completion
-step and the object-type hot/cold split consumed most of the earlier margin.
-Recheck `build/game.map` after every change because cc65 can move code between
-segments.
+The primary `PROGRAM` and `HIGH` code regions are essentially full (`HIGH`
+has 1 byte of margin); `RAINCODE` (8 bytes) and `MIDCODE` (6 bytes) have a
+little slack. The remaining nearby tails are 1 byte in `UPPER`, 4 bytes in
+`STATEEXT`, and 4 bytes in `SAVECODE`; larger additions need relocation or
+another fixed region. Recheck `build/game.map` after every change because
+cc65 can move code between segments.
 
 ## RAM beneath BASIC and KERNAL
 
@@ -124,38 +124,44 @@ The project already reserves all eight aligned bitmap slots:
 | Sprite | Bitmap | Pointer | Current role |
 |---:|---|---:|---|
 | 0 | `$3A00-$3A3F` | `$E8` | 18x18 Look/Take/Use cursor |
-| 1 | `$3A40-$3A7F` | `$E9` | portrait quadrant (top-left) |
-| 2 | `$3A80-$3ABF` | `$EA` | portrait quadrant (top-right) |
-| 3 | `$3AC0-$3AFF` | `$EB` | portrait quadrant (bottom-left) |
-| 4 | `$3B00-$3B3F` | `$EC` | portrait quadrant (bottom-right) |
-| 5 | `$3B40-$3B7F` | `$ED` | portrait black backdrop, 2x/2x expanded |
-| 6 | `$3B80-$3BBF` | `$EE` | available |
-| 7 | `$3BC0-$3BFF` | `$EF` | available |
+| 1 | `$3A40-$3A7F` or `$3B80-$3BBF` | `$E9` or `$EE` | portrait quadrant (top-left), or a rain streak |
+| 2 | `$3A80-$3ABF` or `$3B80-$3BBF` | `$EA` or `$EE` | portrait quadrant (top-right), or a rain streak |
+| 3 | `$3AC0-$3AFF` or `$3B80-$3BBF` | `$EB` or `$EE` | portrait quadrant (bottom-left), or a rain streak |
+| 4 | `$3B00-$3B3F` or `$3B80-$3BBF` | `$EC` or `$EE` | portrait quadrant (bottom-right), or a rain streak |
+| 5 | `$3B40-$3B7F` or `$3B80-$3BBF` | `$ED` or `$EE` | portrait black backdrop, or a rain streak |
+| 6 | `$3B80-$3BBF` | `$EE` | rain streak |
+| 7 | `$3B80-$3BBF` | `$EE` | rain streak |
 
 `platform_portrait_show()`/`platform_portrait_hide()` (see `PLATFORM_API.md`)
-own sprites 1-5 exclusively; sprites 1-4 are loaded directly from the
-256-byte portrait asset (see `tools/asset-editor/README.md`), and sprite 5 is
-filled with a constant solid bitmap at show time. Only sprite-0 bits are
-otherwise touched elsewhere, so the look cursor and a shown portrait can be
-visible at the same time.
+own sprites 1-5, and rain (see below) owns sprites 1-7; the two are mutually
+exclusive; `platform_portrait_show()`/`hide()` pause and resume rain around a
+shown portrait. Sprites 1-4 are loaded directly from the 256-byte portrait
+asset (see `tools/asset-editor/README.md`) when a portrait is shown, and
+sprite 5 is filled with a constant solid bitmap. Only sprite-0 bits are
+otherwise touched elsewhere, so the look cursor and a shown portrait (or rain)
+can be visible at the same time.
 
-Five portrait sprites plus the cursor are feasible without raster
-multiplexing and require no additional bitmap RAM. Each portrait is 24x21
-pixels in hires mode or 12x21 logical pixels in multicolor mode. Multicolor
-sprites share colors in `$D025/$D026` and retain one per-sprite color.
+Each portrait is 24x21 pixels in hires mode or 12x21 logical pixels in
+multicolor mode. Multicolor sprites share colors in `$D025/$D026` and retain
+one per-sprite color.
 
 Portrait code must preserve other sprites' bits in `$D010`, `$D015`, `$D017`,
 `$D01B`, `$D01C`, and `$D01D`, as the cursor API already does for sprite 0.
 Write or clear a bitmap before enabling its `$D015` bit to avoid visible
-partial updates. Six active sprites increase VIC DMA load, but static portraits
-are well within the hardware design; verify raster timing if they overlap the
-bottom charset-switch interrupt. Inventory currently hides only sprite 0, so a
+partial updates. Rain owns bits 1-7 and preserves bit 0 (cursor); because rain
+is always disabled before a portrait shows, portrait code touching the same
+bits never collides with it. Inventory currently hides only sprite 0, so a
 portrait manager should explicitly hide/restore sprites 1-5 when entering a
 full-screen inventory view if portraits should not remain visible there.
 
-The eight pointer bytes at `$07F8-$07FF` are outside the 1000-byte screen clear,
-and the raster IRQ changes only the charset half of `$D018`. Portrait pointers
-therefore remain valid across map/text charset switching.
+All seven rain sprites point at the same static streak bitmap in slot 6
+(`$3B80-$3BBF`); each sprite is simply positioned independently every frame,
+so no raster multiplexing is needed. Slot 7's 64 bytes hold the compact
+rain-advance/water-animation code instead of a bitmap; this is safe because
+nothing ever points a sprite at slot 7. The eight pointer bytes at
+`$07F8-$07FF` are outside the 1000-byte screen clear, and the raster IRQ
+changes only the charset half of `$D018`. Portrait/rain pointers therefore
+remain valid across map/text charset switching.
 
 ## Checking the map
 

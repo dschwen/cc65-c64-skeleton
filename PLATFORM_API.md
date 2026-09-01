@@ -673,8 +673,8 @@ without moving the cursor. The cursor is an 18x18
 one-pixel monochrome frame in sprite slot 0, positioned one pixel outside the
 selected 16x16 tile. `tick()` cycles black, dark gray, gray, light gray, white,
 and back through the grays. Only sprite-0 bits in shared VIC registers are
-changed; sprites 6-7 remain available to game code. Sprites 1-5 are owned by
-the portrait API below.
+changed; sprites 1-7 may simultaneously carry the rain layer (or, if a
+portrait is shown, sprites 1-5 carry that instead - see below).
 
 Pressing `T` uses the same cursor but clips it to the 3x3 tile neighborhood
 centered on the player's hotspot, including the tile underfoot. Return applies
@@ -707,11 +707,51 @@ than the room behind it. `side` is `PLATFORM_PORTRAIT_LEFT` or
 that side's edge of the 20x11 room. `platform_portrait_show()` blocks while
 it slides the sprite group down from off-screen to its resting position (a
 few frames); `platform_portrait_hide()` disables sprites 1-5 immediately,
-with no animation. Sprite 0 (look/take/use cursor) and sprites 6-7 are
-untouched by both calls, so a shown portrait and the look cursor can
-coexist. Loading a new portrait or hiding the current one does not restore
-whatever a previous portrait's sprite data looked like; each `show()` call
-fully repopulates sprites 1-5 from the requested asset.
+with no animation. Sprite 0 (look/take/use cursor) is untouched by both
+calls, so a shown portrait and the look cursor can coexist. Sprites 1-5 are
+also rain's (see below): if rain is active when a portrait is shown,
+`platform_portrait_show()` pauses it first, and `platform_portrait_hide()`
+resumes it - callers do not need to coordinate this themselves. Loading a
+new portrait or hiding the current one does not restore whatever a previous
+portrait's sprite data looked like; each `show()` call fully repopulates
+sprites 1-5 from the requested asset.
+
+## Rain weather layer
+
+```c
+void platform_rain_enable(void);
+void platform_rain_disable(void);
+uint8_t platform_rain_is_active(void);
+```
+
+Rain is an optional room effect: seven independent streaks, each a single
+static 45-degree dark-blue diagonal line, each owning one dedicated hardware
+sprite (1-7) - not multiplexed, since there are exactly as many rain sprites
+as raindrops. Every frame each streak moves 20px right and 20px down; when it
+leaves the screen it respawns at a random position along the top or left
+edge. The effect never rewrites screen RAM, Color RAM, lighting, or
+visibility buffers.
+
+Because sprites 1-5 are shared with the portrait API above, rain and a shown
+portrait are mutually exclusive - `platform_portrait_show()`/`hide()` handle
+pausing and resuming rain automatically (see Portraits). `game_enter_room()`
+disables rain before dispatching the destination room's `enter_room()`, so
+rainy rooms opt in explicitly:
+
+```c
+void enter_room(void) {
+    platform_rain_enable();
+}
+```
+
+`platform_rain_is_active()` reports whether rain is currently on; it exists
+mainly for callers (like the portrait code) that need to pause and later
+resume rain without assuming its prior state.
+
+The shared streak bitmap occupies `$3B80-$3BBF`; all seven sprite pointers
+point at it (`$EE`), since the bitmap is static and only sprite position
+changes. The otherwise-unused slot-7 bytes at `$3BC0-$3BFF` hold the compact
+per-frame advance/respawn code.
 
 EasyFlash storage reserves banks 49-56 (8 KiB ROML mode, 32 portraits per
 bank) for the full 256-ID range, mirroring the room asset layout's fixed
@@ -747,7 +787,9 @@ copy.
 
 The complete raster interrupt implementation is assembly in `src/irq.s`. It
 switches from tile charset bank 0 to text charset bank 1 immediately below the
-map, restores bank 0 at raster line 0, and acknowledges the VIC interrupt.
+map, restores bank 0 at raster line 0, advances rain once per frame at the
+map/text split (an ordinary per-sprite position update, not a multiplexing
+event), and acknowledges every VIC interrupt.
 Because EasyFlash copies run with interrupts disabled, the handler accepts late
 entry and derives the correct phase from `$D011` bit 7 plus `$D012`; the copy
 routine explicitly resynchronizes `$D018` and the next compare before restoring

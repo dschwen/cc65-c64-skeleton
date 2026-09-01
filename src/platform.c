@@ -1685,6 +1685,8 @@ void platform_look_cursor_hide(void) {
 }
 #pragma code-name (pop)
 
+static uint8_t rain_paused_for_portrait;
+
 static uint8_t portrait_load_easyflash(uint8_t portrait_id) {
     platform_ef_copy_bank =
         (uint8_t)(EF_PORTRAIT_FIRST_BANK + portrait_id / EF_PORTRAITS_PER_BANK);
@@ -1733,6 +1735,9 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
     status = portrait_load_easyflash(portrait_id);
     if (status != PLATFORM_OK) return status;
 
+    rain_paused_for_portrait = platform_rain_is_active();
+    if (rain_paused_for_portrait) platform_rain_disable();
+
     memset(PORTRAIT_BG_DATA, 0xffu, 63u);
     PORTRAIT_BG_DATA[63] = 0u;
 
@@ -1774,5 +1779,9 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
 #pragma code-name (push, "UPPERCODE")
 void platform_portrait_hide(void) {
     P_VIC(0x15) &= 0xc1u;
+    if (rain_paused_for_portrait) {
+        rain_paused_for_portrait = 0u;
+        platform_rain_enable();
+    }
 }
 #pragma code-name (pop)

@@ -2,6 +2,7 @@
 #include "story.h"
 
 void enter_room(void) {
+    platform_rain_enable();
 }
 
 void enter_tile(void) {

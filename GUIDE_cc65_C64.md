@@ -302,11 +302,13 @@ Room transitions clear rows 22-24, disable the VIC raster source, and force
 resynchronizes the split before reenabling the source. The handler also
 uses `$D011` bit 7 with `$D012`: `$D012` alone wraps at raster line 256 and is
 not enough to distinguish vertical blank from the top of the next frame.
-The IRQ is implemented entirely in `src/irq.s`. Its bottom-of-map branch also
-rotates charset character 14 (`$2070-$2077`) left every second frame to animate
-the character shared by the water tiles (25 Hz PAL, 30 Hz NTSC). The rotation
-happens only after the VIC has switched away from the tile charset, avoiding
-visible partial writes.
+The IRQ is implemented entirely in `src/irq.s`. Rainy rooms use hardware
+sprites 1-7 directly, one dedicated sprite per streak; no raster multiplexing
+is needed since there are exactly as many sprites as streaks. Its
+bottom-of-map branch rotates charset character 14 (`$2070-$2077`) left every
+second frame (25 Hz PAL, 30 Hz NTSC) and advances all seven streaks every
+frame (50 Hz PAL, 60 Hz NTSC). Both happen only after the VIC has switched
+away from the tile charset, avoiding visible partial writes.
 Row 22 is left blank as spacing above the text on rows 23-24. A full room draw
 clears all three rows in both screen and Color RAM before drawing the new room.
 It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while

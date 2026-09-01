@@ -372,12 +372,27 @@ void platform_look_cursor_hide(void);
  * Fetch portrait_id from cartridge into sprites 1-5 and slide it in from the
  * top of the screen to rest 16px from the top and side frame, in the
  * PLATFORM_PORTRAIT_LEFT or PLATFORM_PORTRAIT_RIGHT corner. Sprite 0
- * (look/take/use cursor) and sprites 6-7 are untouched. Blocks until the
- * slide-in finishes.
+ * (look/take/use cursor) is untouched. If rain is active it is paused first
+ * (sprites 1-5 are also rain's), since portraits use the same sprites.
+ * Blocks until the slide-in finishes.
  */
 uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
-/* Hide sprites 1-5 immediately (no animation). */
+/* Hide sprites 1-5 immediately (no animation) and resume rain if it was
+ * paused for this portrait. */
 void platform_portrait_hide(void);
+
+/*
+ * Optional room weather layer. Rain uses hardware sprites 1-7, each sprite a
+ * dedicated fast-moving diagonal streak (no multiplexing) sharing one static
+ * bitmap. It does not touch screen or Color RAM. Because sprites 1-5 are also
+ * the portrait sprites, rain and a shown portrait are mutually exclusive:
+ * platform_portrait_show()/hide() pause and resume rain automatically around
+ * a conversation. Room entry disables rain before calling the destination's
+ * enter_room().
+ */
+void platform_rain_enable(void);
+void platform_rain_disable(void);
+uint8_t platform_rain_is_active(void);
 
 /*
  * Generic sparse cartridge resource directory: 256 read-only,

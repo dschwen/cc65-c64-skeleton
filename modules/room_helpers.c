@@ -1,0 +1,116 @@
+#include <stdint.h>
+
+#include "platform.h"
+
+/* Independently linked room-helpers overlay ("RH"): the bodies of
+ * platform_room_object_remove() and platform_room_neighbor(), moved out of
+ * the always-resident engine. Both are confirmed safe to run from here -
+ * every call site (game_support.c's Take handler, platform_player_step(),
+ * platform_look_exit()) runs from resident code, never from a room's own
+ * banked-in code, so there is no risk of this overlay's load overwriting a
+ * room's code while it is still executing. (platform_room_object_add() is
+ * NOT here: platform_room_enter() calls it after staging the destination
+ * room's code at $A4E9, so moving it into a same-address overlay would
+ * clobber that staged room code before it runs.)
+ *
+ * Entry/parameters: the resident wrappers in src/platform.c stage their
+ * arguments into room_helpers_* globals and set room_helpers_op before
+ * loading and running this overlay (there is only one native entry point,
+ * room_helpers_overlay_run(), since overlay code is always called
+ * parameterless - see platform_overlay_run_native()); the result goes back
+ * out through room_helpers_result (and room_helpers_room_id for the
+ * neighbor lookup).
+ */
+
+#define ROOM_HELPERS_OP_NEIGHBOR 0u
+#define ROOM_HELPERS_OP_REMOVE   1u
+
+extern PlatformRoom* room_helpers_room;
+extern uint8_t room_helpers_slot;
+extern const PlatformObject* room_helpers_player;
+extern uint8_t room_helpers_direction;
+extern uint8_t room_helpers_room_id;
+extern uint8_t room_helpers_op;
+extern uint8_t room_helpers_result;
+
+extern const PlatformRoom* rendered_room;
+extern const PlatformObject* rendered_player;
+extern uint16_t rendered_object_limit;
+
+extern void dirty_clear(void);
+extern void mark_object_cells(const PlatformObject* object);
+extern void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
+
+static uint8_t room_helpers_neighbor(void) {
+    const PlatformRoom* room;
+    uint8_t direction;
+    uint8_t mask;
+    uint8_t neighbor;
+
+    room = room_helpers_room;
+    direction = room_helpers_direction;
+    switch (direction) {
+        case PLATFORM_DIRECTION_NORTH:
+            mask = PLATFORM_ROOM_EXIT_NORTH;
+            neighbor = room->north;
+            break;
+        case PLATFORM_DIRECTION_EAST:
+            mask = PLATFORM_ROOM_EXIT_EAST;
+            neighbor = room->east;
+            break;
+        case PLATFORM_DIRECTION_WEST:
+            mask = PLATFORM_ROOM_EXIT_WEST;
+            neighbor = room->west;
+            break;
+        case PLATFORM_DIRECTION_SOUTH:
+            mask = PLATFORM_ROOM_EXIT_SOUTH;
+            neighbor = room->south;
+            break;
+        default:
+            return PLATFORM_ERR_ARGUMENT;
+    }
+    if ((room->exit_mask & mask) == 0u) return PLATFORM_ERR_NOT_FOUND;
+    room_helpers_room_id = neighbor;
+    return PLATFORM_OK;
+}
+
+static uint8_t room_helpers_object_remove(void) {
+    PlatformRoom* room;
+    PlatformObject* object;
+    const PlatformObject* player;
+    uint8_t slot;
+    uint8_t emitted_light;
+
+    room = room_helpers_room;
+    slot = room_helpers_slot;
+    player = room_helpers_player;
+    object = &room->objects[slot];
+    if (object->type == 0u) return PLATFORM_ERR_ARGUMENT;
+    emitted_light = PLATFORM_OBJECT_LIGHT(
+        platform_object_type_get(object->type));
+    dirty_clear();
+    mark_object_cells(object);
+    object->type = 0;
+    object->x = 0;
+    object->y = 0;
+    if (room == rendered_room && (uint16_t)slot + 1u == rendered_object_limit) {
+        while (rendered_object_limit > 0u &&
+               room->objects[rendered_object_limit - 1u].type == 0u) {
+            --rendered_object_limit;
+        }
+    }
+    redraw_dirty(room, player);
+    if (emitted_light != 0u && room == rendered_room) {
+        rendered_player = player;
+        platform_lighting_rebuild(room, player);
+    }
+    return PLATFORM_OK;
+}
+
+void room_helpers_overlay_run(void) {
+    if (room_helpers_op == ROOM_HELPERS_OP_REMOVE) {
+        room_helpers_result = room_helpers_object_remove();
+    } else {
+        room_helpers_result = room_helpers_neighbor();
+    }
+}

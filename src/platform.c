@@ -192,9 +192,11 @@ static uint8_t dirty_cells[DIRTY_BYTES];
 static uint8_t dirty_x[DIRTY_CELL_LIMIT];
 static uint8_t dirty_y[DIRTY_CELL_LIMIT];
 static uint8_t dirty_count;
-static const PlatformRoom* rendered_room;
-static const PlatformObject* rendered_player;
-static uint16_t rendered_object_limit;
+/* Non-static: read/written by the room-helpers overlay (modules/room_helpers.c)
+ * via the resolver, same as any other resident symbol an overlay binds to. */
+const PlatformRoom* rendered_room;
+const PlatformObject* rendered_player;
+uint16_t rendered_object_limit;
 static uint8_t look_cursor_visible;
 #pragma bss-name (push, "ROOMSTAGE")
 static PlatformRoom room_stage;
@@ -389,6 +391,98 @@ uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
 }
 #pragma code-name (pop)
 
+/*
+ * Room-helpers overlay ("RH"): platform_room_object_remove/platform_room_
+ * neighbor's actual bodies (modules/room_helpers.c). Not every $A4E9 overlay
+ * gets its own EasyFlash bank - both halves of every bank through 48 are
+ * already spoken for (rooms, object types, inventory, save/load), so this
+ * one shares TYPE_BANK_1's ROML half with the object-type Zone C table
+ * (src/platform.c's OBJECT_TYPE_ZONE_C_COUNT, 770 bytes) at a fixed offset
+ * comfortably past it, instead of getting a bank of its own. Unlike
+ * platform_overlay_load(), which always reads from offset 0 of the chosen
+ * bank/half, this loader's offset is fixed at build time (see
+ * tools/pack_easyflash.py's ROOM_HELPERS_EF_OFFSET) since there is only
+ * ever this one caller.
+ */
+#define ROOM_HELPERS_EF_BANK    47u
+#define ROOM_HELPERS_EF_OFFSET  1024u
+#define ROOM_HELPERS_MAGIC_0    0x52u /* 'R' */
+#define ROOM_HELPERS_MAGIC_1    0x48u /* 'H' */
+#define ROOM_HELPERS_OP_NEIGHBOR 0u
+#define ROOM_HELPERS_OP_REMOVE   1u
+
+void platform_overlay_run_native(void);
+
+/* Explicitly zero-initialized (not plain BSS): BSSRAM has no margin left,
+ * while PROGRAM (where cc65 places initialized DATA) does. See banking.s's
+ * ef_shadow_bank for the same trick and why it matters here too - these are
+ * both written and read from ordinary resident code, never from a banked
+ * window, so plain RAM placement is all that's needed, just not out of the
+ * full BSSRAM budget. */
+PlatformRoom* room_helpers_room = 0;
+uint8_t room_helpers_slot = 0;
+const PlatformObject* room_helpers_player = 0;
+uint8_t room_helpers_direction = 0;
+uint8_t room_helpers_room_id = 0;
+uint8_t room_helpers_op = 0;
+uint8_t room_helpers_result = 0;
+
+#pragma code-name (push, "HIGHCODE")
+static uint8_t room_helpers_overlay_load(void) {
+    uint16_t size;
+
+    platform_overlay_magic0 = ROOM_HELPERS_MAGIC_0;
+    platform_overlay_magic1 = ROOM_HELPERS_MAGIC_1;
+
+    platform_ef_copy_bank = ROOM_HELPERS_EF_BANK;
+    platform_ef_copy_offset = ROOM_HELPERS_EF_OFFSET;
+    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
+    platform_ef_copy_size = OVERLAY_HEADER_BYTES;
+    platform_easyflash_copy_roml();
+    size = (uint16_t)OVERLAY_BASE[6] | ((uint16_t)OVERLAY_BASE[7] << 8);
+    if (size < OVERLAY_HEADER_BYTES || size > OVERLAY_MAX_BYTES) {
+        return PLATFORM_ERR_FORMAT;
+    }
+
+    platform_ef_copy_bank = ROOM_HELPERS_EF_BANK;
+    platform_ef_copy_offset = ROOM_HELPERS_EF_OFFSET;
+    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
+    platform_ef_copy_size = size;
+    platform_easyflash_copy_roml();
+    return platform_overlay_validate_native(size);
+}
+
+uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
+                               uint8_t* room_id) {
+    uint8_t status;
+
+    if (room == 0 || room_id == 0) return PLATFORM_ERR_ARGUMENT;
+    room_helpers_op = ROOM_HELPERS_OP_NEIGHBOR;
+    room_helpers_room = (PlatformRoom*)room;
+    room_helpers_direction = direction;
+    status = room_helpers_overlay_load();
+    if (status != PLATFORM_OK) return status;
+    platform_overlay_run_native();
+    if (room_helpers_result == PLATFORM_OK) *room_id = room_helpers_room_id;
+    return room_helpers_result;
+}
+
+uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
+                                    const PlatformObject* player) {
+    uint8_t status;
+
+    if (room == 0) return PLATFORM_ERR_ARGUMENT;
+    room_helpers_op = ROOM_HELPERS_OP_REMOVE;
+    room_helpers_room = room;
+    room_helpers_slot = slot;
+    room_helpers_player = player;
+    status = room_helpers_overlay_load();
+    if (status != PLATFORM_OK) return status;
+    platform_overlay_run_native();
+    return room_helpers_result;
+}
+#pragma code-name (pop)
+
 static uint8_t object_cell(const PlatformObject* object,
                            uint8_t world_x, uint8_t world_y,
                            uint8_t* ch, uint8_t* color) {
@@ -454,7 +548,8 @@ static void compose_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
     }
 }
 
-static void dirty_clear(void) {
+/* Non-static: called by the room-helpers overlay via the resolver. */
+void dirty_clear(void) {
     memset(dirty_cells, 0, sizeof(dirty_cells));
     dirty_count = 0;
 }
@@ -474,7 +569,8 @@ static void dirty_set(uint8_t x, uint8_t y) {
     }
 }
 
-static void mark_object_cells(const PlatformObject* object) {
+/* Non-static: called by the room-helpers overlay via the resolver. */
+void mark_object_cells(const PlatformObject* object) {
     const PlatformObjectType* type;
     int16_t left;
     int16_t top;
@@ -512,8 +608,9 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
     return limit;
 }
 
-static void redraw_dirty(const PlatformRoom* room,
-                         const PlatformObject* player) {
+/* Non-static: called by the room-helpers overlay via the resolver. */
+void redraw_dirty(const PlatformRoom* room,
+                  const PlatformObject* player) {
     uint8_t i;
     uint8_t x;
     uint8_t y;
@@ -644,36 +741,6 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
     status = room_stage_load(room_id);
     if (status != PLATFORM_OK) return status;
     room_commit(room, room_id);
-    return PLATFORM_OK;
-}
-
-uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
-                               uint8_t* room_id) {
-    uint8_t mask;
-    uint8_t neighbor;
-    if (room == 0 || room_id == 0) return PLATFORM_ERR_ARGUMENT;
-    switch (direction) {
-        case PLATFORM_DIRECTION_NORTH:
-            mask = PLATFORM_ROOM_EXIT_NORTH;
-            neighbor = room->north;
-            break;
-        case PLATFORM_DIRECTION_EAST:
-            mask = PLATFORM_ROOM_EXIT_EAST;
-            neighbor = room->east;
-            break;
-        case PLATFORM_DIRECTION_WEST:
-            mask = PLATFORM_ROOM_EXIT_WEST;
-            neighbor = room->west;
-            break;
-        case PLATFORM_DIRECTION_SOUTH:
-            mask = PLATFORM_ROOM_EXIT_SOUTH;
-            neighbor = room->south;
-            break;
-        default:
-            return PLATFORM_ERR_ARGUMENT;
-    }
-    if ((room->exit_mask & mask) == 0u) return PLATFORM_ERR_NOT_FOUND;
-    *room_id = neighbor;
     return PLATFORM_OK;
 }
 
@@ -1269,34 +1336,6 @@ transition_done:
     return result;
 }
 #pragma code-name (pop)
-
-uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
-                                    const PlatformObject* player) {
-    PlatformObject* object;
-    uint8_t emitted_light;
-    if (room == 0) return PLATFORM_ERR_ARGUMENT;
-    object = &room->objects[slot];
-    if (object->type == 0u) return PLATFORM_ERR_ARGUMENT;
-    emitted_light = PLATFORM_OBJECT_LIGHT(
-        platform_object_type_get(object->type));
-    dirty_clear();
-    mark_object_cells(object);
-    object->type = 0;
-    object->x = 0;
-    object->y = 0;
-    if (room == rendered_room && (uint16_t)slot + 1u == rendered_object_limit) {
-        while (rendered_object_limit > 0u &&
-               room->objects[rendered_object_limit - 1u].type == 0u) {
-            --rendered_object_limit;
-        }
-    }
-    redraw_dirty(room, player);
-    if (emitted_light != 0u && room == rendered_room) {
-        rendered_player = player;
-        platform_lighting_rebuild(room, player);
-    }
-    return PLATFORM_OK;
-}
 
 uint8_t platform_room_object_transfer(PlatformRoom* leaving,
                                       PlatformRoom* entering,

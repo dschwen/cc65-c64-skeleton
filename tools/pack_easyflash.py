@@ -37,6 +37,15 @@ INVENTORY_BANK = 48
 # object-type cold table). Neither costs an extra bank.
 SAVELOAD_BANK = 48
 SAVELOAD_SAVE_BANK = TYPE_BANK_1
+# Room-helpers overlay ("RH": platform_room_object_remove/platform_room_
+# neighbor, see modules/room_helpers.c): every bank through 48 already has
+# both halves spoken for, so this shares TYPE_BANK_1's ROML half with the
+# object-type Zone C table instead of costing a bank of its own. Offset is
+# comfortably past OBJECT_TYPE_ZONE_C_BYTES (770 at the current zone split)
+# with room for it to grow some; keep in sync with src/platform.c's
+# ROOM_HELPERS_EF_OFFSET.
+ROOM_HELPERS_BANK = TYPE_BANK_1
+ROOM_HELPERS_OFFSET = 1024
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
@@ -249,7 +258,7 @@ def load_overlay(path: Path, magic: bytes) -> bytes:
 
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
                 code_dir: Path, inventory: Path, saveload: Path,
-                saveload_save: Path) -> bytes:
+                saveload_save: Path, room_helpers: Path) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -279,6 +288,14 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     saveload_save_data = load_overlay(saveload_save, b"SV")
     start = SAVELOAD_SAVE_BANK * BANK_BYTES + ROML_BYTES
     image[start:start + len(saveload_save_data)] = saveload_save_data
+    room_helpers_data = load_overlay(room_helpers, b"RH")
+    if ROOM_HELPERS_OFFSET < OBJECT_TYPE_ZONE_C_BYTES:
+        raise ValueError(
+            "ROOM_HELPERS_OFFSET overlaps the object-type Zone C table")
+    if ROOM_HELPERS_OFFSET + len(room_helpers_data) > ROML_BYTES:
+        raise ValueError("room-helpers overlay exceeds its ROML half")
+    start = ROOM_HELPERS_BANK * BANK_BYTES + ROOM_HELPERS_OFFSET
+    image[start:start + len(room_helpers_data)] = room_helpers_data
     for portrait_id in range(256):
         bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
         offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
@@ -297,12 +314,13 @@ def main() -> None:
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--saveload", type=Path, required=True)
     parser.add_argument("--saveload-save", type=Path, required=True)
+    parser.add_argument("--room-helpers", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
                     args.room_code, args.inventory, args.saveload,
-                    args.saveload_save)
+                    args.saveload_save, args.room_helpers)
     )
 
 

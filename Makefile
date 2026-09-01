@@ -90,13 +90,21 @@ SAVELOAD_SAVE_RESOLVER_OBJ := $(OUTDIR)/saveload-save-resolver.o
 SAVELOAD_SAVE_MODULE_CFG := cfg/saveload_save_overlay.cfg
 SAVELOAD_SAVE_MODULE_RAW := $(OUTDIR)/saveload-save.raw
 SAVELOAD_SAVE_MODULE := $(OUTDIR)/SV
+ROOM_HELPERS_C_OBJ := $(OUTDIR)/room-helpers-module.o
+ROOM_HELPERS_HEADER_OBJ := $(OUTDIR)/room-helpers-header.o
+ROOM_HELPERS_RESOLVER_SRC := $(OUTDIR)/room-helpers-resolver.s
+ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
+ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
+ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
+ROOM_HELPERS_MODULE := $(OUTDIR)/RH
 DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
 DISK_BOOT_CFG := cfg/disk_boot.cfg
 DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
-all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE)
+all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE) \
+	$(ROOM_HELPERS_MODULE)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -252,6 +260,31 @@ $(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_MODULE_RAW) \
 	python3 tools/finalize_inventory_overlay.py --input $< \
 		--map $(OUTDIR)/saveload-save.map --magic SV --output $@
 
+$(ROOM_HELPERS_C_OBJ): modules/room_helpers.c src/platform.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(ROOM_HELPERS_HEADER_OBJ): modules/room_helpers_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(ROOM_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(ROOM_HELPERS_C_OBJ) \
+		$(ROOM_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(ROOM_HELPERS_C_OBJ) $(ROOM_HELPERS_HEADER_OBJ)
+
+$(ROOM_HELPERS_RESOLVER_OBJ): $(ROOM_HELPERS_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(ROOM_HELPERS_MODULE_RAW): $(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
+		$(ROOM_HELPERS_RESOLVER_OBJ) $(ROOM_HELPERS_MODULE_CFG)
+	$(LD65) -C $(ROOM_HELPERS_MODULE_CFG) -m $(OUTDIR)/room-helpers.map -o $@ \
+		$(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
+		$(ROOM_HELPERS_RESOLVER_OBJ)
+
+$(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
+
 $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
@@ -290,13 +323,14 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
-		$(SAVELOAD_SAVE_MODULE) tools/pack_easyflash.py \
+		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
-		--saveload-save $(SAVELOAD_SAVE_MODULE) --output $@
+		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
+		--output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"

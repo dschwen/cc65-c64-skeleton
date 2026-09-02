@@ -406,6 +406,22 @@ copies the selected `CXX` overlay to staging without touching the C stack or
 BSS, both of which ROMH temporarily hides. ROML room and object-type assets use
 the same native copier with an `$8000` source base. See `ROOM_CODE_API.md`.
 
+Active room code does **not** run from `$A4E9`. `game_room_code_prepare()`
+(`src/room_runtime.c`) copies and validates the destination room's code at
+`$A4E9` only as scratch; `game_room_code_activate()` then `memcpy`s the
+validated bytes to `$9900` (`ROOM_CODE_BASE`), where the room's
+`enter_room()`/`enter_tile()`/`look()`/`use()` handlers actually live and run
+for as long as that room stays current. `$A4E9` is only unsafe for another
+overlay to load into during the few instructions inside
+`platform_room_enter()` between `prepare()` and `activate()` - that's the
+window `platform_room_object_add()` runs in, which is why it stays resident.
+It is *not* unsafe for anything called from a room's own already-active
+`$9900` code, since by the time that code runs, `activate()` has already
+freed `$A4E9`. (`platform_room_clear()`/`object_transfer()`/
+`transition_check()` still have no real callers to verify against, so
+they're undecided, not confirmed-unsafe - don't assume "might be called from
+room code" alone rules them out.)
+
 The inventory UI and global story-specific item-use code form another
 independently linked overlay. `tools/pack_easyflash.py` puts its loadable bytes
 at bank 48 ROMH offset zero. Pressing `I` copies and validates that overlay at

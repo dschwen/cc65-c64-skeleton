@@ -47,10 +47,16 @@ VIC_CTRL1   = $D011
 IRQ_LO      = $0314
 IRQ_HI      = $0315
 
+; ---- CIA1 keyboard matrix (for footstep key scan) ----
+CIA1_PRA    = $DC00     ; column select (write)
+CIA1_PRB    = $DC01     ; row read
+
 ; ---- Zero page scratch ----
 raintimer   = $FB      ; countdown to next droplet trigger
 cutofftmp   = $FC       ; current filter cutoff (low byte we vary)
 randbyte    = $FD
+stepcd      = $FA       ; cooldown frames until the next step is allowed
+stepgate    = $FF       ; frames left to hold voice 2 open for a footstep
 
 * = $C000
 
@@ -78,7 +84,7 @@ clrsid: sta SID,x
         sta V1_FREQ_HI          ; freq irrelevant for noise waveform
         lda #$09                ; attack=0, decay=9 (slow-ish swell)
         sta V1_AD
-        lda #$A8                ; sustain=A, release=8
+        lda #$58                ; sustain=5 (quieter bed), release=8
         sta V1_SR
         lda #$81                ; noise waveform, gate ON (held on)
         sta V1_CTRL
@@ -108,6 +114,10 @@ clrsid: sta SID,x
 
         lda #$20
         sta raintimer
+
+        lda #$00
+        sta stepcd
+        sta stepgate
 
         ; --- Install raster IRQ ---
         lda #$00
@@ -184,11 +194,16 @@ storecut:
         dec raintimer
         bne skipdrop
 
-        ; time for a new droplet: gate voice 2 on, reseed timer
+        ; time for a new droplet: gate voice 2 on, reseed timer.
+        ; Skip the gate-on if a footstep currently owns voice 2 (this
+        ; drop is silently dropped rather than stomping the footstep).
+        lda stepgate
+        bne reseed
         lda #$81
         sta V2_CTRL               ; noise waveform, gate ON
         ; a couple wasted cycles later we'll gate it off (see below)
 
+reseed:
         ; reseed timer from random byte so drops arrive irregularly
         lda randbyte
         and #$1F                  ; 0-31 frame range
@@ -203,10 +218,66 @@ skipdrop:
         lda raintimer
         cmp #$1E
         bcc donedrop
+        lda stepgate
+        bne donedrop               ; a footstep owns voice 2 - leave it alone
         lda #$80
         sta V2_CTRL                ; gate off, decay/release finishes click
 
 donedrop:
+
+        ; --- footstep: any held key steals voice 2 on a walking cadence ---
+        ; No KERNAL IRQ is chained here, so the keyboard buffer never
+        ; fills; the CIA1 matrix has to be polled directly. Selecting
+        ; all columns at once (0) and checking for any row line pulled
+        ; low is a simple "is any key down" test, no matrix lookup needed.
+        ; A key is retriggered on a cooldown (not a press edge) so
+        ; holding a movement key down produces a steady stream of
+        ; steps instead of one tick followed by silence.
+        lda #$00
+        sta CIA1_PRA
+        lda CIA1_PRB
+        ldx #$FF
+        stx CIA1_PRA             ; deselect columns again
+        cmp #$FF
+        beq stepcd_tick           ; nothing held -> just tick timers below
+
+        lda stepcd
+        bne stepcd_tick           ; still cooling down from the last step
+
+        lda #$04                 ; attack 0, decay 4 (longer than a droplet tick)
+        sta V2_AD
+        lda #$C6                 ; sustain C, release 6 -> loud "splash" tail
+        sta V2_SR
+        ; force gate low then high: a SID envelope only restarts its
+        ; attack on a 0->1 edge, and voice 2 may already be gated on
+        ; from a droplet, so this guarantees a clean retrigger
+        lda #$80
+        sta V2_CTRL
+        lda #$81
+        sta V2_CTRL
+        lda #$08
+        sta stepgate              ; hold voice 2 open for 8 frames
+        lda #$0C
+        sta stepcd                ; next step allowed in 12 frames (~walking pace)
+
+stepcd_tick:
+        lda stepcd
+        beq stepgate_tick
+        dec stepcd
+
+stepgate_tick:
+        ; release voice 2 once the footstep's hold time elapses, and
+        ; put the droplet click envelope back so ticks sound right
+        lda stepgate
+        beq donestep
+        dec stepgate
+        bne donestep
+        lda #$80
+        sta V2_CTRL
+        lda #$00
+        sta V2_AD
+        sta V2_SR
+donestep:
 
         pla
         tay

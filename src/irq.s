@@ -42,6 +42,15 @@ RAIN_COUNT      = 7
 RAIN_STEP       = 20
 RAIN_X_OFFSET   = 23       ; map's left edge in sprite-X coordinates (tile 0)
 RAIN_X_MAX_LO   = 87       ; respawn once x_hi=1 and x_lo>=this: x >= 343, the map's right edge
+; Map's bottom edge in sprite-Y coordinates: PAL raster = sprite Y + ~50, and
+; TEXT_RASTER (226) is one line before row 22's badline (51+22*8=227), so
+; row 22 - the first row below the 22-row map (PLATFORM_MAP_CHAR_HEIGHT) -
+; starts at sprite Y ~177. Without this, rain_advance let rain_y run all
+; the way to the 8-bit overflow at 256 before respawning, so streaks fell
+; through the map's own bottom edge and the reserved text rows below it,
+; visibly landing in the border past both - confirmed live in VICE and by
+; a screenshot showing streaks well below the map's drawn tiles.
+RAIN_Y_MAX      = 176
 
 .segment "BSS"
 _platform_frame_counter: .res 1
@@ -439,6 +448,8 @@ rain_advance:
     adc #RAIN_STEP
     sta rain_y,x
     bcs @respawn
+    cmp #RAIN_Y_MAX
+    bcs @respawn             ; also respawn on reaching the map's bottom edge
     lda rain_x_lo,x
     clc
     adc #RAIN_STEP

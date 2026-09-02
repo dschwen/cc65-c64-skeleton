@@ -338,13 +338,33 @@ rain_hide_sprites:
 ; Returns a uniformly random sprite-X position in [23,342] (the map's full
 ; pixel width, RAIN_X_OFFSET to RAIN_X_OFFSET+319): A = rain_x_hi (0 or 1),
 ; Y = rain_x_lo. 320 isn't a power of two, so this draws a 9-bit value 0-511
-; from two PRNG calls and rejects (retries) the 192 values outside the
-; target range, leaving every one of the 320 valid positions equally likely.
+; from two independent sources and rejects (retries) the 192 values outside
+; the target range, leaving every one of the 320 valid positions equally
+; likely - PROVIDED the two sources are actually independent.
+;
+; The low byte (rain_x_lo) can't also supply the half coin flip via a
+; second rain_prng() call: for this LFSR (shift left, then XOR #$1d only
+; when the shifted-out bit was 1), a fresh call's bit 0 is always exactly
+; equal to the *previous* call's bit 7, since #$1d's own bit 7 is 0. An
+; earlier version did exactly that - call rain_prng for rain_x_lo (call it
+; Y), then and #1 on the very next call for the coin flip - so that coin
+; flip was always just bit7(Y), not independent of it at all. That meant
+; "high half" was only ever chosen when Y>=128, but the high half's own
+; bounds check requires Y<87 to accept - a contradiction that can never be
+; satisfied, so it always retried into the low half. Verified live in VICE:
+; rain_pick_x returned rain_x_hi=0 on 30/30 sampled calls, and rain streaks
+; only ever reached the right half of the screen by slowly drifting there
+; over many frames (by which point they'd fallen well past the top), never
+; by spawning there.
+;
+; The fix: draw the coin flip from _platform_frame_counter's low bit
+; instead - a completely separate counter (driven by raster timing, not
+; the rain LFSR), so it carries no relationship to rain_seed's state.
 rain_pick_x:
 @retry:
     jsr rain_prng
-    tay
-    jsr rain_prng
+    tay                      ; Y = candidate rain_x_lo
+    lda _platform_frame_counter
     and #1
     bne @high_half
     cpy #RAIN_X_OFFSET

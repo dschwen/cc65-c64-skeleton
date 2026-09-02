@@ -396,6 +396,23 @@ button:hover {
   white-space: pre-wrap;
 }
 
+.code-editor {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  tab-size: 4;
+}
+
+#script-help {
+  margin-top: 0.75rem;
+}
+
+#script-help > summary {
+  cursor: pointer;
+}
+
 .object-type-fields input[type="number"] {
   width: 4.5rem;
 }

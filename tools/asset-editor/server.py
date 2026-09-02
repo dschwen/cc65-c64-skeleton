@@ -21,10 +21,29 @@ REPO_ROOT = APP_DIR.parents[1]
 ASSETS_DIR = REPO_ROOT / "assets"
 
 
+def _is_resource_id(name: str) -> int | None:
+    if len(name) != 2:
+        return None
+    try:
+        value = int(name, 16)
+    except ValueError:
+        return None
+    return value
+
+
 def _asset_kinds(path: Path) -> list[str]:
     kinds: set[str] = set()
-    data = path.read_bytes()
     suffix = path.suffix.lower()
+
+    # assets/scripts/<ID>.script is plain-text DSL source (see
+    # tools/compile_script.py) - identified by location/extension, not
+    # content, same as portraits are identified by living under
+    # assets/portraits/.
+    if path.parent.name == "scripts" and suffix == ".script" and \
+            _is_resource_id(path.stem) is not None:
+        return ["script"]
+
+    data = path.read_bytes()
 
     if data[:4] == b"CCHR":
         kinds.add("charset")
@@ -32,12 +51,20 @@ def _asset_kinds(path: Path) -> list[str]:
         kinds.add("tiles")
     if len(data) in (256 * 8, 2 * 256 * 8):
         kinds.add("charset")
-    if len(data) in (224, 1248, 1253, 1257) and data[:2] == bytes((20, 11)):
+    if len(data) in (224, 1001, 1248, 1253, 1257) and data[:2] == bytes((20, 11)):
         kinds.add("map")
     if len(data) == 256 * 64:
         kinds.add("objecttypes")
     if len(data) == 256 and path.parent.name == "portraits":
         kinds.add("portrait")
+    if path.parent.name == "resources":
+        resource_id = _is_resource_id(path.name)
+        # Room text (ID < 0xF0) is checked-in binary data, edited directly.
+        # Script/conversation bytecode (ID >= 0xF0) is a build product
+        # compiled from assets/scripts/<ID>.script - see the Makefile rule -
+        # so it isn't offered as directly editable/overwritable here.
+        if resource_id is not None and resource_id < 0xF0:
+            kinds.add("roomtext")
 
     if kinds:
         return sorted(kinds)

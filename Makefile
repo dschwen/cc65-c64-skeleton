@@ -31,7 +31,9 @@ PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
 PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
 C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
 RESOURCE_ASSETS := $(wildcard assets/resources/[0-9A-F][0-9A-F])
-RESOURCE_IDS := $(notdir $(RESOURCE_ASSETS))
+SCRIPT_SOURCES := $(wildcard assets/scripts/[0-9A-F][0-9A-F].script)
+SCRIPT_RESOURCE_IDS := $(basename $(notdir $(SCRIPT_SOURCES)))
+RESOURCE_IDS := $(sort $(notdir $(RESOURCE_ASSETS)) $(SCRIPT_RESOURCE_IDS))
 C64_RESOURCE_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/R,$(RESOURCE_IDS))
 ROOM_CFG := cfg/room_overlay.cfg
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
@@ -137,6 +139,15 @@ $(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
 
 $(C64_ASSET_OUTDIR)/R%: assets/resources/% | $(C64_ASSET_OUTDIR)
 	cp $< $@
+
+# Cutscene/conversation scripts are source (assets/scripts/<ID>.script, one
+# top-level declaration each - see tools/compile_script.py), compiled
+# straight to the build output, the same way rooms/<ID>.c compiles straight
+# to build/rooms/C<ID> without an intermediate assets/ artifact. Only room
+# text resources (0x00-0xEF) are checked-in binary data matched by the copy
+# rule above; this rule covers the reserved script IDs (0xF0-0xFF).
+$(C64_ASSET_OUTDIR)/R%: assets/scripts/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
+	python3 tools/compile_script.py --input $< --single-output $@
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<

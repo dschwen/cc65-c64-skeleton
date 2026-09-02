@@ -424,7 +424,7 @@ no generic rule for which portrait accompanies which text.
 
 ### Room text budget
 
-Each room has one **256-byte text pool** shared by:
+Each room has one **up-to-1001-byte text pool** shared by:
 
 - Look descriptions;
 - Use results;
@@ -433,9 +433,12 @@ Each room has one **256-byte text pool** shared by:
 - four exit descriptions;
 - any other room-local strings.
 
-Each character consumes one byte and every separate string consumes an
-additional terminator byte. Offset zero is normally reserved for an empty
-string. The editor shows the generated size and identifiers.
+This pool is a same-ID resource file (`assets/resources/<hex room id>`),
+separate from the room file itself - see the asset editor's Room mode
+("Room Text Asset") and its README for the exact format. Each character
+consumes one byte and every separate string consumes an additional
+terminator byte. Offset zero is normally reserved for an empty string. The
+editor shows the generated size and identifiers.
 
 Write compactly. Repeated phrases and long conversations can exceed the room
 budget quickly. If a room needs substantial dialogue, identify it early so the

@@ -577,9 +577,17 @@ def main() -> None:
                      "binary format the script-interpreter overlay executes."
     )
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True,
+    output_group = parser.add_mutually_exclusive_group(required=True)
+    output_group.add_argument("--output-dir", type=Path,
                         help="directory to write one <name>.scr per "
                              "top-level script/conversation declaration")
+    output_group.add_argument("--single-output", type=Path,
+                        help="write the input's one top-level declaration "
+                             "directly to this path (errors if the input "
+                             "declares zero or more than one) - for a build "
+                             "rule that maps one source file to one "
+                             "resource ID, e.g. assets/scripts/F0.script -> "
+                             "assets/resources/F0")
     parser.add_argument("--flags", type=Path, default=Path("src/story.h"),
                         help="file to read #define NAME value symbols from "
                              "(default: src/story.h)")
@@ -590,6 +598,21 @@ def main() -> None:
     decls = Parser(tokens, symbols).parse_program()
     if not decls:
         raise SystemExit(f"{args.input}: no script or conversation declared")
+
+    if args.single_output is not None:
+        if len(decls) != 1:
+            names = ", ".join(decl.name for decl in decls)
+            raise SystemExit(
+                f"{args.input}: --single-output requires exactly one "
+                f"top-level declaration, found {len(decls)} ({names})"
+            )
+        decl = decls[0]
+        data = compile_decl(decl)
+        args.single_output.parent.mkdir(parents=True, exist_ok=True)
+        args.single_output.write_bytes(data)
+        kind = "conversation" if isinstance(decl, ConversationDecl) else "script"
+        print(f"{decl.name}: {kind}, {len(data)} bytes -> {args.single_output}")
+        return
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for decl in decls:

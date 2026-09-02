@@ -4,9 +4,12 @@ Browser-based editor for:
 - two monochrome charset banks, each with 256 8x8 characters
 - 256 tiles where each tile is a 2x2 character arrangement (16x16 pixels)
 - per-tile properties (1 byte per tile)
-- fixed 20x11 room editing with tiles, 256 object slots, and room text
+- fixed 20x11 room editing with tiles and 256 object slots
+- each room's text pool, a same-ID resource file separate from the room itself
 - 256 fixed-size object type definitions with character/color graphics
 - monochrome character portraits stored as 2x2 hires sprite grids (48x42 px)
+- cutscene/conversation DSL source (`assets/scripts/<ID>.script`), edited as
+  text only - see [Script mode](#script-mode) below
 
 Open `index.html` directly in a browser for local-only editing.
 
@@ -72,8 +75,13 @@ The server has no third-party dependencies and only exposes file operations unde
   - Right-click deletes the object under the pointer.
   - Select an object in the room list to edit its type and half-tile x/y coordinates.
   - Use `Delete selected` beside the object fields to remove the selected room slot.
-  - Edit a 256-byte pool of zero-terminated room strings; generated offsets
-    are displayed for use by the C API.
+  - Edit the room's text pool (up to 1001 zero-terminated bytes; generated
+    offsets are displayed for use by the C API) - this is a separate
+    same-ID resource file (`assets/resources/<hex room id>`, "Room Text
+    Asset" above the room file's own file controls), not part of the room
+    file itself. Opening a room through the asset server also auto-loads its
+    paired room-text resource if one exists; save it independently with
+    `Save Room Text`.
 - Portrait mode:
   - Each portrait is a monochrome 48x42-pixel image, edited as one canvas.
   - Left mouse draws set (white) pixels, right mouse clears (black) pixels.
@@ -92,6 +100,23 @@ The server has no third-party dependencies and only exposes file operations unde
     controls reposition/resize/fade it; the `Show reference image` checkbox
     toggles it without discarding it. The image is edit-only: it is never
     written to the portrait file and is not kept across a page reload.
+- Script mode:
+  - Edits cutscene/conversation DSL *source text* only
+    (`assets/scripts/<hex ID>.script`, see `tools/compile_script.py`'s
+    docstring for the full language) - nothing is compiled or validated in
+    the browser. A Makefile rule compiles each source file straight to its
+    matching resource ID (`0xF0`-`0xFF` reserved for scripts; room text
+    already claims `0x00`-`0xEF`) when you build the cartridge; that build
+    is where syntax/semantic errors surface.
+  - Resource ID (hex, 00-FF) selects which `assets/scripts/<ID>.script` file
+    is open; there is no in-editor multi-script browser, so switch IDs and
+    open/save each script individually, the same way Portrait mode works.
+  - A collapsible DSL syntax reference is included in the panel. There is no
+    binary format to document here - this editor only edits DSL source text,
+    never compiled bytecode. That format (opcodes, string table, topic
+    table) is documented in `tools/compile_script.py`'s module docstring and
+    kept in sync by hand with the interpreter overlay (`modules/script.c`) -
+    there is no shared source of truth between them.
 
 ## Binary formats
 
@@ -151,21 +176,25 @@ Header (13 bytes):
 - Byte 6: east room ID.
 - Byte 7: west room ID.
 - Byte 8: south room ID.
-- Byte 9: north exit-description offset in the room text pool.
+- Byte 9: north exit-description offset in the room's text resource (see below).
 - Byte 10: east exit-description offset.
 - Byte 11: west exit-description offset.
 - Byte 12: south exit-description offset.
 
-Payload (`1244` bytes):
+Payload (`988` bytes):
 - `220` tile IDs in row-major order.
 - `768` object bytes: 256 slots of type ID, hotspot x, hotspot y.
-- `256` bytes containing zero-terminated room strings addressed by offset.
 
-Total room file size: `1257` bytes.
+Total room file size: `1001` bytes. Room text is no longer part of this file
+- see "Room text resource" below.
 
-Compatibility import accepts the legacy 224-byte 20x11 map and 1248-byte
-format-1 or 1253-byte format-2 rooms. Missing fields are cleared. Export always
-writes format 3.
+Compatibility import accepts the legacy 224-byte 20x11 map, 1248-byte
+format-1 rooms, 1253-byte format-2 rooms, and 1257-byte pre-resource-split
+format-3 rooms (format 3 with its text pool still embedded). Importing any of
+these extracts their embedded text into the room-text pool (see below) so
+nothing is lost - save both the room and its room-text resource afterward to
+finish migrating it. Missing fields are cleared. Export always writes the
+current 1001-byte format.
 
 Existing asset directories can be migrated in place from format 1 and assigned
 links at the same time:
@@ -180,6 +209,29 @@ Then migrate format 2 rooms to format 3:
 ```bash
 python3 tools/migrate_rooms_v3.py assets
 ```
+
+Both tools predate the resource-split; a room file they produce still has an
+embedded text pool, importable as described above.
+
+### Room text resource (`resources/00` through `resources/EF`)
+
+A same-ID resource file (room ID `NN` -> `assets/resources/NN`), holding that
+room's text pool: zero-terminated strings, offset-addressed the same way the
+room file's own exit-description bytes and `game_text_write_room()`'s
+`text_offset` argument already do. No header - just the string bytes, PETSCII
+screen-code encoded like every other in-engine text (`ascii_to_petscii` in
+`tools/prepare_c64_assets.py`, mirrored in this editor's own
+`asciiToPetscii`/`petsciiToAscii`).
+
+Up to `1001` bytes (`PLATFORM_ROOM_TEXT_MAX_BYTES` in `src/platform.c` - the
+room-staging struct's full size, borrowed as scratch RAM once the room it
+staged has been committed). Saved trimmed to its last non-empty string, not
+padded to the full budget - `tools/pack_easyflash.py` stores resources at
+their exact byte length, so padding would waste cartridge space.
+
+Resource IDs `0xF0`-`0xFF` are reserved for compiled cutscene/conversation
+scripts instead (see Script mode above) - a room ID at or above `0xF0` has no
+paired text resource.
 
 ### Object type list (`.cobj`)
 
@@ -259,8 +311,12 @@ portrait pixels remain visible on top of it.
 - Editor state persists across reloads using browser `localStorage`.
 - Server-backed asset open/save is available only when served via `server.py`.
 - The left-side mode tabs use separate asset dropdowns and save paths for
-  charset, tile, room, object-type, and portrait files.
+  charset, tile, room, room-text, object-type, portrait, and script files.
 - Saving refuses to overwrite an existing asset if the server identifies it as another type or as ambiguous data.
 - Portrait files are recognized by living directly under `assets/portraits/`
   and being exactly 256 bytes; save new portraits under that directory
   (e.g. `portraits/00`) so they are detected correctly.
+- Room text resources are recognized by living directly under
+  `assets/resources/` with a 2-hex-digit filename below `0xF0`; script
+  source files are recognized by living under `assets/scripts/` with a
+  2-hex-digit filename and a `.script` extension.

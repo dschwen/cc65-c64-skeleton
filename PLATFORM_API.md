@@ -99,13 +99,16 @@ An object slot is:
 | 1 | hotspot x in half-tiles |
 | 2 | hotspot y in half-tiles |
 
-Text strings are addressed by their byte offset in the 256-byte text pool.
+Text strings are addressed by their byte offset in the room's text pool - a
+same-ID resource file (`assets/resources/<hex room id>`, up to
+`PLATFORM_ROOM_TEXT_MAX_BYTES` bytes), not part of the room file itself.
 Offset 0 is conventionally kept as a zero byte so callers can select an empty
 line without a separate sentinel value.
 
-Editor room files store text as ASCII. `tools/prepare_c64_assets.py` converts
-the text pool to PETSCII in `build/assets/`; only those prepared copies are
-embedded in the PRG or packaged into D64/EasyFlash images.
+The asset editor (`tools/asset-editor/`) PETSCII-encodes text pool bytes
+itself when saving (see its README's `asciiToPetscii`/`petsciiToAscii`);
+`tools/prepare_c64_assets.py` no longer touches room text, since
+`tools/pack_easyflash.py` copies resource files into the cartridge verbatim.
 
 The exit mask is separate because every byte value, including room `FF`, is a
 valid destination. Links may be one-way. A description offset of zero means

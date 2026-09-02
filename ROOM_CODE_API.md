@@ -175,7 +175,8 @@ returns `PLATFORM_ERR_NOT_FOUND` without changing inventory.
 `game_text_write*()` uses the two-line bottom pager. Text wraps at word
 boundaries, does not begin the second line with whitespace, and pauses before
 continuing when output exceeds two lines. The `_room` variant reads a
-build-prepared PETSCII string from the current room's 256-byte text pool.
+PETSCII string from the current room's text pool (a same-ID resource file,
+up to `PLATFORM_ROOM_TEXT_MAX_BYTES` bytes - see `PLATFORM_API.md`).
 
 `game_transition_request()` queues a transition because a room-code overlay
 must not replace itself while one of its functions is executing. The resident

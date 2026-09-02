@@ -16,6 +16,7 @@
         <button id="mode-object" class="mode-btn">Objects</button>
         <button id="mode-room" class="mode-btn">Room</button>
         <button id="mode-portrait" class="mode-btn">Portrait</button>
+        <button id="mode-script" class="mode-btn">Script</button>
       </div>
       <div class="utility-controls">
         <label><input id="show-grid" type="checkbox" checked> Show room/test grid</label>
@@ -139,6 +140,22 @@
           <button id="asset-save-map">Save Room</button>
         </div>
 
+        <h2>Room Text Asset</h2>
+        <p class="hint">Same-ID resource file, not part of the room file - see PLATFORM_API.md.</p>
+        <label class="inline-field">Room text asset
+          <select id="asset-file-list-roomtext"></select>
+        </label>
+        <div class="inline-controls">
+          <button id="asset-refresh-roomtext">Refresh</button>
+          <button id="asset-open-roomtext">Open Room Text</button>
+        </div>
+        <label class="inline-field">Save room text as
+          <input id="asset-save-path-roomtext" type="text" value="resources/00">
+        </label>
+        <div class="button-grid">
+          <button id="asset-save-roomtext">Save Room Text</button>
+        </div>
+
         <h2>Selected</h2>
         <div class="stat-row"><span>Tile</span><strong id="selected-tile-map">0</strong></div>
         <div class="stat-row"><span>Object slot</span><strong id="selected-object-slot">None</strong></div>
@@ -170,6 +187,30 @@
         <div class="stat-row"><span>Portrait ID</span><strong id="selected-portrait-id">0</strong></div>
       </section>
 
+      <section id="side-script" class="side-panel hidden">
+        <h2>Script Files</h2>
+        <p class="hint">DSL source (tools/compile_script.py); a Makefile rule compiles each to its matching resource ID (0xF0-0xFF reserved) on build - this editor only edits the source text.</p>
+        <div class="button-grid">
+          <button id="export-script">Export Script</button>
+          <button id="import-script">Import Script</button>
+        </div>
+        <label class="inline-field">Script asset
+          <select id="asset-file-list-script"></select>
+        </label>
+        <div class="inline-controls">
+          <button id="asset-refresh-script">Refresh</button>
+          <button id="asset-open-script">Open Script</button>
+        </div>
+        <label class="inline-field">Save script as
+          <input id="asset-save-path-script" type="text" value="scripts/F0.script">
+        </label>
+        <div class="button-grid">
+          <button id="asset-save-script">Save Script</button>
+        </div>
+        <h2>Selected</h2>
+        <div class="stat-row"><span>Resource ID</span><strong id="selected-script-id">F0</strong></div>
+      </section>
+
       <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
       <input id="tiles-file" type="file" accept=".ctil,.bin" hidden>
       <input id="map-file" type="file" accept=".map,.cmap,.bin" hidden>
@@ -177,6 +218,7 @@
       <input id="portrait-file" type="file" accept=".bin" hidden>
       <input id="portrait-png-file" type="file" accept="image/png" hidden>
       <input id="portrait-underlay-file" type="file" accept="image/*" hidden>
+      <input id="script-file" type="file" accept=".script,.txt" hidden>
 
       <h2>Status</h2>
       <p id="status" class="status hidden"></p>
@@ -309,8 +351,9 @@
 
           <section class="editor-section">
             <h3>Room Text Pool</h3>
+            <p class="hint">Up to 1001 bytes total, saved separately as this room's Room Text asset above (assets/resources/&lt;hex room id&gt;), not embedded in the room file.</p>
             <label>One zero-terminated string per line
-              <textarea id="room-text-source" rows="8" maxlength="255"></textarea>
+              <textarea id="room-text-source" rows="8" maxlength="1000"></textarea>
             </label>
             <pre id="room-text-offsets" class="offset-list">00: (empty)</pre>
           </section>
@@ -350,6 +393,59 @@
         <div class="row">
           <canvas id="portrait-canvas" width="384" height="336"></canvas>
         </div>
+      </section>
+
+      <section id="script-mode" class="mode-panel hidden">
+        <h2>Script / Conversation Editor</h2>
+        <div class="inline-controls">
+          <label>Resource ID (hex, 00-FF; F0-FF reserved for scripts)
+            <input id="script-id" type="text" value="F0" maxlength="2" size="2">
+          </label>
+        </div>
+        <p class="hint">
+          One top-level <code>script</code> or <code>conversation</code>
+          declaration per file - the Makefile compiles
+          <code>assets/scripts/&lt;ID&gt;.script</code> straight to this
+          resource ID on build (<code>tools/compile_script.py
+          --single-output</code>). Nothing here is compiled live; save the
+          source, then build the cartridge to see compiler errors.
+        </p>
+        <label>DSL source
+          <textarea id="script-source" rows="20" spellcheck="false" class="code-editor"></textarea>
+        </label>
+        <details id="script-help">
+          <summary>DSL syntax reference</summary>
+          <pre class="offset-list">script intro {
+    text "Welcome."
+    portrait_show 3 left
+    check_flag MET_WIZARD == 0 {
+        text "A wizard appears!"
+        set_flag MET_WIZARD 1
+    } else {
+        text "The wizard nods at you."
+    }
+    wait_key
+    portrait_hide
+}
+
+conversation wizard {
+    topic "wiza" {
+        text "I am the wizard of this land."
+    }
+    topic "*" {
+        text "The wizard doesn't answer that."
+    }
+}
+
+Statements: text "..."; portrait_show ID (left|right); portrait_hide;
+set_flag NAME VALUE; check_flag NAME (==|!=|&lt;|&gt;|&lt;=|&gt;=) VALUE { ... } else { ... };
+wait_key; room_transition ROOM X Y; sound ID.
+
+Topic keywords match on their first 4 uppercase letters; "*" is the
+fallback topic tried when nothing else matches. Flag/portrait/room/sound
+IDs may be a decimal/hex literal or a #define NAME from src/story.h.
+See tools/compile_script.py's docstring for the full format.</pre>
+        </details>
       </section>
     </section>
 

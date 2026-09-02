@@ -201,6 +201,21 @@ static uint8_t look_cursor_visible;
 #pragma bss-name (push, "ROOMSTAGE")
 static PlatformRoom room_stage;
 #pragma bss-name (pop)
+
+/* The current room's text pool (room->north_text/etc. offsets index into
+ * this), fetched into room_stage's own memory - not a separate buffer.
+ * room_stage is only "the pending room" for the brief span between
+ * room_stage_load() and room_commit()'s memcpy out of it; every actual use
+ * of room_stage ends before that memcpy (checked: both callers of
+ * room_commit() never touch room_stage again afterward). So the instant the
+ * memcpy completes, its memory is free until the *next* transition's
+ * room_stage_load(), and room_commit() below claims it immediately for this
+ * instead - the same "one buffer, temporally exclusive uses" pattern $A4E9
+ * already uses across staging/overlays. Sized via sizeof(room_stage), not a
+ * hardcoded constant, so it tracks PlatformRoom automatically if that
+ * struct's own size ever changes. */
+#define PLATFORM_ROOM_TEXT_BUFFER ((uint8_t*)&room_stage)
+#define PLATFORM_ROOM_TEXT_MAX_BYTES ((uint16_t)sizeof(room_stage))
 #pragma bss-name (push, "WORKBSS")
 static uint8_t wall_light_cache[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
@@ -711,6 +726,15 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
     if (room == &platform_room) {
         platform_current_room = room_id;
         platform_player = &platform_room.objects[platform_player_slot];
+        /* room_stage's memcpy out is done above, so its memory is free to
+         * reuse as this room's text pool now - see PLATFORM_ROOM_TEXT_BUFFER.
+         * Cleared first (not just left to whatever platform_resource_fetch()
+         * copied) so a room with no text resource, or one smaller than the
+         * previous room's, doesn't leak stale bytes through as if they were
+         * its own. */
+        memset(PLATFORM_ROOM_TEXT_BUFFER, 0, PLATFORM_ROOM_TEXT_MAX_BYTES);
+        (void)platform_resource_fetch(room_id, PLATFORM_ROOM_TEXT_BUFFER,
+                                      PLATFORM_ROOM_TEXT_MAX_BYTES);
     }
 }
 
@@ -1397,13 +1421,18 @@ void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
                                    uint8_t color) {
     uint16_t i;
     uint8_t y;
-    if (room == 0 || line > PLATFORM_TEXT_LINE_BOTTOM || column >= PLATFORM_MAP_CHAR_WIDTH) return;
+    /* room's text pool is the shared buffer for whichever room is current -
+     * see PLATFORM_ROOM_TEXT_BUFFER - so this can only serve platform_room. */
+    if (room != &platform_room || line > PLATFORM_TEXT_LINE_BOTTOM ||
+        column >= PLATFORM_MAP_CHAR_WIDTH) return;
     y = (uint8_t)(23u + line);
     i = text_offset;
-    while (i < PLATFORM_ROOM_TEXT_BYTES && room->text[i] != 0u &&
+    while (i < PLATFORM_ROOM_TEXT_MAX_BYTES &&
+           PLATFORM_ROOM_TEXT_BUFFER[i] != 0u &&
            column < PLATFORM_MAP_CHAR_WIDTH) {
         write_screen_cell(column++, y,
-                          platform_text_screen_code((char)room->text[i++]), color);
+                          platform_text_screen_code((char)PLATFORM_ROOM_TEXT_BUFFER[i++]),
+                          color);
     }
 }
 
@@ -1447,10 +1476,15 @@ static uint8_t room_exit_text(const PlatformRoom* room, uint8_t direction) {
 const char* platform_room_exit_description(const PlatformRoom* room,
                                            uint8_t direction) {
     uint8_t offset;
-    if (room == 0 || direction > PLATFORM_DIRECTION_SOUTH) return 0;
+    /* See PLATFORM_ROOM_TEXT_BUFFER: only platform_room's text is resident. */
+    if (room != &platform_room || direction > PLATFORM_DIRECTION_SOUTH) return 0;
     offset = room_exit_text(room, direction);
-    if (offset == 0u || room->text[offset] == 0u) return 0;
-    return (const char*)&room->text[offset];
+    if (offset == 0u || PLATFORM_ROOM_TEXT_BUFFER[offset] == 0u) return 0;
+    return (const char*)&PLATFORM_ROOM_TEXT_BUFFER[offset];
+}
+
+const char* platform_room_text_at(uint8_t offset) {
+    return (const char*)&PLATFORM_ROOM_TEXT_BUFFER[offset];
 }
 
 static void look_write_buffer(uint8_t color) {
@@ -1566,8 +1600,11 @@ uint8_t platform_look_exit(const PlatformRoom* room,
     look_length = 0u;
     look_truncated = 0u;
     text_offset = room_exit_text(room, direction);
-    if (text_offset != 0u && room->text[text_offset] != 0u) {
-        look_append_string((const char*)&room->text[text_offset]);
+    /* See PLATFORM_ROOM_TEXT_BUFFER: only platform_room's text is resident;
+     * every caller of platform_look_exit() already passes &platform_room. */
+    if (room == &platform_room && text_offset != 0u &&
+        PLATFORM_ROOM_TEXT_BUFFER[text_offset] != 0u) {
+        look_append_string((const char*)&PLATFORM_ROOM_TEXT_BUFFER[text_offset]);
     } else {
         look_append_string("An exit.");
     }

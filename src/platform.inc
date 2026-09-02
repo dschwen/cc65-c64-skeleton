@@ -26,8 +26,9 @@ MAP_HEIGHT_TILES    = 11
 MAP_WIDTH_CHARS     = 40
 MAP_HEIGHT_CHARS    = 22
 ROOM_OBJECTS        = ROOM_TILES + MAP_WIDTH_TILES * MAP_HEIGHT_TILES
-ROOM_TEXT           = ROOM_OBJECTS + 256 * 3
-ROOM_FILE_BYTES     = ROOM_TEXT + 256
+; Room text is a separate same-ID resource now (assets/resources/<id>), not
+; part of the room file - see PlatformRoom in src/platform.h.
+ROOM_FILE_BYTES     = ROOM_OBJECTS + 256 * 3
 
 EASYFLASH_BANK      = $de00
 EASYFLASH_CONTROL   = $de02

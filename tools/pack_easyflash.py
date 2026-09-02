@@ -8,7 +8,9 @@ from pathlib import Path
 
 BANK_BYTES = 0x4000
 ROML_BYTES = 0x2000
-ROOM_BYTES = 1257
+# Room text is a separate same-ID resource (see load_resource/pack_resources
+# below), not part of the room file - see PlatformRoom in src/platform.h.
+ROOM_BYTES = 13 + 220 + 768
 ROOMS_PER_BANK = 6
 FIRST_ROOM_BANK = 3
 ROOM_BANKS = 43

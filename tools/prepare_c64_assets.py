@@ -7,8 +7,9 @@ import argparse
 from pathlib import Path
 
 
-ROOM_BYTES = 1257
-ROOM_TEXT_OFFSET = 13 + 220 + 768
+# Room text is a separate same-ID resource now (assets/resources/<id>), not
+# part of the room file - see PlatformRoom in src/platform.h.
+ROOM_BYTES = 13 + 220 + 768
 OBJECT_TYPE_BYTES = 64
 OBJECT_TYPE_COUNT = 256
 OBJECT_NAME_OFFSET = 2
@@ -28,8 +29,6 @@ def prepare_room(data: bytearray, path: Path) -> None:
         raise ValueError(f"{path}: expected {ROOM_BYTES} bytes, got {len(data)}")
     if data[0:2] != bytes((20, 11)) or data[3] != 3:
         raise ValueError(f"{path}: invalid room header")
-    for offset in range(ROOM_TEXT_OFFSET, ROOM_BYTES):
-        data[offset] = ascii_to_petscii(data[offset])
 
 
 def prepare_objects(data: bytearray, path: Path) -> None:

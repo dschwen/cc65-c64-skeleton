@@ -1,5 +1,7 @@
 ; Embed only the payloads. The editor's 8-byte file headers are not C64 data.
 
+.include "platform.inc"
+
 .export _tile_data
 .export _tile_properties
 .export _initial_room_data
@@ -22,7 +24,7 @@ _tile_properties:
 ; tools/extract_initial_object_types.py, matching tools/pack_easyflash.py.
 .segment "RODATA"
 _initial_room_data:
-    .incbin "build/assets/00", 0, 1257
+    .incbin "build/assets/00", 0, ROOM_FILE_BYTES
 _initial_object_type_data:
     .incbin "build/assets/objects-initial.hot", 0, 70
 

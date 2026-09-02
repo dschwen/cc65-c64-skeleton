@@ -225,7 +225,7 @@ void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color) {
     if (line > PLATFORM_TEXT_LINE_BOTTOM) return;
     platform_text_output_line = line;
     platform_text_output_color = color & 0x0fu;
-    platform_text_output_native((const char*)&platform_room.text[text_offset]);
+    platform_text_output_native(platform_room_text_at(text_offset));
 }
 
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y) {

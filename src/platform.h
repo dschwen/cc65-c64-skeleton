@@ -10,8 +10,11 @@
 #define PLATFORM_MAP_CHAR_HEIGHT      22u
 #define PLATFORM_ROOM_OBJECT_COUNT    256u
 #define PLATFORM_ROOM_OBJECT_BYTES    768u
-#define PLATFORM_ROOM_TEXT_BYTES      256u
-#define PLATFORM_ROOM_FILE_BYTES      1257u
+/* 13 header bytes (see PlatformRoom below) + tiles + objects. Room text is
+ * no longer part of the file - it's a same-ID resource, fetched into a
+ * resident scratch buffer on room entry; see room_commit() in platform.c. */
+#define PLATFORM_ROOM_FILE_BYTES \
+    (13u + PLATFORM_MAP_TILE_COUNT + PLATFORM_ROOM_OBJECT_BYTES)
 #define PLATFORM_ROOM_FORMAT          3u
 #define PLATFORM_OBJECT_TYPE_COUNT    256u
 /* objects.cobj authored/file record size (see tools/asset-editor/README.md).
@@ -133,11 +136,19 @@ typedef struct PlatformObjectTypeInfo {
 } PlatformObjectTypeInfo;
 
 /*
- * Exact 1,257-byte room file. Files are named 00 through FF.
- * width/height must be 20/11. format is currently 3. exit_mask indicates
+ * Exact PLATFORM_ROOM_FILE_BYTES-byte room file. Files are named 00 through
+ * FF. width/height must be 20/11. format is currently 3. exit_mask indicates
  * which of the four neighbor bytes are valid, since every byte value is a
  * usable room ID.
- * text is a pool of zero-terminated strings addressed by byte offset.
+ *
+ * north/east/west/south_text are byte offsets into this room's text pool -
+ * a separate same-ID resource (assets/resources/<room id>, generic sparse
+ * resource directory), not part of this struct. It's fetched into a shared
+ * resident scratch buffer on room entry (see room_commit() in platform.c),
+ * addressed the same way it always was: room->north_text etc. still name an
+ * offset to a zero-terminated string, game_text_write_room()'s text_offset
+ * argument still means the same thing. Only the storage moved, to lift the
+ * old fixed 256-byte cap.
  */
 typedef struct PlatformRoom {
     uint8_t width;
@@ -155,7 +166,6 @@ typedef struct PlatformRoom {
     uint8_t south_text;
     uint8_t tiles[PLATFORM_MAP_TILE_COUNT];
     PlatformObject objects[PLATFORM_ROOM_OBJECT_COUNT];
-    uint8_t text[PLATFORM_ROOM_TEXT_BYTES];
 } PlatformRoom;
 
 typedef uint8_t (*PlatformRoomStoreHook)(const PlatformRoom* room);
@@ -202,6 +212,11 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 /* Return a room-text exit description, or NULL for an absent/invalid one. */
 const char* platform_room_exit_description(const PlatformRoom* room,
                                            uint8_t direction);
+/* Address of byte `offset` in the current room's text pool (see
+ * PlatformRoom's north_text/etc. above). The pool itself is resident scratch
+ * private to platform.c, not addressable directly - this is how other
+ * translation units reach it, e.g. for platform_text_output_native(). */
+const char* platform_room_text_at(uint8_t offset);
 
 /* Load all 256 fixed-size object types from EasyFlash. */
 uint8_t platform_object_types_load(void);

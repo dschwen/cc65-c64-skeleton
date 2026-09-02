@@ -13,8 +13,9 @@
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
 void platform_overlay_run_native(void);
-uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                              uint8_t magic0, uint8_t magic1);
+uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
+                                           uint16_t offset, uint8_t magic0,
+                                           uint8_t magic1);
 
 #pragma code-name (push, "UPPERCODE")
 
@@ -23,7 +24,7 @@ void game_inventory_show(void) {
 
     platform_look_cursor_hide();
     INVENTORY_VIC_CTRL1 &= 0xefu;
-    result = platform_overlay_load(INVENTORY_EF_BANK, 1u,
+    result = platform_overlay_load(INVENTORY_EF_BANK, 1u, 0u,
                                    INVENTORY_MAGIC_0, INVENTORY_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
 

@@ -363,15 +363,16 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
 uint8_t platform_overlay_validate_native(uint16_t loaded_size);
 
 #pragma code-name (push, "HIGHCODE")
-uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                              uint8_t magic0, uint8_t magic1) {
+uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
+                                           uint16_t offset, uint8_t magic0,
+                                           uint8_t magic1) {
     uint16_t size;
 
     platform_overlay_magic0 = magic0;
     platform_overlay_magic1 = magic1;
 
     platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = 0u;
+    platform_ef_copy_offset = offset;
     platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
     platform_ef_copy_size = OVERLAY_HEADER_BYTES;
     if (use_romh) platform_easyflash_copy_romh();
@@ -382,7 +383,7 @@ uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
     }
 
     platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = 0u;
+    platform_ef_copy_offset = offset;
     platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
     platform_ef_copy_size = size;
     if (use_romh) platform_easyflash_copy_romh();
@@ -398,11 +399,8 @@ uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
  * already spoken for (rooms, object types, inventory, save/load), so this
  * one shares TYPE_BANK_1's ROML half with the object-type Zone C table
  * (src/platform.c's OBJECT_TYPE_ZONE_C_COUNT, 770 bytes) at a fixed offset
- * comfortably past it, instead of getting a bank of its own. Unlike
- * platform_overlay_load(), which always reads from offset 0 of the chosen
- * bank/half, this loader's offset is fixed at build time (see
- * tools/pack_easyflash.py's ROOM_HELPERS_EF_OFFSET) since there is only
- * ever this one caller.
+ * comfortably past it, instead of getting a bank of its own - see
+ * tools/pack_easyflash.py's ROOM_HELPERS_EF_OFFSET.
  */
 #define ROOM_HELPERS_EF_BANK    47u
 #define ROOM_HELPERS_EF_OFFSET  1024u
@@ -428,30 +426,6 @@ uint8_t room_helpers_op = 0;
 uint8_t room_helpers_result = 0;
 
 #pragma code-name (push, "HIGHCODE")
-static uint8_t room_helpers_overlay_load(void) {
-    uint16_t size;
-
-    platform_overlay_magic0 = ROOM_HELPERS_MAGIC_0;
-    platform_overlay_magic1 = ROOM_HELPERS_MAGIC_1;
-
-    platform_ef_copy_bank = ROOM_HELPERS_EF_BANK;
-    platform_ef_copy_offset = ROOM_HELPERS_EF_OFFSET;
-    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
-    platform_ef_copy_size = OVERLAY_HEADER_BYTES;
-    platform_easyflash_copy_roml();
-    size = (uint16_t)OVERLAY_BASE[6] | ((uint16_t)OVERLAY_BASE[7] << 8);
-    if (size < OVERLAY_HEADER_BYTES || size > OVERLAY_MAX_BYTES) {
-        return PLATFORM_ERR_FORMAT;
-    }
-
-    platform_ef_copy_bank = ROOM_HELPERS_EF_BANK;
-    platform_ef_copy_offset = ROOM_HELPERS_EF_OFFSET;
-    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
-    platform_ef_copy_size = size;
-    platform_easyflash_copy_roml();
-    return platform_overlay_validate_native(size);
-}
-
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id) {
     uint8_t status;
@@ -460,7 +434,9 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
     room_helpers_op = ROOM_HELPERS_OP_NEIGHBOR;
     room_helpers_room = (PlatformRoom*)room;
     room_helpers_direction = direction;
-    status = room_helpers_overlay_load();
+    status = platform_overlay_load(ROOM_HELPERS_EF_BANK, 0u,
+                                   ROOM_HELPERS_EF_OFFSET,
+                                   ROOM_HELPERS_MAGIC_0, ROOM_HELPERS_MAGIC_1);
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     if (room_helpers_result == PLATFORM_OK) *room_id = room_helpers_room_id;
@@ -476,7 +452,9 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     room_helpers_room = room;
     room_helpers_slot = slot;
     room_helpers_player = player;
-    status = room_helpers_overlay_load();
+    status = platform_overlay_load(ROOM_HELPERS_EF_BANK, 0u,
+                                   ROOM_HELPERS_EF_OFFSET,
+                                   ROOM_HELPERS_MAGIC_0, ROOM_HELPERS_MAGIC_1);
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     return room_helpers_result;

@@ -92,10 +92,11 @@ void game_world_reset(void) {
     memset(game_world_deltas, 0, sizeof(game_world_deltas));
     memcpy(room_object_baseline, platform_room.objects,
            sizeof(room_object_baseline));
-    if (platform_player != 0) {
-        memset(&room_object_baseline[platform_player_slot], 0,
-               sizeof(PlatformObject));
-    }
+    /* platform_player is always valid here: this function's only caller
+     * (game_world_init()) runs right after platform_init(), which
+     * unconditionally sets platform_player before returning. */
+    memset(&room_object_baseline[platform_player_slot], 0,
+           sizeof(PlatformObject));
     baseline_room = platform_room.id;
     baseline_valid = 1u;
 }

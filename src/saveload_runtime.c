@@ -26,8 +26,9 @@
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
 void platform_overlay_run_native(void);
-uint8_t platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                              uint8_t magic0, uint8_t magic1);
+uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
+                                           uint16_t offset, uint8_t magic0,
+                                           uint8_t magic1);
 
 uint8_t saveload_overlay_mode;
 uint8_t saveload_selected_slot;
@@ -117,7 +118,7 @@ void game_load_show(void) {
     SAVELOAD_VIC_CTRL1 &= 0xefu;
     saveload_overlay_mode = SAVELOAD_MODE_LOAD;
     saveload_load_pending = 0u;
-    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u,
+    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u, 0u,
                                    SAVELOAD_MAGIC_0, SAVELOAD_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
     if (result == PLATFORM_OK && saveload_load_pending) {
@@ -133,12 +134,12 @@ void game_save_show(void) {
     SAVELOAD_VIC_CTRL1 &= 0xefu;
     saveload_overlay_mode = SAVELOAD_MODE_SAVE;
     saveload_selected_slot = SAVELOAD_SLOT_NONE;
-    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u,
+    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u, 0u,
                                    SAVELOAD_MAGIC_0, SAVELOAD_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
 
     if (result == PLATFORM_OK && saveload_selected_slot != SAVELOAD_SLOT_NONE) {
-        result = platform_overlay_load(SAVELOAD_SAVE_EF_BANK, 1u,
+        result = platform_overlay_load(SAVELOAD_SAVE_EF_BANK, 1u, 0u,
                                        SAVELOAD_SAVE_MAGIC_0,
                                        SAVELOAD_SAVE_MAGIC_1);
         if (result == PLATFORM_OK) platform_overlay_run_native();

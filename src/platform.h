@@ -217,6 +217,13 @@ const char* platform_room_exit_description(const PlatformRoom* room,
  * private to platform.c, not addressable directly - this is how other
  * translation units reach it, e.g. for platform_text_output_native(). */
 const char* platform_room_text_at(uint8_t offset);
+/* The room text pool's own backing buffer/size, for a one-shot overlay (the
+ * script/conversation interpreter) to borrow as scratch RAM while it runs.
+ * Must call platform_room_text_reload() before returning, or the next
+ * Look/Take/exit-description read sees the borrower's leftover data. */
+uint8_t* platform_room_scratch(void);
+uint16_t platform_room_scratch_bytes(void);
+void platform_room_text_reload(void);
 
 /* Load all 256 fixed-size object types from EasyFlash. */
 uint8_t platform_object_types_load(void);

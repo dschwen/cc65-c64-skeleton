@@ -97,6 +97,13 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
 ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
+SCRIPT_C_OBJ := $(OUTDIR)/script-module.o
+SCRIPT_HEADER_OBJ := $(OUTDIR)/script-header.o
+SCRIPT_RESOLVER_SRC := $(OUTDIR)/script-resolver.s
+SCRIPT_RESOLVER_OBJ := $(OUTDIR)/script-resolver.o
+SCRIPT_MODULE_CFG := cfg/script_overlay.cfg
+SCRIPT_MODULE_RAW := $(OUTDIR)/script.raw
+SCRIPT_MODULE := $(OUTDIR)/SC
 DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
 DISK_BOOT_CFG := cfg/disk_boot.cfg
 DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
@@ -104,7 +111,7 @@ DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
 all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE) \
-	$(ROOM_HELPERS_MODULE)
+	$(ROOM_HELPERS_MODULE) $(SCRIPT_MODULE)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -285,6 +292,31 @@ $(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
 	python3 tools/finalize_inventory_overlay.py --input $< \
 		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
 
+$(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(SCRIPT_HEADER_OBJ): modules/script_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SCRIPT_RESOLVER_SRC): $(OUT_PRG) $(SCRIPT_C_OBJ) \
+		$(SCRIPT_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(SCRIPT_C_OBJ) $(SCRIPT_HEADER_OBJ)
+
+$(SCRIPT_RESOLVER_OBJ): $(SCRIPT_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(SCRIPT_MODULE_RAW): $(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
+		$(SCRIPT_RESOLVER_OBJ) $(SCRIPT_MODULE_CFG)
+	$(LD65) -C $(SCRIPT_MODULE_CFG) -m $(OUTDIR)/script.map -o $@ \
+		$(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
+		$(SCRIPT_RESOLVER_OBJ)
+
+$(SCRIPT_MODULE): $(SCRIPT_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/script.map --magic SC --output $@
+
 $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
@@ -323,13 +355,14 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
-		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) tools/pack_easyflash.py \
+		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(SCRIPT_MODULE) tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
 		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
+		--script $(SCRIPT_MODULE) \
 		--output $@
 
 $(OUT_CRT): $(OUT_EF_BIN)

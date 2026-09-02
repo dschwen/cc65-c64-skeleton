@@ -1487,6 +1487,29 @@ const char* platform_room_text_at(uint8_t offset) {
     return (const char*)&PLATFORM_ROOM_TEXT_BUFFER[offset];
 }
 
+/* Lets a one-shot overlay (e.g. the script/conversation interpreter) borrow
+ * this same buffer as scratch RAM while it runs, the same "temporally
+ * exclusive" reuse room_commit() already does with room_stage itself. Only
+ * safe between room_commit() calls (i.e. while no transition is staging a
+ * new room) - true for every current borrower, since they all run from
+ * resident code between transitions, never from inside one. The borrower
+ * must call platform_room_text_reload() before returning control, or the
+ * next Look/Take/exit-description read sees its leftover data instead of
+ * platform_current_room's actual text. */
+uint8_t* platform_room_scratch(void) {
+    return PLATFORM_ROOM_TEXT_BUFFER;
+}
+
+uint16_t platform_room_scratch_bytes(void) {
+    return PLATFORM_ROOM_TEXT_MAX_BYTES;
+}
+
+void platform_room_text_reload(void) {
+    memset(PLATFORM_ROOM_TEXT_BUFFER, 0, PLATFORM_ROOM_TEXT_MAX_BYTES);
+    (void)platform_resource_fetch(platform_current_room, PLATFORM_ROOM_TEXT_BUFFER,
+                                  PLATFORM_ROOM_TEXT_MAX_BYTES);
+}
+
 static void look_write_buffer(uint8_t color) {
     if (look_truncated) {
         look_buffer[77] = '.';

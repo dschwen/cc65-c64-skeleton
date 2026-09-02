@@ -543,6 +543,16 @@ def compile_decl(decl: ScriptDecl | ConversationDecl) -> bytes:
     return link_strings(bytecode, all_patches)
 
 
+def ascii_to_petscii(value: int) -> int:
+    """Same mapping as tools/prepare_c64_assets.py - the platform's text
+    renderer expects screen codes, not raw ASCII, for any string it prints."""
+    if 0x41 <= value <= 0x5A:
+        return value + 0x80
+    if 0x61 <= value <= 0x7A:
+        return value - 0x20
+    return value
+
+
 def link_strings(bytecode: bytearray, patches: list[Patch]) -> bytes:
     pool: dict[str, int] = {}
     string_table = bytearray()
@@ -550,7 +560,8 @@ def link_strings(bytecode: bytearray, patches: list[Patch]) -> bytes:
     for patch in patches:
         if patch.text not in pool:
             pool[patch.text] = table_start + len(string_table)
-            string_table += patch.text.encode("ascii") + b"\0"
+            encoded = bytes(ascii_to_petscii(b) for b in patch.text.encode("ascii"))
+            string_table += encoded + b"\0"
     for patch in patches:
         struct.pack_into("<H", bytecode, patch.position, pool[patch.text])
     return bytes(bytecode) + bytes(string_table)

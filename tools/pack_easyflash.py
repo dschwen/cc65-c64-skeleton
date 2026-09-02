@@ -48,6 +48,20 @@ SAVELOAD_SAVE_BANK = TYPE_BANK_1
 # ROOM_HELPERS_EF_OFFSET.
 ROOM_HELPERS_BANK = TYPE_BANK_1
 ROOM_HELPERS_OFFSET = 1024
+# Script/conversation interpreter overlay ("SC": modules/script.c). Same
+# reasoning and same shared half as room-helpers above, at a further offset
+# past it (with margin for room-helpers to grow); keep in sync with
+# src/script_runtime.c's SCRIPT_EF_OFFSET.
+SCRIPT_BANK = TYPE_BANK_1
+SCRIPT_OFFSET = 2048
+# Compiled script/conversation bytecode (tools/compile_script.py) is data,
+# not code, and goes through the generic resource directory below like any
+# other resource - NOT through SCRIPT_BANK/OFFSET, which is only this
+# overlay's own interpreter code. Resource IDs 240-255 are reserved for it;
+# room text (resource_id == room_id) claims 0-239, since every byte value up
+# to 239 rooms is a usable room ID today. No enforcement of that split here
+# yet - keep an eye on it if the room count ever grows past 239.
+SCRIPT_RESOURCE_FIRST_ID = 240
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
@@ -260,7 +274,7 @@ def load_overlay(path: Path, magic: bytes) -> bytes:
 
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
                 code_dir: Path, inventory: Path, saveload: Path,
-                saveload_save: Path, room_helpers: Path) -> bytes:
+                saveload_save: Path, room_helpers: Path, script: Path) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -298,6 +312,13 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         raise ValueError("room-helpers overlay exceeds its ROML half")
     start = ROOM_HELPERS_BANK * BANK_BYTES + ROOM_HELPERS_OFFSET
     image[start:start + len(room_helpers_data)] = room_helpers_data
+    script_data = load_overlay(script, b"SC")
+    if SCRIPT_OFFSET < ROOM_HELPERS_OFFSET + len(room_helpers_data):
+        raise ValueError("SCRIPT_OFFSET overlaps the room-helpers overlay")
+    if SCRIPT_OFFSET + len(script_data) > ROML_BYTES:
+        raise ValueError("script overlay exceeds its ROML half")
+    start = SCRIPT_BANK * BANK_BYTES + SCRIPT_OFFSET
+    image[start:start + len(script_data)] = script_data
     for portrait_id in range(256):
         bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
         offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
@@ -317,12 +338,13 @@ def main() -> None:
     parser.add_argument("--saveload", type=Path, required=True)
     parser.add_argument("--saveload-save", type=Path, required=True)
     parser.add_argument("--room-helpers", type=Path, required=True)
+    parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
                     args.room_code, args.inventory, args.saveload,
-                    args.saveload_save, args.room_helpers)
+                    args.saveload_save, args.room_helpers, args.script)
     )
 
 

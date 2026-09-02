@@ -113,6 +113,12 @@ extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 
+/* Runs a compiled cutscene/conversation script (tools/compile_script.py) by
+ * its resource ID - 240-255 are reserved for scripts, since room text
+ * already claims resource_id == room_id (0-239). See src/script_runtime.c
+ * and modules/script.c. */
+void game_script_play(uint8_t resource_id);
+
 /* Implemented independently by every rooms/XX.c. Read coordinates from state. */
 void enter_room(void);
 void enter_tile(void);

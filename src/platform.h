@@ -420,11 +420,13 @@ uint8_t platform_rain_is_active(void);
 
 /*
  * Generic sparse cartridge resource directory: 256 read-only,
- * variable-size blobs (id 0-255) reserved for future variable-size or
- * sparse content that does not belong in a fixed-formula table like rooms,
- * portraits, or object types (e.g. dialogue or quest text). A resource is
- * guaranteed to fit within one 8 KiB EasyFlash ROML/ROMH half, so a fetch
- * never spans an EasyFlash bank switch. See EASYFLASH_CARTRIDGE.md.
+ * variable-size blobs (id 0-255) for content that does not belong in a
+ * fixed-formula table like rooms, portraits, or object types - e.g. the
+ * room/cutscene/conversation scripts modules/script.c interprets (see
+ * ROOM_CODE_API.md's "Room scripts" and tools/compile_script.py's module
+ * docstring). A resource is guaranteed to fit within one 8 KiB EasyFlash
+ * ROML/ROMH half, so a fetch never spans an EasyFlash bank switch. See
+ * EASYFLASH_CARTRIDGE.md.
  *
  * Copies resource_id into destination (up to capacity bytes) and returns
  * its actual length, or 0 if the ID is unpopulated, does not fit in

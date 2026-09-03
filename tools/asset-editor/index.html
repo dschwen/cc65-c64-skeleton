@@ -434,7 +434,10 @@ room 00 {
 
 Statements: text "..."; portrait_show ID (left|right); portrait_hide;
 set_flag NAME VALUE; check_flag NAME (==|!=|&lt;|&gt;|&lt;=|&gt;=) VALUE { ... } else { ... };
-wait_key; room_transition ROOM X Y; sound ID; give_object TYPE QUANTITY.
+check_flag NAME &amp; BIT { ... } else { ... } (bit test: BIT is 0-7, true when
+that bit of the flag byte is set - no separate "bit clear" cmp, use the
+else branch); wait_key; room_transition ROOM X Y; sound ID;
+give_object TYPE QUANTITY.
 
 Topic keywords match on their first 4 uppercase letters; "*" is the
 fallback topic tried when nothing else matches. A room's entry keys are

@@ -31,11 +31,18 @@
  * documented avoid-list (memcpy/memset, division/modulo by a non-power-of-2
  * constant), this file also avoids: multiplying by a non-power-of-2
  * constant (needs mulax6 etc. - see find_topic's manual accumulation
- * instead of table + i*TOPIC_ENTRY_BYTES) and returning or assigning a bare
+ * instead of table + i*TOPIC_ENTRY_BYTES), returning or assigning a bare
  * comparison's result as a value (needs booleq/boolne/boolult/boolugt/
  * boolule - see flag_matches/input_char_ok's explicit if/return instead of
- * `return a == b;`). A comparison used only inside an if/while condition is
- * fine either way, since it compiles to a plain branch.
+ * `return a == b;`), shifting by a runtime (non-constant) count (needs a
+ * variable-shift helper - see flag_matches's BIT_MASK table instead of
+ * `1u << value`), and combining an array-indexed operand with a binary
+ * bitwise/arithmetic op in one expression (needs a 16-bit stack-based
+ * helper, e.g. tosanda0 for `&` - see flag_matches's cmp 6 using a
+ * compound-assignment `actual &= mask;` on a separately-loaded local
+ * instead of `(actual & BIT_MASK[value]) != 0u` inline). A comparison used
+ * only inside an if/while condition is fine either way, since it compiles
+ * to a plain branch.
  */
 
 #define OP_END              0x00u
@@ -77,15 +84,38 @@ static uint16_t read_u16(uint16_t pos) {
  * boolugt/boolule runtime helpers, which this overlay can't link against
  * (see the module doc comment). A comparison used only to pick a branch
  * compiles to a plain conditional jump instead. */
+/* Bit masks for cmp 6 (bit test), indexed by bit number 0-7 - not computed
+ * via a runtime-variable-count shift (`1u << value`), since a non-constant
+ * shift count needs a cc65 runtime helper this overlay can't link against
+ * (see the module doc comment's avoid-list). */
+static const uint8_t BIT_MASK[8] = {
+    0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
+};
+
 static uint8_t flag_matches(uint8_t index, uint8_t cmp, uint8_t value) {
     uint8_t actual = game_state.flags[index];
+    uint8_t mask;
     switch (cmp) {
         case 0: if (actual == value) return 1u; break;
         case 1: if (actual != value) return 1u; break;
         case 2: if (actual < value) return 1u; break;
         case 3: if (actual > value) return 1u; break;
         case 4: if (actual <= value) return 1u; break;
-        default: if (actual >= value) return 1u; break;
+        case 5: if (actual >= value) return 1u; break;
+        case 6:
+            /* `actual &= mask;` then a bare `!= 0u` check, not
+             * `(actual & BIT_MASK[value]) != 0u` inline - the inline form
+             * pulled in cc65's tosanda0 runtime helper (a 16-bit
+             * stack-based AND, from combining the array index with the AND
+             * in one expression), which this overlay can't link against
+             * either. The compound-assignment form compiles to a plain
+             * accumulator AND. */
+            if (value >= 8u) break;
+            mask = BIT_MASK[value];
+            actual &= mask;
+            if (actual != 0u) return 1u;
+            break;
+        default: break;
     }
     return 0u;
 }

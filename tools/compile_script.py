@@ -53,7 +53,11 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          game_state.flags[index] cmp value), then false_len
                          bytes (executed otherwise) - both are themselves
                          complete statement sequences and may nest further
-                         CHECK_FLAGs. cmp: 0 == , 1 != , 2 < , 3 > , 4 <= , 5 >=
+                         CHECK_FLAGs. cmp: 0 == , 1 != , 2 < , 3 > , 4 <= ,
+                         5 >= , 6 & (bit test: value is a bit index 0-7,
+                         true when that bit of flags[index] is set - packs
+                         multiple yes/no facts into one flag byte; there's
+                         no separate "bit clear" cmp, use the false branch)
     0x06 WAIT_KEY                                        no operands
     0x07 ROOM_TRANSITION  room:1  x:1  y:1
     0x08 SOUND            id:1
@@ -100,6 +104,13 @@ DSL syntax:
                 set_flag FOUND_KEY 1
             }
         }
+        entry 5 {
+            check_flag QUEST_FLAGS & 2 {
+                text "The seal on the door is broken."
+            } else {
+                text "The door is sealed shut."
+            }
+        }
     }
 
 A room's entry keys are whatever numbering convention its own C code (see
@@ -138,7 +149,7 @@ OP_ROOM_TRANSITION = 0x07
 OP_SOUND = 0x08
 OP_GIVE_OBJECT = 0x09
 
-CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5}
+CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
 
 
 # --------------------------------------------------------------------------
@@ -152,7 +163,7 @@ TOKEN_RE = re.compile(
     | (?P<blockcomment>/\*.*?\*/)
     | (?P<string>"(?:\\.|[^"\\])*")
     | (?P<number>0[xX][0-9a-fA-F]+|[0-9]+)
-    | (?P<cmp><=|>=|==|!=|<|>)
+    | (?P<cmp><=|>=|==|!=|<|>|&)
     | (?P<lbrace>\{)
     | (?P<rbrace>\})
     | (?P<semi>;)

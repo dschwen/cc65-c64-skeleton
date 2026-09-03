@@ -213,12 +213,10 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 /* The current room's own script resource's backing buffer/size (resource ID
  * == room ID; see game_room_script_entry() in game.h), for a one-shot
  * overlay (the script interpreter, modules/script.c) to borrow as scratch
- * RAM while it runs. Must call platform_room_scratch_reload() before
- * returning, or the next game_room_script_entry() call sees the borrower's
- * leftover data instead of the current room's actual script resource. */
+ * RAM while it runs. Nothing resident reads it between borrows, so there's
+ * no "restore before returning" contract. */
 uint8_t* platform_room_scratch(void);
 uint16_t platform_room_scratch_bytes(void);
-void platform_room_scratch_reload(void);
 
 /* Load all 256 fixed-size object types from EasyFlash. */
 uint8_t platform_object_types_load(void);
@@ -435,5 +433,15 @@ uint8_t platform_rain_is_active(void);
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
 uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
                                   uint16_t capacity);
+/* Fetches at most `capacity` bytes starting at byte `start` of resource_id's
+ * data, for a resource bigger than one resident buffer can hold at once (up
+ * to PLATFORM_RESOURCE_MAX_BYTES) - see modules/script.c's windowed reader.
+ * Unlike platform_resource_fetch(), does not verify the resource's
+ * checksum (which covers the whole resource, not an arbitrary sub-range). */
+uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
+                                       uint8_t* destination, uint16_t capacity);
+/* The resource's total size, after either fetch call above, regardless of
+ * how much fit in that call's `capacity`. */
+uint16_t platform_resource_last_size(void);
 
 #endif

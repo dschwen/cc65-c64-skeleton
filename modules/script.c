@@ -13,10 +13,13 @@
  * compiled bytecode itself is separate from this overlay's own code:
  * fetched at run time from the generic sparse resource directory
  * (standalone scripts/conversations use resource IDs 240-255; a room's own
- * script uses resource_id == room_id, 0-239) into platform_room_scratch()'s
- * buffer (room_stage's memory, borrowed - see platform.h). The resident
- * wrapper restores that buffer's real content (the current room's script
- * resource) once this overlay returns.
+ * script uses resource_id == room_id, 0-239), which can be up to
+ * PLATFORM_RESOURCE_MAX_BYTES (8 KiB) - far more than fits at once in
+ * platform_room_scratch()'s resident buffer (room_stage's memory, borrowed
+ * - see platform.h, ~1 KiB). So script_buf holds a *sliding window* into
+ * the resource, not the whole thing; see read_byte()/ensure_window() below
+ * for how byte access re-fetches a fresh window on demand via
+ * platform_resource_fetch_range().
  *
  * For a KIND_ROOM resource, game_room_script_entry() hands this overlay the
  * requested entry key (script_entry_key) and this file finds it in the
@@ -72,11 +75,56 @@ void __fastcall__ platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
 
+/* script_buf holds a sliding *window* into the resource, not the whole
+ * thing - a resource can be up to PLATFORM_RESOURCE_MAX_BYTES (8 KiB; see
+ * platform.h) now, far more than this overlay's resident buffer
+ * (platform_room_scratch(), ~1 KiB) can hold at once. window_base is the
+ * absolute resource offset script_buf[0] currently represents; window_len
+ * is how many bytes from there are actually valid. Every byte access goes
+ * through read_byte()/ensure_window(), which re-fetches a fresh window
+ * (via platform_resource_fetch_range()) whenever the requested offset
+ * falls outside the current one - cheap (one bank-switch+copy) and rare in
+ * practice, since bytecode is read mostly sequentially and a window holds
+ * many opcodes/table entries at once. script_len is the resource's total
+ * size (platform_resource_last_size()), the upper bound exec_block and the
+ * table scanners loop against - not how much is currently cached. */
 static uint8_t* script_buf;
+static uint16_t script_cap;
+static uint16_t window_base;
+static uint16_t window_len;
 static uint16_t script_len;
 
+/* Unconditionally re-centers the window at `pos`, even if `pos` was already
+ * covered by the current window - used by say() so a string gets the full
+ * window's worth of contiguous room from its own start, not whatever
+ * happened to be left over from wherever the window last was. */
+static void ensure_window_at(uint16_t pos) {
+    window_len = platform_resource_fetch_range(script_resource_id, pos,
+                                               script_buf, script_cap);
+    window_base = pos;
+}
+
+/* Written as two separate if-statements against a locally-computed
+ * window_end, matching the simple-comparison style used everywhere else in
+ * this file (see flag_matches's cmp 6 for why combining an operation with a
+ * comparison in one expression is avoided here). */
+static void ensure_window(uint16_t pos) {
+    uint16_t window_end = window_base + window_len;
+    if (pos < window_base) { ensure_window_at(pos); return; }
+    if (pos >= window_end) { ensure_window_at(pos); return; }
+}
+
+static uint8_t read_byte(uint16_t pos) {
+    uint16_t window_end;
+    ensure_window(pos);
+    window_end = window_base + window_len;
+    if (pos < window_base) return 0u; /* before start / bad fetch */
+    if (pos >= window_end) return 0u; /* past end / bad fetch */
+    return script_buf[pos - window_base];
+}
+
 static uint16_t read_u16(uint16_t pos) {
-    return (uint16_t)script_buf[pos] | ((uint16_t)script_buf[pos + 1] << 8);
+    return (uint16_t)read_byte(pos) | ((uint16_t)read_byte(pos + 1u) << 8);
 }
 
 /* Written as explicit if/return, not `return (a == b);` - a bare comparison
@@ -127,9 +175,16 @@ static void wait_fresh_key(void) {
 }
 
 static void say(uint16_t str_offset) {
+    /* Force the window to start exactly at str_offset, guaranteeing the
+     * string gets the window's full capacity of contiguous room from its
+     * own start - platform_text_output_native() needs a plain C pointer to
+     * walk byte-by-byte until a NUL, so the whole string must already be
+     * contiguous in script_buf by the time it's called; a single TEXT
+     * string longer than the window capacity (~1 KiB) isn't supported. */
+    ensure_window_at(str_offset);
     platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
     platform_text_output_color = 1u;
-    platform_text_output_native((const char*)&script_buf[str_offset]);
+    platform_text_output_native((const char*)script_buf);
 }
 
 /* Runs [pos, end) - or until an END opcode, whichever comes first, so a
@@ -142,7 +197,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
     uint16_t true_len, false_len, body;
 
     while (pos < end) {
-        op = script_buf[pos];
+        op = read_byte(pos);
         switch (op) {
             case OP_END:
                 return;
@@ -151,7 +206,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 3u;
                 break;
             case OP_PORTRAIT_SHOW:
-                (void)platform_portrait_show(script_buf[pos + 1u], script_buf[pos + 2u]);
+                (void)platform_portrait_show(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             case OP_PORTRAIT_HIDE:
@@ -159,13 +214,13 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 1u;
                 break;
             case OP_SET_FLAG:
-                game_state.flags[script_buf[pos + 1u]] = script_buf[pos + 2u];
+                game_state.flags[read_byte(pos + 1u)] = read_byte(pos + 2u);
                 pos += 3u;
                 break;
             case OP_CHECK_FLAG:
-                index = script_buf[pos + 1u];
-                cmp = script_buf[pos + 2u];
-                value = script_buf[pos + 3u];
+                index = read_byte(pos + 1u);
+                cmp = read_byte(pos + 2u);
+                value = read_byte(pos + 3u);
                 true_len = read_u16(pos + 4u);
                 false_len = read_u16(pos + 6u);
                 body = pos + 8u;
@@ -189,9 +244,9 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * game_process_pending_transition()) once this overlay has
                  * returned and freed $A4E9 - the same reason
                  * saveload_runtime.c's saveload_apply_pending() defers it. */
-                (void)game_transition_request(script_buf[pos + 1u],
-                                              script_buf[pos + 2u],
-                                              script_buf[pos + 3u]);
+                (void)game_transition_request(read_byte(pos + 1u),
+                                              read_byte(pos + 2u),
+                                              read_byte(pos + 3u));
                 pos += 4u;
                 break;
             case OP_SOUND:
@@ -199,7 +254,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 2u;
                 break;
             case OP_GIVE_OBJECT:
-                (void)game_inventory_add(script_buf[pos + 1u], script_buf[pos + 2u]);
+                (void)game_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             default:
@@ -270,7 +325,7 @@ static uint16_t find_topic(uint8_t topic_count, const uint8_t* prefix,
             } else {
                 want = prefix[j];
             }
-            if (script_buf[entry + j] != want) { match = 0u; break; }
+            if (read_byte(entry + j) != want) { match = 0u; break; }
         }
         if (match) return read_u16(entry + KEYWORD_BYTES);
         entry += TOPIC_ENTRY_BYTES;
@@ -288,7 +343,7 @@ static uint16_t find_room_entry(uint8_t entry_count, uint8_t key) {
     uint8_t i;
 
     for (i = 0u; i < entry_count; ++i) {
-        if (script_buf[entry] == key) return read_u16(entry + 1u);
+        if (read_byte(entry) == key) return read_u16(entry + 1u);
         entry += ROOM_ENTRY_BYTES;
     }
     return 0u;
@@ -317,18 +372,21 @@ static void run_conversation(uint8_t topic_count) {
 }
 
 void script_overlay_run(void) {
-    uint16_t fetched;
+    uint8_t kind;
 
     script_buf = platform_room_scratch();
-    fetched = platform_resource_fetch(script_resource_id, script_buf,
-                                      platform_room_scratch_bytes());
-    if (fetched < 3u) return;
-    script_len = fetched;
+    script_cap = platform_room_scratch_bytes();
+    window_base = 0u;
+    window_len = platform_resource_fetch_range(script_resource_id, 0u,
+                                               script_buf, script_cap);
+    if (window_len < 3u) return; /* unpopulated resource ID, or a lookup failure */
+    script_len = platform_resource_last_size();
 
-    if (script_buf[1] == SCRIPT_KIND_CONVERSATION) {
-        run_conversation(script_buf[2]);
-    } else if (script_buf[1] == SCRIPT_KIND_ROOM) {
-        uint16_t entry = find_room_entry(script_buf[2], script_entry_key);
+    kind = read_byte(1u);
+    if (kind == SCRIPT_KIND_CONVERSATION) {
+        run_conversation(read_byte(2u));
+    } else if (kind == SCRIPT_KIND_ROOM) {
+        uint16_t entry = find_room_entry(read_byte(2u), script_entry_key);
         if (entry != 0u) {
             script_entry_found = 1u;
             exec_block(entry, script_len);

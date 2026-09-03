@@ -54,11 +54,11 @@ static void run_loaded_overlay(void) {
                                    SCRIPT_MAGIC_0, SCRIPT_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
 
-    /* The overlay borrowed the room-text scratch buffer (see
-     * platform_room_scratch() in platform.h) and any portrait it showed;
-     * put both back the way normal gameplay expects to find them. */
+    /* The overlay borrowed the room-staging scratch buffer (see
+     * platform_room_scratch() in platform.h) - nothing else reads it
+     * between calls, so it's left as-is - and any portrait it showed;
+     * put that back the way normal gameplay expects to find it. */
     platform_portrait_hide();
-    platform_room_scratch_reload();
     platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
     platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
     raster_irq_suspend();

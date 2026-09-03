@@ -319,7 +319,33 @@ const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
  * that half (little-endian), length (little-endian), 16-bit sum-of-bytes
  * checksum (little-endian).
  */
+/* Looks up resource_id's directory entry into bank/mode/offset/size.
+ * Returns PLATFORM_OK, or PLATFORM_ERR_NOT_FOUND for an absent/corrupt
+ * entry. Shared by platform_resource_fetch() and
+ * platform_resource_fetch_range(). */
 #pragma code-name (push, "HIGHCODE")
+static uint8_t resource_directory_lookup(uint8_t resource_id, uint8_t* bank,
+                                         uint8_t* mode, uint16_t* offset,
+                                         uint16_t* size) {
+    platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
+    platform_ef_copy_offset = (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
+    platform_ef_copy_destination = (uint16_t)resource_directory_entry;
+    platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
+    platform_easyflash_copy_roml();
+    if (resource_directory_entry[0] == 0xffu) return PLATFORM_ERR_NOT_FOUND;
+
+    *bank = resource_directory_entry[0];
+    *mode = resource_directory_entry[1];
+    *offset = (uint16_t)resource_directory_entry[2] |
+              ((uint16_t)resource_directory_entry[3] << 8);
+    *size = (uint16_t)resource_directory_entry[4] |
+            ((uint16_t)resource_directory_entry[5] << 8);
+    if (*mode > 1u || *size == 0u || *offset + *size > PLATFORM_RESOURCE_MAX_BYTES) {
+        return PLATFORM_ERR_NOT_FOUND;
+    }
+    return PLATFORM_OK;
+}
+
 uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
                                   uint16_t capacity) {
     uint8_t bank;
@@ -330,25 +356,13 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
     uint16_t sum;
     uint16_t i;
 
-    platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
-    platform_ef_copy_offset = (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
-    platform_ef_copy_destination = (uint16_t)resource_directory_entry;
-    platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
-    platform_easyflash_copy_roml();
-    if (resource_directory_entry[0] == 0xffu) return 0u;
-
-    bank = resource_directory_entry[0];
-    mode = resource_directory_entry[1];
-    offset = (uint16_t)resource_directory_entry[2] |
-             ((uint16_t)resource_directory_entry[3] << 8);
-    size = (uint16_t)resource_directory_entry[4] |
-           ((uint16_t)resource_directory_entry[5] << 8);
-    checksum = (uint16_t)resource_directory_entry[6] |
-               ((uint16_t)resource_directory_entry[7] << 8);
-    if (mode > 1u || size == 0u || size > capacity ||
-        offset + size > PLATFORM_RESOURCE_MAX_BYTES) {
+    if (resource_directory_lookup(resource_id, &bank, &mode, &offset, &size) !=
+        PLATFORM_OK) {
         return 0u;
     }
+    checksum = (uint16_t)resource_directory_entry[6] |
+               ((uint16_t)resource_directory_entry[7] << 8);
+    if (size > capacity) return 0u;
 
     platform_ef_copy_bank = bank;
     platform_ef_copy_offset = offset;
@@ -361,6 +375,59 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
     for (i = 0u; i < size; ++i) sum += destination[i];
     if (sum != checksum) return 0u;
     return size;
+}
+
+/* Fetches at most `capacity` bytes starting at byte `start` of
+ * resource_id's data (not from the top of the resource, unlike
+ * platform_resource_fetch()) - for a resource bigger than any single
+ * resident buffer can hold in one piece (up to PLATFORM_RESOURCE_MAX_BYTES,
+ * 8 KiB - see modules/script.c's windowed reader). Returns the number of
+ * bytes actually copied (0 for start >= the resource's size, or a lookup
+ * failure). Unlike platform_resource_fetch(), this does not verify the
+ * resource's checksum - that checksum covers the whole resource, not an
+ * arbitrary sub-range, so a full-resource integrity check would need a
+ * separate pass over every byte before a caller could use any of it; a
+ * corrupt directory entry (the actual failure mode this guards against)
+ * is still caught by resource_directory_lookup()'s own bounds checks. */
+uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
+                                       uint8_t* destination, uint16_t capacity) {
+    uint8_t bank;
+    uint8_t mode;
+    uint16_t offset;
+    uint16_t size;
+    uint16_t remaining;
+    uint16_t chunk;
+
+    if (resource_directory_lookup(resource_id, &bank, &mode, &offset, &size) !=
+        PLATFORM_OK) {
+        return 0u;
+    }
+    if (start >= size) return 0u;
+
+    remaining = size - start;
+    chunk = remaining < capacity ? remaining : capacity;
+
+    platform_ef_copy_bank = bank;
+    platform_ef_copy_offset = offset + start;
+    platform_ef_copy_destination = (uint16_t)destination;
+    platform_ef_copy_size = chunk;
+    if (mode == 0u) platform_easyflash_copy_roml();
+    else platform_easyflash_copy_romh();
+
+    return chunk;
+}
+
+/* Total size of the resource most recently looked up by
+ * platform_resource_fetch() or platform_resource_fetch_range(), regardless
+ * of how much of it actually fit in the caller's destination buffer that
+ * call. Reads resource_directory_lookup()'s already-populated static
+ * buffer rather than needing a dedicated global (BSS here has no spare
+ * bytes - see MEMORY_MAP.md). Only meaningful right after one of those two
+ * calls; a fetch failure leaves it holding whatever the last successful
+ * lookup found. */
+uint16_t platform_resource_last_size(void) {
+    return (uint16_t)resource_directory_entry[4] |
+           ((uint16_t)resource_directory_entry[5] << 8);
 }
 #pragma code-name (pop)
 
@@ -730,14 +797,11 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
         /* room_stage's memcpy out is done above, so its memory is free to
          * reuse as scratch for this room's own script resource now (see
          * PLATFORM_ROOM_SCRATCH_BUFFER) - the same resource ID as the room
-         * itself; see game_room_script_entry() in src/script_runtime.c and
-         * modules/script.c's KIND_ROOM handling. Cleared first (not just
-         * left to whatever platform_resource_fetch() copied) so a room with
-         * no script resource, or one smaller than the previous room's,
-         * doesn't leak stale bytes through as if they were its own. */
-        memset(PLATFORM_ROOM_SCRATCH_BUFFER, 0, PLATFORM_ROOM_SCRATCH_MAX_BYTES);
-        (void)platform_resource_fetch(room_id, PLATFORM_ROOM_SCRATCH_BUFFER,
-                                      PLATFORM_ROOM_SCRATCH_MAX_BYTES);
+         * itself. Nothing pre-fetches it here: game_room_script_entry()
+         * (src/script_runtime.c) fetches whatever window it needs, fresh,
+         * every time it runs, via modules/script.c's windowed reader -
+         * a room's script resource can be up to PLATFORM_RESOURCE_MAX_BYTES
+         * now, too big to usefully hold here in one piece anyway. */
     }
 }
 
@@ -1452,22 +1516,16 @@ static void look_append_type_name(uint8_t type_id) {
  * exclusive" reuse room_commit() already does with room_stage itself. Only
  * safe between room_commit() calls (i.e. while no transition is staging a
  * new room) - true for every current borrower, since they all run from
- * resident code between transitions, never from inside one. The borrower
- * must call platform_room_scratch_reload() before returning control, or the
- * next room-script lookup (game_room_script_entry()) sees its leftover data
- * instead of platform_current_room's actual script resource. */
+ * resident code between transitions, never from inside one. Nothing
+ * resident reads it between borrows (each borrower fetches whatever it
+ * needs, fresh), so unlike $A4E9's overlays there's no "restore it before
+ * returning" contract to honor. */
 uint8_t* platform_room_scratch(void) {
     return PLATFORM_ROOM_SCRATCH_BUFFER;
 }
 
 uint16_t platform_room_scratch_bytes(void) {
     return PLATFORM_ROOM_SCRATCH_MAX_BYTES;
-}
-
-void platform_room_scratch_reload(void) {
-    memset(PLATFORM_ROOM_SCRATCH_BUFFER, 0, PLATFORM_ROOM_SCRATCH_MAX_BYTES);
-    (void)platform_resource_fetch(platform_current_room, PLATFORM_ROOM_SCRATCH_BUFFER,
-                                  PLATFORM_ROOM_SCRATCH_MAX_BYTES);
 }
 
 static void look_write_buffer(uint8_t color) {

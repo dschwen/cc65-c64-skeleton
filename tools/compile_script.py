@@ -82,6 +82,13 @@ Bytecode (one opcode byte, then its operands, repeated until END):
     0x0C CLEAR_BIT         index:1  bit:1
                          clears bit `bit` (0-7) of flags[index], leaving its
                          other bits untouched - a no-op if bit >= 8.
+    0x0D LIGHTNING                                       no operands
+                         calls platform_lightning() (src/render.s): flashes
+                         the border/background white and the map's Color
+                         RAM black for two frames, then restores the
+                         current lighting. Blocks for those two frames;
+                         does not touch screen RAM or either offscreen
+                         lighting buffer.
 
 A block (the top level of a script, a conversation topic, or either branch
 of a CHECK_FLAG) always ends with END; there is no separate "return"
@@ -92,6 +99,7 @@ DSL syntax:
 
     script intro {
         text "Welcome."
+        lightning
         portrait_show 3 left
         check_flag MET_WIZARD == 0 {
             text "A wizard appears!"
@@ -185,6 +193,7 @@ OP_GIVE_OBJECT = 0x09
 OP_ROOM_TRANSITION_HERE = 0x0A
 OP_SET_BIT = 0x0B
 OP_CLEAR_BIT = 0x0C
+OP_LIGHTNING = 0x0D
 
 CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
 
@@ -321,6 +330,10 @@ class CheckFlagStmt(Stmt):
 
 
 class WaitKeyStmt(Stmt):
+    pass
+
+
+class LightningStmt(Stmt):
     pass
 
 
@@ -550,6 +563,9 @@ class Parser:
         if tok.value == "wait_key":
             self.advance()
             return WaitKeyStmt()
+        if tok.value == "lightning":
+            self.advance()
+            return LightningStmt()
         if tok.value == "room_transition":
             self.advance()
             room = self.resolve_number()
@@ -658,6 +674,8 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
             patches.extend(Patch(base + p.position, p.text) for p in false_patches)
         elif isinstance(stmt, WaitKeyStmt):
             buf += bytes([OP_WAIT_KEY])
+        elif isinstance(stmt, LightningStmt):
+            buf += bytes([OP_LIGHTNING])
         elif isinstance(stmt, RoomTransitionStmt):
             buf += bytes([OP_ROOM_TRANSITION, check_u8(stmt.room),
                           check_u8(stmt.x), check_u8(stmt.y)])

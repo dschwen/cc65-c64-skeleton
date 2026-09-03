@@ -417,6 +417,7 @@
             <h3>Examples</h3>
             <pre class="offset-list">script intro {
     text "Welcome."
+    lightning
     portrait_show 3 left
     check_flag MET_WIZARD == 0 {
         text "A wizard appears!"
@@ -518,6 +519,11 @@ room 00 {
               <div><dt><code>wait_key</code></dt>
                 <dd>Pauses until the player presses (and releases) a fresh
                   key.</dd></div>
+              <div><dt><code>lightning</code></dt>
+                <dd>A short flash: the border and background go white and
+                  the map's Color RAM goes black for two frames, then the
+                  current lighting is restored. Blocks for those two frames;
+                  doesn't touch screen RAM or the tile map itself.</dd></div>
               <div><dt><code>room_transition ROOM X Y</code></dt>
                 <dd>Queues a transition to <code>ROOM</code>, landing the
                   player at half-tile (character-cell) coordinates

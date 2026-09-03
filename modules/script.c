@@ -61,6 +61,7 @@
 #define OP_ROOM_TRANSITION_HERE 0x0Au
 #define OP_SET_BIT          0x0Bu
 #define OP_CLEAR_BIT        0x0Cu
+#define OP_LIGHTNING        0x0Du
 
 #define KEYWORD_BYTES       4u
 #define TOPIC_ENTRY_BYTES   6u
@@ -313,6 +314,10 @@ static void exec_block(uint16_t pos, uint16_t end) {
             case OP_CLEAR_BIT:
                 clear_bit(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
+                break;
+            case OP_LIGHTNING:
+                platform_lightning();
+                pos += 1u;
                 break;
             default:
                 return; /* malformed bytecode - stop rather than run off */

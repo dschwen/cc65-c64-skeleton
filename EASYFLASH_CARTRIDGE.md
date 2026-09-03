@@ -442,10 +442,11 @@ like missing rooms.
 
 Rooms, object types, and portraits all use a fixed `bank = first_bank +
 id / per_bank` formula because each is fixed-size and fully populated.
-Future content that is variable-size or sparse (dialogue, quest text, and
-similar) does not fit that formula, so it uses a directory instead, the
-same idea as the room-code directory above but for plain data rather than
-executable overlays.
+Variable-size or sparse content - the room/cutscene/conversation scripts
+`modules/script.c` interprets (see `ROOM_CODE_API.md`'s "Room scripts"),
+and similar - does not fit that formula, so it uses a directory instead,
+the same idea as the room-code directory above but for plain data rather
+than executable overlays.
 
 Banks 57-63 (the last 7 of the 64 available EasyFlash banks) are reserved
 for this pool; no banks remain free after it. `RESOURCE_DIRECTORY_BANK`
@@ -468,7 +469,11 @@ reads the directory entry, then copies the payload with the same
 `platform_easyflash_copy_roml()`/`copy_romh()` primitives rooms, object
 types, and portraits already use, validates it against the stored
 checksum, and returns the actual length or `0` if the ID is unpopulated,
-oversized for `capacity`, or fails its checksum.
+oversized for `capacity`, or fails its checksum. `platform_resource_fetch_
+range()` copies an arbitrary byte range instead (no checksum - see
+`PLATFORM_API.md`), for a resource bigger than a caller's resident buffer
+can hold in one piece; `modules/script.c` uses it to keep a sliding window
+into a script resource up to the full 8 KiB half.
 
 Placing a resource that must exceed one 8 KiB half is a known future
 extension (a copy routine that increments `EASYFLASH_BANK` mid-copy when

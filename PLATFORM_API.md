@@ -641,9 +641,12 @@ character in its hotspot-relative graphic intersects either character cell of
 the selected 2x2-character tile. Its hotspot may be on another tile.
 
 `platform_look_exit()` applies the same visibility and light-range check to the
-current edge tile. An enabled exit then displays its room-text description, or
-`An exit.` when no description is assigned. A disabled direction reports
-`There is no exit that way.`. Looking outward never loads the adjacent room.
+current edge tile. An enabled exit always displays the generic `An exit.` -
+custom per-exit descriptions (`room->north_text` etc.) aren't wired up yet;
+that's a planned extension on top of the room-script mechanism
+(`game_room_script_entry()` - see `ROOM_CODE_API.md`'s "Room scripts"). A
+disabled direction reports `There is no exit that way.`. Looking outward
+never loads the adjacent room.
 
 `platform_object_intersects_tile()` exposes the same rendered-footprint test
 for commands such as Take. Transparent object characters do not count.
@@ -758,24 +761,44 @@ bank) for the full 256-ID range, mirroring the room asset layout's fixed
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
 uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
                                   uint16_t capacity);
+uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
+                                       uint8_t* destination, uint16_t capacity);
+uint16_t platform_resource_last_size(void);
 ```
 
 Rooms, object types, and portraits all use a fixed-formula bank/offset
 because each is fixed-size and fully populated across all 256 IDs. This
-call is for content that is not: sparse, variable-size data such as future
-dialogue or quest text. `resource_id` is looked up in a 256-entry directory
-reserved in EasyFlash banks 57-63 (see `EASYFLASH_CARTRIDGE.md`); resource
-files are unstructured bytes (no ABI, unlike room code) and are placed by
+call is for content that is not: sparse, variable-size data, e.g. the
+room/cutscene/conversation scripts `modules/script.c` interprets (see
+`ROOM_CODE_API.md`'s "Room scripts" and `tools/compile_script.py`'s module
+docstring). `resource_id` is looked up in a 256-entry directory reserved in
+EasyFlash banks 57-63 (see `EASYFLASH_CARTRIDGE.md`); resource files are
+unstructured bytes (no ABI, unlike room code) and are placed by
 `tools/pack_easyflash.py` from `assets/resources/NN`.
 
-Copies up to `capacity` bytes into `destination` and returns the actual
-length on success. Returns `0` if `resource_id` is unpopulated, its stored
-length exceeds `capacity`, or the copied bytes fail the directory's stored
-checksum -- callers should treat `0` as "resource not available" and must
-not assume `destination` was left unmodified in that case. A resource
-never exceeds `PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH
-half), so a fetch is always a single bank selection, never a multi-bank
-copy.
+`platform_resource_fetch()` copies up to `capacity` bytes from the start of
+the resource into `destination` and returns the actual length on success.
+Returns `0` if `resource_id` is unpopulated, its stored length exceeds
+`capacity`, or the copied bytes fail the directory's stored checksum --
+callers should treat `0` as "resource not available" and must not assume
+`destination` was left unmodified in that case. A resource never exceeds
+`PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH half), so a
+fetch is always a single bank selection, never a multi-bank copy.
+
+`platform_resource_fetch_range()` is for a resource bigger than any single
+resident buffer can hold in one piece: it copies up to `capacity` bytes
+starting at byte `start` of the resource (not necessarily its beginning)
+and returns the number of bytes actually copied (`0` for `start >=` the
+resource's size, or a lookup failure). Unlike `platform_resource_fetch()`,
+it does not verify the checksum -- that covers the whole resource, not an
+arbitrary sub-range, so a corrupt directory entry is still caught, but a
+corrupt resource body is not. `platform_resource_last_size()` returns the
+size of the resource most recently looked up by either fetch call,
+regardless of how much of it fit in that call's `capacity` -- callers use
+it as the upper bound to keep fetching against. `modules/script.c` uses
+this pair to keep a sliding window into a script resource up to 8 KiB,
+re-fetching a fresh window into its much smaller (~1 KiB) resident buffer
+whenever a read falls outside the current one.
 
 ## Raster IRQ and water animation
 

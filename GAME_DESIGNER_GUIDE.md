@@ -423,7 +423,9 @@ and edited in the asset editor's Script mode (see `ROOM_CODE_API.md` for the
 exact syntax and how room code runs an entry). There is no longer a
 fixed-size text budget assigned per room the way there once was; a room
 script is compiled like any other asset and only costs cartridge space
-for what it actually contains.
+for what it actually contains, up to a compiled ceiling of 8 KiB per room
+(`PLATFORM_RESOURCE_MAX_BYTES` - see `PLATFORM_API.md`'s "Generic cartridge
+resources"), far more than any room script has needed so far.
 
 Speaker portraits (`portrait_show`/`portrait_hide` inside a script, or
 `platform_portrait_show()`/`platform_portrait_hide()` directly from room
@@ -597,7 +599,7 @@ For a whole room, also record:
 - placed objects and intended draw order;
 - entry and tile-entry events;
 - all Look and Use coordinates;
-- room-text byte budget;
+- room script entries and what each one's key is triggered by;
 - expected state on the first visit and on later visits.
 
 ## Asset editor workflow
@@ -614,7 +616,8 @@ Run the asset editor and use **Room mode** for world building.
 6. Place objects on the 40 x 22 half-tile grid.
 7. Use **Show objects** to compare the composited scene with the underlying
    tile map.
-8. Enter room-local text and watch the 256-byte budget.
+8. Switch to Script mode and author the room's script (up to 8 KiB
+   compiled, per room - see "Writing descriptions and dialogue" below).
 9. In Object mode, set each type's name, size, hotspot, graphic, actor status,
    and emitted-light radius.
 10. Test the room in the game at its intended ambient light level, especially

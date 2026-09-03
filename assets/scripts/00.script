@@ -1,0 +1,10 @@
+/* Room 00 - see rooms/00.c for the tile hooks that call these entries by
+ * key (STORY_ROOM00_* in src/story.h). */
+room 00 {
+    entry STORY_ROOM00_LOOK_TREE {
+        text "The tree has a knot hole."
+    }
+    entry STORY_ROOM00_USE_TREE {
+        text "You knock on the tree, but nothing happens."
+    }
+}

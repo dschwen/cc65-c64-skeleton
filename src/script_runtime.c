@@ -58,7 +58,7 @@ static void run_loaded_overlay(void) {
      * platform_room_scratch() in platform.h) and any portrait it showed;
      * put both back the way normal gameplay expects to find them. */
     platform_portrait_hide();
-    platform_room_text_reload();
+    platform_room_scratch_reload();
     platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
     platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
     raster_irq_suspend();

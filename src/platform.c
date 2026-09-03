@@ -202,20 +202,21 @@ static uint8_t look_cursor_visible;
 static PlatformRoom room_stage;
 #pragma bss-name (pop)
 
-/* The current room's text pool (room->north_text/etc. offsets index into
- * this), fetched into room_stage's own memory - not a separate buffer.
- * room_stage is only "the pending room" for the brief span between
- * room_stage_load() and room_commit()'s memcpy out of it; every actual use
- * of room_stage ends before that memcpy (checked: both callers of
- * room_commit() never touch room_stage again afterward). So the instant the
- * memcpy completes, its memory is free until the *next* transition's
+/* The current room's own script resource (resource ID == room ID; see
+ * game_room_script_entry() in src/script_runtime.c and modules/script.c's
+ * KIND_ROOM handling), fetched into room_stage's own memory - not a
+ * separate buffer. room_stage is only "the pending room" for the brief span
+ * between room_stage_load() and room_commit()'s memcpy out of it; every
+ * actual use of room_stage ends before that memcpy (checked: both callers
+ * of room_commit() never touch room_stage again afterward). So the instant
+ * the memcpy completes, its memory is free until the *next* transition's
  * room_stage_load(), and room_commit() below claims it immediately for this
  * instead - the same "one buffer, temporally exclusive uses" pattern $A4E9
  * already uses across staging/overlays. Sized via sizeof(room_stage), not a
  * hardcoded constant, so it tracks PlatformRoom automatically if that
  * struct's own size ever changes. */
-#define PLATFORM_ROOM_TEXT_BUFFER ((uint8_t*)&room_stage)
-#define PLATFORM_ROOM_TEXT_MAX_BYTES ((uint16_t)sizeof(room_stage))
+#define PLATFORM_ROOM_SCRATCH_BUFFER ((uint8_t*)&room_stage)
+#define PLATFORM_ROOM_SCRATCH_MAX_BYTES ((uint16_t)sizeof(room_stage))
 #pragma bss-name (push, "WORKBSS")
 static uint8_t wall_light_cache[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
@@ -727,14 +728,16 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
         platform_current_room = room_id;
         platform_player = &platform_room.objects[platform_player_slot];
         /* room_stage's memcpy out is done above, so its memory is free to
-         * reuse as this room's text pool now - see PLATFORM_ROOM_TEXT_BUFFER.
-         * Cleared first (not just left to whatever platform_resource_fetch()
-         * copied) so a room with no text resource, or one smaller than the
-         * previous room's, doesn't leak stale bytes through as if they were
-         * its own. */
-        memset(PLATFORM_ROOM_TEXT_BUFFER, 0, PLATFORM_ROOM_TEXT_MAX_BYTES);
-        (void)platform_resource_fetch(room_id, PLATFORM_ROOM_TEXT_BUFFER,
-                                      PLATFORM_ROOM_TEXT_MAX_BYTES);
+         * reuse as scratch for this room's own script resource now (see
+         * PLATFORM_ROOM_SCRATCH_BUFFER) - the same resource ID as the room
+         * itself; see game_room_script_entry() in src/script_runtime.c and
+         * modules/script.c's KIND_ROOM handling. Cleared first (not just
+         * left to whatever platform_resource_fetch() copied) so a room with
+         * no script resource, or one smaller than the previous room's,
+         * doesn't leak stale bytes through as if they were its own. */
+        memset(PLATFORM_ROOM_SCRATCH_BUFFER, 0, PLATFORM_ROOM_SCRATCH_MAX_BYTES);
+        (void)platform_resource_fetch(room_id, PLATFORM_ROOM_SCRATCH_BUFFER,
+                                      PLATFORM_ROOM_SCRATCH_MAX_BYTES);
     }
 }
 
@@ -1416,26 +1419,6 @@ void platform_text_write_line(uint8_t line, uint8_t column,
     }
 }
 
-void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
-                                   uint8_t column, uint8_t text_offset,
-                                   uint8_t color) {
-    uint16_t i;
-    uint8_t y;
-    /* room's text pool is the shared buffer for whichever room is current -
-     * see PLATFORM_ROOM_TEXT_BUFFER - so this can only serve platform_room. */
-    if (room != &platform_room || line > PLATFORM_TEXT_LINE_BOTTOM ||
-        column >= PLATFORM_MAP_CHAR_WIDTH) return;
-    y = (uint8_t)(23u + line);
-    i = text_offset;
-    while (i < PLATFORM_ROOM_TEXT_MAX_BYTES &&
-           PLATFORM_ROOM_TEXT_BUFFER[i] != 0u &&
-           column < PLATFORM_MAP_CHAR_WIDTH) {
-        write_screen_cell(column++, y,
-                          platform_text_screen_code((char)PLATFORM_ROOM_TEXT_BUFFER[i++]),
-                          color);
-    }
-}
-
 static void look_append_char(char ch) {
     if (look_length < 80u) {
         look_buffer[look_length++] = ch;
@@ -1464,50 +1447,27 @@ static void look_append_type_name(uint8_t type_id) {
     }
 }
 
-static uint8_t room_exit_text(const PlatformRoom* room, uint8_t direction) {
-    switch (direction) {
-        case PLATFORM_DIRECTION_NORTH: return room->north_text;
-        case PLATFORM_DIRECTION_EAST: return room->east_text;
-        case PLATFORM_DIRECTION_WEST: return room->west_text;
-        default: return room->south_text;
-    }
-}
-
-const char* platform_room_exit_description(const PlatformRoom* room,
-                                           uint8_t direction) {
-    uint8_t offset;
-    /* See PLATFORM_ROOM_TEXT_BUFFER: only platform_room's text is resident. */
-    if (room != &platform_room || direction > PLATFORM_DIRECTION_SOUTH) return 0;
-    offset = room_exit_text(room, direction);
-    if (offset == 0u || PLATFORM_ROOM_TEXT_BUFFER[offset] == 0u) return 0;
-    return (const char*)&PLATFORM_ROOM_TEXT_BUFFER[offset];
-}
-
-const char* platform_room_text_at(uint8_t offset) {
-    return (const char*)&PLATFORM_ROOM_TEXT_BUFFER[offset];
-}
-
 /* Lets a one-shot overlay (e.g. the script/conversation interpreter) borrow
  * this same buffer as scratch RAM while it runs, the same "temporally
  * exclusive" reuse room_commit() already does with room_stage itself. Only
  * safe between room_commit() calls (i.e. while no transition is staging a
  * new room) - true for every current borrower, since they all run from
  * resident code between transitions, never from inside one. The borrower
- * must call platform_room_text_reload() before returning control, or the
- * next Look/Take/exit-description read sees its leftover data instead of
- * platform_current_room's actual text. */
+ * must call platform_room_scratch_reload() before returning control, or the
+ * next room-script lookup (game_room_script_entry()) sees its leftover data
+ * instead of platform_current_room's actual script resource. */
 uint8_t* platform_room_scratch(void) {
-    return PLATFORM_ROOM_TEXT_BUFFER;
+    return PLATFORM_ROOM_SCRATCH_BUFFER;
 }
 
 uint16_t platform_room_scratch_bytes(void) {
-    return PLATFORM_ROOM_TEXT_MAX_BYTES;
+    return PLATFORM_ROOM_SCRATCH_MAX_BYTES;
 }
 
-void platform_room_text_reload(void) {
-    memset(PLATFORM_ROOM_TEXT_BUFFER, 0, PLATFORM_ROOM_TEXT_MAX_BYTES);
-    (void)platform_resource_fetch(platform_current_room, PLATFORM_ROOM_TEXT_BUFFER,
-                                  PLATFORM_ROOM_TEXT_MAX_BYTES);
+void platform_room_scratch_reload(void) {
+    memset(PLATFORM_ROOM_SCRATCH_BUFFER, 0, PLATFORM_ROOM_SCRATCH_MAX_BYTES);
+    (void)platform_resource_fetch(platform_current_room, PLATFORM_ROOM_SCRATCH_BUFFER,
+                                  PLATFORM_ROOM_SCRATCH_MAX_BYTES);
 }
 
 static void look_write_buffer(uint8_t color) {
@@ -1609,7 +1569,6 @@ uint8_t platform_look_exit(const PlatformRoom* room,
                            uint8_t edge_x, uint8_t edge_y,
                            uint8_t direction, uint8_t color) {
     uint8_t neighbor;
-    uint8_t text_offset;
     uint8_t result;
 
     if (direction > PLATFORM_DIRECTION_SOUTH) return PLATFORM_ERR_ARGUMENT;
@@ -1620,17 +1579,13 @@ uint8_t platform_look_exit(const PlatformRoom* room,
         return PLATFORM_ERR_NOT_FOUND;
     }
 
+    /* Custom per-exit descriptions aren't wired up yet - room->north_text
+     * etc. are currently unread (see the PlatformRoom doc comment); this
+     * always shows the generic message until that's built on top of the
+     * room-script mechanism (game_room_script_entry()). */
     look_length = 0u;
     look_truncated = 0u;
-    text_offset = room_exit_text(room, direction);
-    /* See PLATFORM_ROOM_TEXT_BUFFER: only platform_room's text is resident;
-     * every caller of platform_look_exit() already passes &platform_room. */
-    if (room == &platform_room && text_offset != 0u &&
-        PLATFORM_ROOM_TEXT_BUFFER[text_offset] != 0u) {
-        look_append_string((const char*)&PLATFORM_ROOM_TEXT_BUFFER[text_offset]);
-    } else {
-        look_append_string("An exit.");
-    }
+    look_append_string("An exit.");
     look_write_buffer(color);
     return PLATFORM_OK;
 }

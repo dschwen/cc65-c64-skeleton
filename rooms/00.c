@@ -31,8 +31,7 @@ void enter_tile(void) {
 
 uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 18u && tile_y == 3u) {
-        game_text_write(PLATFORM_TEXT_LINE_TOP,
-                        "The tree has a knot hole.", 1u);
+        (void)game_room_script_entry(STORY_ROOM00_LOOK_TREE);
         return GAME_LOOK_HANDLED;
     }
     return GAME_LOOK_DEFAULT;
@@ -40,7 +39,7 @@ uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
 
 uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 18u && tile_y == 3u) {
-        game_text_write_room(PLATFORM_TEXT_LINE_TOP, 0x23u, 1u);
+        (void)game_room_script_entry(STORY_ROOM00_USE_TREE);
         return GAME_USE_HANDLED;
     }
     return GAME_USE_DEFAULT;

@@ -83,7 +83,6 @@ uint8_t game_spend_mana(uint8_t amount);
 
 /* Write word-wrapped, paged text in the two bottom lines. */
 void game_text_write(uint8_t line, const char* text, uint8_t color);
-void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
 /* Queue an overlay-safe room change. x/y are half-tile coordinates. */
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 /* Add a non-actor room object to inventory and remove it from the room. */

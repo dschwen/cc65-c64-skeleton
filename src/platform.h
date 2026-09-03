@@ -141,14 +141,15 @@ typedef struct PlatformObjectTypeInfo {
  * which of the four neighbor bytes are valid, since every byte value is a
  * usable room ID.
  *
- * north/east/west/south_text are byte offsets into this room's text pool -
- * a separate same-ID resource (assets/resources/<room id>, generic sparse
- * resource directory), not part of this struct. It's fetched into a shared
- * resident scratch buffer on room entry (see room_commit() in platform.c),
- * addressed the same way it always was: room->north_text etc. still name an
- * offset to a zero-terminated string, game_text_write_room()'s text_offset
- * argument still means the same thing. Only the storage moved, to lift the
- * old fixed 256-byte cap.
+ * north/east/west/south_text are currently unread/reserved: rooms used to
+ * carry a separate text-pool resource these fields indexed into by byte
+ * offset (assets/resources/<room id>), but that resource is now a compiled
+ * room script instead (see game_room_script_entry() below and
+ * modules/script.c's KIND_ROOM handling) - a room-script entry is looked up
+ * by its own numeric key, not one of these fields. Exit descriptions
+ * haven't been migrated onto that mechanism yet (platform_look_exit()
+ * always falls back to a generic message for now); these four bytes are
+ * where that migration would read from once it happens.
  */
 typedef struct PlatformRoom {
     uint8_t width;
@@ -209,21 +210,15 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 /* Resolve one enabled cardinal neighbor; returns PLATFORM_ERR_NOT_FOUND otherwise. */
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
-/* Return a room-text exit description, or NULL for an absent/invalid one. */
-const char* platform_room_exit_description(const PlatformRoom* room,
-                                           uint8_t direction);
-/* Address of byte `offset` in the current room's text pool (see
- * PlatformRoom's north_text/etc. above). The pool itself is resident scratch
- * private to platform.c, not addressable directly - this is how other
- * translation units reach it, e.g. for platform_text_output_native(). */
-const char* platform_room_text_at(uint8_t offset);
-/* The room text pool's own backing buffer/size, for a one-shot overlay (the
- * script/conversation interpreter) to borrow as scratch RAM while it runs.
- * Must call platform_room_text_reload() before returning, or the next
- * Look/Take/exit-description read sees the borrower's leftover data. */
+/* The current room's own script resource's backing buffer/size (resource ID
+ * == room ID; see game_room_script_entry() in game.h), for a one-shot
+ * overlay (the script interpreter, modules/script.c) to borrow as scratch
+ * RAM while it runs. Must call platform_room_scratch_reload() before
+ * returning, or the next game_room_script_entry() call sees the borrower's
+ * leftover data instead of the current room's actual script resource. */
 uint8_t* platform_room_scratch(void);
 uint16_t platform_room_scratch_bytes(void);
-void platform_room_text_reload(void);
+void platform_room_scratch_reload(void);
 
 /* Load all 256 fixed-size object types from EasyFlash. */
 uint8_t platform_object_types_load(void);
@@ -349,11 +344,6 @@ void platform_text_clear_line(uint8_t line);
 /* Write a zero-terminated string to a bottom line, clipped to 40 columns. */
 void platform_text_write_line(uint8_t line, uint8_t column,
                               const char* text, uint8_t color);
-
-/* Write a room-text string selected by its byte offset into room.text. */
-void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
-                                   uint8_t column, uint8_t text_offset,
-                                   uint8_t color);
 
 /*
  * Reject a tile hidden by line of sight or beyond the provisional range for

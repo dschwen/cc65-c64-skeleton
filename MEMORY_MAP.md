@@ -48,19 +48,17 @@ record to always-visible scratch before rendering it.
 | `$3C00-$7FFF` | 17408 | resident platform code/RODATA |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | persistent `GameState` |
-| `$855D-$85FB` | 159 | compact native helpers |
-| `$85FC-$85FF` | 4 | free linker tail |
+| `$855D-$85FF` | 163 | compact native helpers (no free tail remaining) |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$98FE` | 3511 | resident game/main/shared room API |
-| `$98FF` | 1 | free resident tail |
+| `$8B48-$9887` | 3392 | resident game/main/shared room API |
+| `$9888-$98FF` | 120 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
-| `$A000-$A4E8` | 1257 | destination-room or save-record/index staging |
+| `$A000-$A4E8` | 1257 | destination-room or save-record/index staging (includes `script_resource_kind`, borrowing 1 byte of this region's own 256-byte slack - see `PLATFORM_API.md`) |
 | `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
 | `$ADF9-$B4FF` | 1799 | free work-RAM/overlay tail |
-| `$B500-$B7EE` | 751 | resident BSS |
-| `$B7EF-$B80C` | 30 | free BSS-region tail |
+| `$B500-$B80C` | 781 | resident BSS (no free tail remaining) |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
 | `$B87E-$B87F` | 2 | reserved fill before fixed pager entry |
 | `$B880-$B9C9` | 330 | bottom-text pager |
@@ -77,12 +75,20 @@ record to always-visible scratch before rendering it.
 | `$E302-$FFF9` | 7416 | free; reclaimed from the pre-split 64-byte object-type table |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-The primary `PROGRAM` and `HIGH` code regions are essentially full (`HIGH`
-has 1 byte of margin); `RAINCODE` (8 bytes) and `MIDCODE` (6 bytes) have a
-little slack. The remaining nearby tails are 1 byte in `UPPER`, 4 bytes in
-`STATEEXT`, and 4 bytes in `SAVECODE`; larger additions need relocation or
-another fixed region. Recheck `build/game.map` after every change because
-cc65 can move code between segments.
+`PROGRAM` has 97 bytes of margin and `HIGH` has 223 - both grew since this
+was last rechecked (recent code removal, e.g. the windowed script-resource
+reader dropping `platform_room_scratch_reload()` and its callers, plausibly
+accounts for some of it, though this margin wasn't tracked precisely enough
+before to attribute the exact delta); `RAINCODE` (1 byte, down from 8 - the
+7-dedicated-rain-sprites redesign used most of its slack) and `MIDCODE` (6
+bytes) are tight. The remaining nearby tails are 120 bytes in `UPPER` and 4
+bytes in `SAVECODE`; `STATEEXT` and `BSS` now have none. Larger additions
+need relocation or another fixed region - `BSS` in particular has no room
+for even one more resident global; place new ones in a slack pocket like
+`ROOMSTAGE`'s instead (see `script_resource_kind` above and
+`PLATFORM_API.md`). Recheck
+`build/game.map` after every change because cc65 can move code between
+segments.
 
 ## RAM beneath BASIC and KERNAL
 
@@ -94,8 +100,8 @@ state because the resident wrapper redraws the room after it returns. Full-tile
 lighting reduced active `WORKBSS` to `$A4E9-$ADF8`, leaving a contiguous
 1,799-byte tail for future work buffers or overlay growth. `$A000-$A4E8`
 stages either a destination room or a complete save record; those uses never
-overlap. Other unallocated pieces are `$B7ED-$B80C` (32 bytes),
-`$B9FD-$B9FF` (3 bytes), and `$BFE8-$BFFF` (24 bytes).
+overlap. `BSS` (`$B500-$B80C`) is now fully used, with no free tail. Other
+unallocated pieces are `$B9FD-$B9FF` (3 bytes) and `$BFE8-$BFFF` (24 bytes).
 
 ### KERNAL ROM: `$E000-$FFFF`
 

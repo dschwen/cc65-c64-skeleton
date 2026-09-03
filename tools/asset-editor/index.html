@@ -389,8 +389,8 @@
           </label>
         </div>
         <p class="hint">
-          One top-level <code>script</code> or <code>conversation</code>
-          declaration per file - the Makefile compiles
+          One top-level <code>script</code>, <code>conversation</code>, or
+          <code>room</code> declaration per file - the Makefile compiles
           <code>assets/scripts/&lt;ID&gt;.script</code> straight to this
           resource ID on build (<code>tools/compile_script.py
           --single-output</code>). Nothing here is compiled live; save the
@@ -401,7 +401,21 @@
         </label>
         <details id="script-help">
           <summary>DSL syntax reference</summary>
-          <pre class="offset-list">script intro {
+          <div class="script-manual">
+            <p>
+              A file holds exactly one <code>script</code> (a linear
+              cutscene), <code>conversation</code> (keyword-matched topics),
+              or <code>room</code> (numbered entries) declaration. All three
+              share the same statement language inside their bodies - the
+              only difference is how a body gets reached: straight through
+              for a script, by matching the first four letters the player
+              types against a topic keyword for a conversation, or by a
+              numeric key room code passes to
+              <code>game_room_script_entry()</code> for a room.
+            </p>
+
+            <h3>Examples</h3>
+            <pre class="offset-list">script intro {
     text "Welcome."
     portrait_show 3 left
     check_flag MET_WIZARD == 0 {
@@ -430,25 +444,140 @@ room 00 {
     entry STORY_ROOM00_USE_TREE {
         text "You knock on the tree, but nothing happens."
     }
-}
+    entry 6 {
+        room_transition 01 10 5
+    }
+    entry 7 {
+        room_transition_here 01
+    }
+}</pre>
 
-Statements: text "..."; portrait_show ID (left|right); portrait_hide;
-set_flag NAME VALUE; check_flag NAME (==|!=|&lt;|&gt;|&lt;=|&gt;=) VALUE { ... } else { ... };
-check_flag NAME &amp; BIT { ... } else { ... } (bit test: BIT is 0-7, true when
-that bit of the flag byte is set - no separate "bit clear" cmp, use the
-else branch); wait_key; room_transition ROOM X Y (X,Y are half-tile
-coordinates, 0-39/0-21); room_transition_here ROOM (same room-entry
-position as ROOM_TRANSITION, but at the player's current position instead
-of a fixed X,Y); sound ID; give_object TYPE QUANTITY.
+            <h3>Syntax basics</h3>
+            <ul>
+              <li><strong>Comments</strong>: <code>// to end of line</code>
+                or <code>/* a block, possibly multi-line */</code>.</li>
+              <li><strong>Statements</strong> are separated by whitespace/
+                newlines, not punctuation - a trailing <code>;</code> is
+                accepted but never required.</li>
+              <li><strong>Strings</strong> are double-quoted; the only
+                escapes are <code>\n</code>, <code>\t</code>,
+                <code>\"</code>, and <code>\\</code>.</li>
+              <li><strong>Numbers</strong> are decimal (<code>42</code>) or
+                hex (<code>0x2A</code>).</li>
+              <li><strong>Symbol names</strong> (<code>MET_WIZARD</code>,
+                <code>STORY_ROOM00_LOOK_TREE</code>, ...) resolve against
+                <code>#define NAME VALUE</code> lines in
+                <code>src/story.h</code> at build time - nothing here is
+                validated live in the browser; an unknown symbol or other
+                syntax error surfaces when you build the cartridge.</li>
+            </ul>
 
-Topic keywords match on their first 4 uppercase letters; "*" is the
-fallback topic tried when nothing else matches. A room's entry keys are
-plain numbers - no fallback, an unmatched key is a silent no-op - looked
-up from room code via game_room_script_entry(KEY); a room picks its own
-numbering (e.g. tile index for tile-entry hooks), so name them via
-#define in src/story.h for readability, the same as the flag/portrait/
-room/sound/object-type IDs above. See tools/compile_script.py's docstring
-for the full format.</pre>
+            <h3>Statements</h3>
+            <dl class="shortcut-list">
+              <div><dt><code>text "..."</code></dt>
+                <dd>Shows a line of text in the two-line status area. Long
+                  text word-wraps; once both lines are full the engine
+                  pauses for a keypress, scrolls, and continues.</dd></div>
+              <div><dt><code>portrait_show ID (left|right)</code></dt>
+                <dd>Shows portrait <code>ID</code> (see Portrait mode)
+                  sliding in from off-screen at the given side. Pauses rain
+                  automatically if it was active, and resumes it on
+                  <code>portrait_hide</code>.</dd></div>
+              <div><dt><code>portrait_hide</code></dt>
+                <dd>Hides the portrait immediately, no animation.</dd></div>
+              <div><dt><code>set_flag NAME VALUE</code></dt>
+                <dd>Sets story flag <code>NAME</code> (an index into
+                  <code>game_state.flags</code>, named via
+                  <code>#define</code> in <code>src/story.h</code>) to
+                  <code>VALUE</code> (0-255).</dd></div>
+              <div><dt><code>check_flag NAME CMP VALUE { ... } else { ... }</code></dt>
+                <dd>Branches on the flag's current value; the
+                  <code>else</code> branch is optional. Both branches are
+                  full statement sequences and may nest further
+                  <code>check_flag</code>s. See "check_flag comparisons"
+                  below for <code>CMP</code>.</dd></div>
+              <div><dt><code>wait_key</code></dt>
+                <dd>Pauses until the player presses (and releases) a fresh
+                  key.</dd></div>
+              <div><dt><code>room_transition ROOM X Y</code></dt>
+                <dd>Queues a transition to <code>ROOM</code>, landing the
+                  player at half-tile (character-cell) coordinates
+                  <code>X,Y</code> - 0-39 and 0-21, the finer 40x22 grid, not
+                  the coarser 20x11 tile grid. Applied on the next safe
+                  frame, once this script has finished running.</dd></div>
+              <div><dt><code>room_transition_here ROOM</code></dt>
+                <dd>Same as <code>room_transition</code>, but keeps the
+                  player's current position instead of a fixed
+                  <code>X,Y</code> - for a door or edge that leads into a
+                  room continuing at the same map position.</dd></div>
+              <div><dt><code>sound ID</code></dt>
+                <dd>Reserved for a future sound-effect table; currently a
+                  no-op.</dd></div>
+              <div><dt><code>give_object TYPE QUANTITY</code></dt>
+                <dd>Adds <code>QUANTITY</code> of object type
+                  <code>TYPE</code> (see Object mode) to the player's
+                  inventory. <code>QUANTITY</code> 0 is legal but a
+                  no-op.</dd></div>
+            </dl>
+
+            <h3>check_flag comparisons</h3>
+            <dl class="shortcut-list">
+              <div><dt><code>==</code> / <code>!=</code></dt>
+                <dd>Equal / not equal to <code>VALUE</code>.</dd></div>
+              <div><dt><code>&lt;</code> / <code>&gt;</code></dt>
+                <dd>Less than / greater than <code>VALUE</code>.</dd></div>
+              <div><dt><code>&lt;=</code> / <code>&gt;=</code></dt>
+                <dd>Less than or equal / greater than or equal to
+                  <code>VALUE</code>.</dd></div>
+              <div><dt><code>&amp;</code></dt>
+                <dd>Bit test: <code>VALUE</code> is a bit index 0-7, true
+                  when that bit of the flag byte is set - lets one flag byte
+                  pack several independent yes/no facts. There is no
+                  separate "bit clear" comparison; use the
+                  <code>else</code> branch instead.</dd></div>
+            </dl>
+
+            <h3>Conversations</h3>
+            <p>
+              A topic's <code>"keyword"</code> is matched against the first
+              four letters the player types, uppercased. A keyword of
+              <code>"*"</code> is the fallback topic, tried when nothing
+              else matches.
+            </p>
+
+            <h3>Rooms</h3>
+            <p>
+              An entry's <code>KEY</code> is whatever numbering convention
+              the room's own code (<code>rooms/XX.c</code>) picks - e.g. a
+              tile index for a tile-entry hook, or a reserved constant range
+              for Look/Use hotspots - looked up via
+              <code>game_room_script_entry(KEY)</code>, which returns 1 if a
+              matching entry ran or 0 otherwise (a normal, cheap outcome for
+              a key nothing was authored for, not an error). There is no
+              fallback/wildcard entry for rooms. Name keys via
+              <code>#define</code> in <code>src/story.h</code> for
+              readability, the same as flag names.
+            </p>
+
+            <h3>Resource IDs</h3>
+            <p>
+              The Resource ID field above selects which
+              <code>assets/scripts/&lt;ID&gt;.script</code> file is open.
+              <code>0x00</code>-<code>0xEF</code> are room IDs - a room's
+              script always uses the same ID as the room itself.
+              <code>0xF0</code>-<code>0xFF</code> are reserved for
+              standalone scripts and conversations not tied to any one room,
+              played via <code>game_script_play()</code>.
+            </p>
+
+            <p class="hint">
+              This covers the DSL an author writes. The compiled binary
+              format (opcodes, string table, topic/entry tables) is
+              documented in <code>tools/compile_script.py</code>'s module
+              docstring, for anyone touching the compiler or the
+              interpreter (<code>modules/script.c</code>) itself.
+            </p>
+          </div>
         </details>
       </section>
     </section>

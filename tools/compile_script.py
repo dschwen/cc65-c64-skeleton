@@ -74,6 +74,14 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          instead of a fixed x,y - for a door/edge that leads
                          into a room continuing at the same map position,
                          e.g. two rooms sharing a scrolled-off edge.
+    0x0B SET_BIT          index:1  bit:1
+                         sets bit `bit` (0-7) of flags[index], leaving its
+                         other bits untouched - a no-op if bit >= 8. The
+                         same one-bit-of-a-flag-byte convention CHECK_FLAG's
+                         cmp 6 reads.
+    0x0C CLEAR_BIT         index:1  bit:1
+                         clears bit `bit` (0-7) of flags[index], leaving its
+                         other bits untouched - a no-op if bit >= 8.
 
 A block (the top level of a script, a conversation topic, or either branch
 of a CHECK_FLAG) always ends with END; there is no separate "return"
@@ -129,6 +137,14 @@ DSL syntax:
         entry 7 {
             room_transition_here 01
         }
+        entry 8 {
+            text "You break the seal."
+            set_bit QUEST_FLAGS 1
+        }
+        entry 9 {
+            text "You repair the seal."
+            clear_bit QUEST_FLAGS 1
+        }
     }
 
 A room's entry keys are whatever numbering convention its own C code (see
@@ -167,6 +183,8 @@ OP_ROOM_TRANSITION = 0x07
 OP_SOUND = 0x08
 OP_GIVE_OBJECT = 0x09
 OP_ROOM_TRANSITION_HERE = 0x0A
+OP_SET_BIT = 0x0B
+OP_CLEAR_BIT = 0x0C
 
 CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
 
@@ -278,6 +296,18 @@ class SetFlagStmt(Stmt):
     def __init__(self, index: int, value: int) -> None:
         self.index = index
         self.value = value
+
+
+class SetBitStmt(Stmt):
+    def __init__(self, index: int, bit: int) -> None:
+        self.index = index
+        self.bit = bit
+
+
+class ClearBitStmt(Stmt):
+    def __init__(self, index: int, bit: int) -> None:
+        self.index = index
+        self.bit = bit
 
 
 class CheckFlagStmt(Stmt):
@@ -505,6 +535,16 @@ class Parser:
             index = self.resolve_number()
             value = self.resolve_number()
             return SetFlagStmt(index, value)
+        if tok.value == "set_bit":
+            self.advance()
+            index = self.resolve_number()
+            bit = self.resolve_number()
+            return SetBitStmt(index, bit)
+        if tok.value == "clear_bit":
+            self.advance()
+            index = self.resolve_number()
+            bit = self.resolve_number()
+            return ClearBitStmt(index, bit)
         if tok.value == "check_flag":
             return self.parse_check_flag()
         if tok.value == "wait_key":
@@ -598,6 +638,12 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
         elif isinstance(stmt, SetFlagStmt):
             buf += bytes([OP_SET_FLAG, check_u8(stmt.index),
                           check_u8(stmt.value)])
+        elif isinstance(stmt, SetBitStmt):
+            buf += bytes([OP_SET_BIT, check_u8(stmt.index),
+                          check_u8(stmt.bit)])
+        elif isinstance(stmt, ClearBitStmt):
+            buf += bytes([OP_CLEAR_BIT, check_u8(stmt.index),
+                          check_u8(stmt.bit)])
         elif isinstance(stmt, CheckFlagStmt):
             true_bytes, true_patches = compile_stmts(stmt.true_body)
             false_bytes, false_patches = compile_stmts(stmt.false_body)

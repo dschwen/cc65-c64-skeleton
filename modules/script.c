@@ -59,6 +59,8 @@
 #define OP_SOUND            0x08u
 #define OP_GIVE_OBJECT      0x09u
 #define OP_ROOM_TRANSITION_HERE 0x0Au
+#define OP_SET_BIT          0x0Bu
+#define OP_CLEAR_BIT        0x0Cu
 
 #define KEYWORD_BYTES       4u
 #define TOPIC_ENTRY_BYTES   6u
@@ -141,6 +143,16 @@ static const uint8_t BIT_MASK[8] = {
     0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u
 };
 
+/* ~BIT_MASK[n], precomputed - a table lookup instead of a runtime `~mask`,
+ * since unary complement on a uint8_t promotes to int in C and cc65 may
+ * compile that promoted-width complement via a runtime helper this overlay
+ * can't link against (same class of pitfall as BIT_MASK's shift avoidance
+ * above; not independently confirmed for `~`, but table lookup sidesteps
+ * the question entirely at negligible cost). Used by OP_CLEAR_BIT. */
+static const uint8_t BIT_CLEAR_MASK[8] = {
+    0xFEu, 0xFDu, 0xFBu, 0xF7u, 0xEFu, 0xDFu, 0xBFu, 0x7Fu
+};
+
 static uint8_t flag_matches(uint8_t index, uint8_t cmp, uint8_t value) {
     uint8_t actual = game_state.flags[index];
     uint8_t mask;
@@ -167,6 +179,31 @@ static uint8_t flag_matches(uint8_t index, uint8_t cmp, uint8_t value) {
         default: break;
     }
     return 0u;
+}
+
+/* Sets/clears bit `bit` (0-7) of flags[index], leaving its other bits
+ * untouched; a no-op if bit >= 8. Same compound-assignment-on-a-local
+ * pattern as flag_matches's cmp 6, for the same reason: a plain array
+ * read, then the bitwise op on a local, then a plain array write - never
+ * an array index combined with a binary op in one expression. */
+static void set_bit(uint8_t index, uint8_t bit) {
+    uint8_t actual;
+    uint8_t mask;
+    if (bit >= 8u) return;
+    mask = BIT_MASK[bit];
+    actual = game_state.flags[index];
+    actual |= mask;
+    game_state.flags[index] = actual;
+}
+
+static void clear_bit(uint8_t index, uint8_t bit) {
+    uint8_t actual;
+    uint8_t mask;
+    if (bit >= 8u) return;
+    mask = BIT_CLEAR_MASK[bit];
+    actual = game_state.flags[index];
+    actual &= mask;
+    game_state.flags[index] = actual;
 }
 
 static void wait_fresh_key(void) {
@@ -268,6 +305,14 @@ static void exec_block(uint16_t pos, uint16_t end) {
                                               game_state.player_x,
                                               game_state.player_y);
                 pos += 2u;
+                break;
+            case OP_SET_BIT:
+                set_bit(read_byte(pos + 1u), read_byte(pos + 2u));
+                pos += 3u;
+                break;
+            case OP_CLEAR_BIT:
+                clear_bit(read_byte(pos + 1u), read_byte(pos + 2u));
+                pos += 3u;
                 break;
             default:
                 return; /* malformed bytecode - stop rather than run off */

@@ -450,6 +450,14 @@ room 00 {
     entry 7 {
         room_transition_here 01
     }
+    entry 8 {
+        text "You break the seal."
+        set_bit QUEST_FLAGS 1
+    }
+    entry 9 {
+        text "You repair the seal."
+        clear_bit QUEST_FLAGS 1
+    }
 }</pre>
 
             <h3>Syntax basics</h3>
@@ -490,6 +498,17 @@ room 00 {
                   <code>game_state.flags</code>, named via
                   <code>#define</code> in <code>src/story.h</code>) to
                   <code>VALUE</code> (0-255).</dd></div>
+              <div><dt><code>set_bit NAME BIT</code></dt>
+                <dd>Sets bit <code>BIT</code> (0-7) of flag <code>NAME</code>,
+                  leaving its other bits untouched - a no-op if
+                  <code>BIT</code> &gt;= 8. Lets one flag byte pack several
+                  independent yes/no facts; pair with
+                  <code>check_flag NAME &amp; BIT</code> to read one back
+                  (see "check_flag comparisons" below).</dd></div>
+              <div><dt><code>clear_bit NAME BIT</code></dt>
+                <dd>Clears bit <code>BIT</code> (0-7) of flag
+                  <code>NAME</code>, leaving its other bits untouched - a
+                  no-op if <code>BIT</code> &gt;= 8.</dd></div>
               <div><dt><code>check_flag NAME CMP VALUE { ... } else { ... }</code></dt>
                 <dd>Branches on the flag's current value; the
                   <code>else</code> branch is optional. Both branches are

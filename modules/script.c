@@ -38,6 +38,7 @@
 #define OP_WAIT_KEY         0x06u
 #define OP_ROOM_TRANSITION  0x07u
 #define OP_SOUND            0x08u
+#define OP_GIVE_OBJECT      0x09u
 
 #define KIND_CONVERSATION   1u
 
@@ -155,6 +156,10 @@ static void exec_block(uint16_t pos, uint16_t end) {
             case OP_SOUND:
                 /* No sound-effect table yet; reserved for one. */
                 pos += 2u;
+                break;
+            case OP_GIVE_OBJECT:
+                (void)game_inventory_add(script_buf[pos + 1u], script_buf[pos + 2u]);
+                pos += 3u;
                 break;
             default:
                 return; /* malformed bytecode - stop rather than run off */

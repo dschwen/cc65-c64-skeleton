@@ -439,7 +439,7 @@ conversation wizard {
 
 Statements: text "..."; portrait_show ID (left|right); portrait_hide;
 set_flag NAME VALUE; check_flag NAME (==|!=|&lt;|&gt;|&lt;=|&gt;=) VALUE { ... } else { ... };
-wait_key; room_transition ROOM X Y; sound ID.
+wait_key; room_transition ROOM X Y; sound ID; give_object TYPE QUANTITY.
 
 Topic keywords match on their first 4 uppercase letters; "*" is the
 fallback topic tried when nothing else matches. Flag/portrait/room/sound

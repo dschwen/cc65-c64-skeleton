@@ -43,6 +43,7 @@ Bytecode (one opcode byte, then its operands, repeated until END):
     0x06 WAIT_KEY                                        no operands
     0x07 ROOM_TRANSITION  room:1  x:1  y:1
     0x08 SOUND            id:1
+    0x09 GIVE_OBJECT       type:1  quantity:1
 
 A block (the top level of a script, a conversation topic, or either branch
 of a CHECK_FLAG) always ends with END; there is no separate "return"
@@ -57,6 +58,7 @@ DSL syntax:
         check_flag MET_WIZARD == 0 {
             text "A wizard appears!"
             set_flag MET_WIZARD 1
+            give_object 5 1
         } else {
             text "The wizard nods at you."
         }
@@ -74,8 +76,10 @@ DSL syntax:
     }
 
 Flag names (MET_WIZARD above) resolve against #define NAME value lines in
---flags (default src/story.h); portrait/room/sound IDs may be a bare
-decimal/hex literal or any symbol from the same file.
+--flags (default src/story.h); portrait/room/sound/object-type IDs may be a
+bare decimal/hex literal or any symbol from the same file. give_object's
+type is an object-type ID (see the asset editor's Object mode); quantity 0
+is legal but a no-op.
 """
 
 from __future__ import annotations
@@ -98,6 +102,7 @@ OP_CHECK_FLAG = 0x05
 OP_WAIT_KEY = 0x06
 OP_ROOM_TRANSITION = 0x07
 OP_SOUND = 0x08
+OP_GIVE_OBJECT = 0x09
 
 CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5}
 
@@ -235,6 +240,12 @@ class RoomTransitionStmt(Stmt):
 class SoundStmt(Stmt):
     def __init__(self, sound_id: int) -> None:
         self.sound_id = sound_id
+
+
+class GiveObjectStmt(Stmt):
+    def __init__(self, object_type: int, quantity: int) -> None:
+        self.object_type = object_type
+        self.quantity = quantity
 
 
 class Topic:
@@ -400,6 +411,11 @@ class Parser:
         if tok.value == "sound":
             self.advance()
             return SoundStmt(self.resolve_number())
+        if tok.value == "give_object":
+            self.advance()
+            object_type = self.resolve_number()
+            quantity = self.resolve_number()
+            return GiveObjectStmt(object_type, quantity)
         raise SystemExit(f"line {tok.line}: unknown statement {tok.value!r}")
 
     def parse_check_flag(self) -> CheckFlagStmt:
@@ -489,6 +505,9 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
                           check_u8(stmt.x), check_u8(stmt.y)])
         elif isinstance(stmt, SoundStmt):
             buf += bytes([OP_SOUND, check_u8(stmt.sound_id)])
+        elif isinstance(stmt, GiveObjectStmt):
+            buf += bytes([OP_GIVE_OBJECT, check_u8(stmt.object_type),
+                          check_u8(stmt.quantity)])
         else:
             raise SystemExit(f"internal error: unhandled statement {stmt!r}")
     return buf, patches

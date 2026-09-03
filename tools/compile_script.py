@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Compile a cutscene/conversation script (a small text DSL) into the binary
-bytecode format the (not yet built) script-interpreter overlay executes.
+"""Compile a cutscene/conversation/room script (a small text DSL) into the
+binary bytecode format the script-interpreter overlay (modules/script.c)
+executes.
 
-One format serves both cutscenes (a single linear script) and conversations
-(a keyword-triggered set of topic responses), since a conversation topic is
-just a script body reached by matching player input instead of played
-straight through.
+One format serves cutscenes (a single linear script), conversations (a
+keyword-triggered set of topic responses), and rooms (a set of entries keyed
+by a small number room code picks, e.g. a tile index) - a conversation topic
+or room entry is just a script body reached by matching player input or a
+numeric key, respectively, instead of played straight through. A room's
+compiled resource replaces what used to be a plain room-text pool: it uses
+the same resource ID as the room itself (0-239), giving every Look/Use/
+room-entry/tile-entry/exit-description hook full script logic (flags,
+give_object, branching) instead of a static string.
 
 Resource layout (all multi-byte fields little-endian; all offsets are
 absolute, counted from byte 0 of the resource):
 
     [0]      format version (currently 1)
-    [1]      kind: 0 = script (cutscene), 1 = conversation
-    [2]      topic_count (0 for kind 0)
+    [1]      kind: 0 = script (cutscene), 1 = conversation, 2 = room
+    [2]      topic_count/entry_count (0 for kind 0)
     if kind == 1:
         topic_count * {
             [4]  keyword, uppercased ASCII, NUL-padded to 4 bytes
@@ -20,9 +26,17 @@ absolute, counted from byte 0 of the resource):
                  other keyword does)
             [2]  entry_offset - absolute offset of this topic's bytecode
         }
+    if kind == 2:
+        entry_count * {
+            [1]  key - the numeric key room code passes to
+                 game_room_script_entry(); no fallback/wildcard entry -
+                 an unmatched key is a normal, cheap no-op
+            [2]  entry_offset - absolute offset of this entry's bytecode
+        }
     bytecode - kind 0's single body starts right after the 3-byte header;
-        kind 1's topic bodies are concatenated in declaration order, each
-        one addressed by its topic-table entry_offset
+        kind 1's topic bodies and kind 2's entry bodies are each
+        concatenated in declaration order, addressed by their table's
+        entry_offset
     string table - immediately after the bytecode; each string is a
         NUL-terminated byte sequence; TEXT's operand is the absolute offset
         of its first byte
@@ -75,6 +89,25 @@ DSL syntax:
         }
     }
 
+    room 00 {
+        entry 0 {
+            text "A warm light shines from the window."
+        }
+        entry 4 {
+            check_flag FOUND_KEY == 0 {
+                text "You find a rusty key in the grass."
+                give_object 9 1
+                set_flag FOUND_KEY 1
+            }
+        }
+    }
+
+A room's entry keys are whatever numbering convention its own C code (see
+rooms/XX.c and game_room_script_entry() in src/script_runtime.c) picks -
+e.g. tile index for tile-entry hooks, a reserved constant range for exit
+descriptions. This compiler doesn't assign or interpret them; it just
+stores whatever key literal/symbol you write.
+
 Flag names (MET_WIZARD above) resolve against #define NAME value lines in
 --flags (default src/story.h); portrait/room/sound/object-type IDs may be a
 bare decimal/hex literal or any symbol from the same file. give_object's
@@ -92,6 +125,7 @@ from pathlib import Path
 FORMAT_VERSION = 1
 KIND_SCRIPT = 0
 KIND_CONVERSATION = 1
+KIND_ROOM = 2
 
 OP_END = 0x00
 OP_TEXT = 0x01
@@ -266,6 +300,18 @@ class ConversationDecl:
         self.topics = topics
 
 
+class RoomEntry:
+    def __init__(self, key: int, body: list[Stmt]) -> None:
+        self.key = key
+        self.body = body
+
+
+class RoomDecl:
+    def __init__(self, name: str, entries: list[RoomEntry]) -> None:
+        self.name = name
+        self.entries = entries
+
+
 # --------------------------------------------------------------------------
 # Parser
 # --------------------------------------------------------------------------
@@ -301,19 +347,21 @@ class Parser:
         while self.peek().kind == "semi":
             self.advance()
 
-    def parse_program(self) -> list[ScriptDecl | ConversationDecl]:
-        decls: list[ScriptDecl | ConversationDecl] = []
+    def parse_program(self) -> list[ScriptDecl | ConversationDecl | RoomDecl]:
+        decls: list[ScriptDecl | ConversationDecl | RoomDecl] = []
         self.skip_semi()
         while self.peek().kind != "eof":
             if self.at_keyword("script"):
                 decls.append(self.parse_script())
             elif self.at_keyword("conversation"):
                 decls.append(self.parse_conversation())
+            elif self.at_keyword("room"):
+                decls.append(self.parse_room())
             else:
                 tok = self.peek()
                 raise SystemExit(
-                    f"line {tok.line}: expected 'script' or 'conversation', "
-                    f"got {tok.value!r}"
+                    f"line {tok.line}: expected 'script', 'conversation', "
+                    f"or 'room', got {tok.value!r}"
                 )
             self.skip_semi()
         return decls
@@ -345,6 +393,31 @@ class Parser:
         if not topics:
             raise SystemExit(f"conversation {name!r} has no topics")
         return ConversationDecl(name, topics)
+
+    def parse_room(self) -> RoomDecl:
+        self.expect("ident", "room")
+        # A room's name is conventionally its (hex or decimal) room ID,
+        # matching the resource file it's compiled to - accept a number
+        # token here too, not just an identifier.
+        name_tok = self.peek()
+        if name_tok.kind not in ("ident", "number"):
+            raise SystemExit(f"line {name_tok.line}: expected a room name/ID, "
+                             f"got {name_tok.value!r}")
+        name = name_tok.value
+        self.advance()
+        self.expect("lbrace")
+        self.skip_semi()
+        entries: list[RoomEntry] = []
+        while not (self.peek().kind == "rbrace"):
+            self.expect("ident", "entry")
+            key = self.resolve_number()
+            body = self.parse_block()
+            entries.append(RoomEntry(key, body))
+            self.skip_semi()
+        self.expect("rbrace")
+        if not entries:
+            raise SystemExit(f"room {name!r} has no entries")
+        return RoomDecl(name, entries)
 
     def parse_block(self) -> list[Stmt]:
         self.expect("lbrace")
@@ -519,7 +592,15 @@ def check_u8(value: int) -> int:
     return value
 
 
-def compile_decl(decl: ScriptDecl | ConversationDecl) -> bytes:
+def decl_kind_label(decl: ScriptDecl | ConversationDecl | RoomDecl) -> str:
+    if isinstance(decl, ConversationDecl):
+        return "conversation"
+    if isinstance(decl, RoomDecl):
+        return "room"
+    return "script"
+
+
+def compile_decl(decl: ScriptDecl | ConversationDecl | RoomDecl) -> bytes:
     if isinstance(decl, ScriptDecl):
         body, patches = compile_stmts(decl.body)
         body += bytes([OP_END])
@@ -528,6 +609,10 @@ def compile_decl(decl: ScriptDecl | ConversationDecl) -> bytes:
         patches = [Patch(len(header) + p.position, p.text) for p in patches]
         return link_strings(bytecode, patches)
 
+    if isinstance(decl, RoomDecl):
+        return compile_room_decl(decl)
+
+    assert isinstance(decl, ConversationDecl)
     if len(decl.topics) > 255:
         raise SystemExit(f"conversation {decl.name!r} has more than 255 topics")
 
@@ -557,6 +642,37 @@ def compile_decl(decl: ScriptDecl | ConversationDecl) -> bytes:
         keyword_bytes = keyword_bytes[:4].ljust(4, b"\0")
         bytecode[table_pos:table_pos + 4] = keyword_bytes
         struct.pack_into("<H", bytecode, table_pos + 4, entry_offset)
+        all_patches.extend(Patch(entry_offset + p.position, p.text) for p in patches)
+        bytecode += body
+    return link_strings(bytecode, all_patches)
+
+
+def compile_room_decl(decl: RoomDecl) -> bytes:
+    if len(decl.entries) > 255:
+        raise SystemExit(f"room {decl.name!r} has more than 255 entries")
+
+    seen: dict[int, None] = {}
+    for entry in decl.entries:
+        key = check_u8(entry.key)
+        if key in seen:
+            raise SystemExit(
+                f"room {decl.name!r}: two entries both use key {key} "
+                f"(0x{key:02X})"
+            )
+        seen[key] = None
+
+    header = bytes([FORMAT_VERSION, KIND_ROOM, len(decl.entries)])
+    entry_table_len = len(decl.entries) * 3
+    bytecode = bytearray(header)
+    bytecode += bytes(entry_table_len)  # placeholder, patched below
+    all_patches: list[Patch] = []
+    for i, entry in enumerate(decl.entries):
+        body, patches = compile_stmts(entry.body)
+        body += bytes([OP_END])
+        entry_offset = len(bytecode)
+        table_pos = len(header) + i * 3
+        bytecode[table_pos] = check_u8(entry.key)
+        struct.pack_into("<H", bytecode, table_pos + 1, entry_offset)
         all_patches.extend(Patch(entry_offset + p.position, p.text) for p in patches)
         bytecode += body
     return link_strings(bytecode, all_patches)
@@ -629,7 +745,7 @@ def main() -> None:
         data = compile_decl(decl)
         args.single_output.parent.mkdir(parents=True, exist_ok=True)
         args.single_output.write_bytes(data)
-        kind = "conversation" if isinstance(decl, ConversationDecl) else "script"
+        kind = decl_kind_label(decl)
         print(f"{decl.name}: {kind}, {len(data)} bytes -> {args.single_output}")
         return
 
@@ -638,7 +754,7 @@ def main() -> None:
         data = compile_decl(decl)
         out_path = args.output_dir / f"{decl.name}.scr"
         out_path.write_bytes(data)
-        kind = "conversation" if isinstance(decl, ConversationDecl) else "script"
+        kind = decl_kind_label(decl)
         print(f"{decl.name}: {kind}, {len(data)} bytes -> {out_path}")
 
 

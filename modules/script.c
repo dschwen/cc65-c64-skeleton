@@ -1,20 +1,29 @@
 #include <stdint.h>
 
 #include "game.h"
+#include "script_format.h"
 
-/* Independently linked script/conversation interpreter overlay ("SC").
+/* Independently linked script/conversation/room interpreter overlay ("SC").
  * Executes the bytecode format tools/compile_script.py compiles (see that
  * tool's docstring for the exact format and opcode encoding - this file
  * must stay in sync with it by hand, there is no shared source of truth).
  *
- * Loaded and run via game_script_play() in src/script_runtime.c, the same
- * $A4E9 pattern as every other overlay. The compiled bytecode itself is
- * separate from this overlay's own code: fetched at run time from the
- * generic sparse resource directory (resource IDs 240-255, reserved for
- * this - room text already claims 0-239) into platform_room_scratch()'s
+ * Loaded and run via game_script_play()/game_room_script_entry() in
+ * src/script_runtime.c, the same $A4E9 pattern as every other overlay. The
+ * compiled bytecode itself is separate from this overlay's own code:
+ * fetched at run time from the generic sparse resource directory
+ * (standalone scripts/conversations use resource IDs 240-255; a room's own
+ * script uses resource_id == room_id, 0-239) into platform_room_scratch()'s
  * buffer (room_stage's memory, borrowed - see platform.h). The resident
- * wrapper restores that buffer's real content (the current room's text)
- * once this overlay returns.
+ * wrapper restores that buffer's real content (the current room's script
+ * resource) once this overlay returns.
+ *
+ * For a KIND_ROOM resource, game_room_script_entry() hands this overlay the
+ * requested entry key (script_entry_key) and this file finds it in the
+ * entry table itself (find_room_entry(), mirroring find_topic() but with a
+ * plain numeric key and no fallback - an unmatched key is a normal,
+ * silent no-op, not an error), reporting back through script_entry_found
+ * whether anything actually ran.
  *
  * Like modules/inventory.c and modules/saveload.c, this overlay links
  * against no cc65 runtime library (the resident game binary doesn't export
@@ -40,15 +49,17 @@
 #define OP_SOUND            0x08u
 #define OP_GIVE_OBJECT      0x09u
 
-#define KIND_CONVERSATION   1u
-
 #define KEYWORD_BYTES       4u
 #define TOPIC_ENTRY_BYTES   6u
 #define KEY_RETURN          13u
 #define KEY_RUN_STOP        3u
 #define KEY_DELETE          20u
 
+#define ROOM_ENTRY_BYTES    3u
+
 extern uint8_t script_resource_id;
+extern uint8_t script_entry_key;
+extern uint8_t script_entry_found;
 
 void __fastcall__ platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
@@ -237,6 +248,22 @@ static uint16_t find_topic(uint8_t topic_count, const uint8_t* prefix,
     return 0u;
 }
 
+/* Returns the entry's bytecode offset, or 0 if `key` matches no entry (no
+ * fallback here, unlike find_topic - a room script has no "*" concept; an
+ * unmatched key is a normal, silent no-op). Same non-power-of-2-multiply
+ * avoidance as find_topic - `entry` is advanced by ROOM_ENTRY_BYTES each
+ * pass rather than computed as table + i*ROOM_ENTRY_BYTES. */
+static uint16_t find_room_entry(uint8_t entry_count, uint8_t key) {
+    uint16_t entry = 3u;
+    uint8_t i;
+
+    for (i = 0u; i < entry_count; ++i) {
+        if (script_buf[entry] == key) return read_u16(entry + 1u);
+        entry += ROOM_ENTRY_BYTES;
+    }
+    return 0u;
+}
+
 static void run_conversation(uint8_t topic_count) {
     uint8_t prefix[KEYWORD_BYTES];
     uint16_t entry;
@@ -268,8 +295,14 @@ void script_overlay_run(void) {
     if (fetched < 3u) return;
     script_len = fetched;
 
-    if (script_buf[1] == KIND_CONVERSATION) {
+    if (script_buf[1] == SCRIPT_KIND_CONVERSATION) {
         run_conversation(script_buf[2]);
+    } else if (script_buf[1] == SCRIPT_KIND_ROOM) {
+        uint16_t entry = find_room_entry(script_buf[2], script_entry_key);
+        if (entry != 0u) {
+            script_entry_found = 1u;
+            exec_block(entry, script_len);
+        }
     } else {
         exec_block(3u, script_len);
     }

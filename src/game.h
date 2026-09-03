@@ -113,11 +113,23 @@ extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 
-/* Runs a compiled cutscene/conversation script (tools/compile_script.py) by
- * its resource ID - 240-255 are reserved for scripts, since room text
- * already claims resource_id == room_id (0-239). See src/script_runtime.c
- * and modules/script.c. */
+/* Runs a compiled standalone cutscene/conversation script
+ * (tools/compile_script.py) by its resource ID - 240-255 are reserved for
+ * these, since a room's own script claims resource_id == room_id (0-239;
+ * see game_room_script_entry() below). See src/script_runtime.c and
+ * modules/script.c. */
 void game_script_play(uint8_t resource_id);
+
+/* Runs the current room's own script entry keyed `key`, if it has one - see
+ * tools/compile_script.py's `room` declaration. Returns 1 if an entry was
+ * found and run, 0 otherwise (the common case: no matching entry). Always
+ * pays the interpreter overlay's load cost, same as game_script_play() -
+ * see src/script_runtime.c's doc comment for why that's fine given current
+ * usage. Room code calls this from enter_room(), enter_tile(), look_at(),
+ * use_at() wherever it used to read the room's text pool directly; the
+ * entry key is whatever numbering convention the room's own script/DSL
+ * source picked (e.g. tile index for tile-entry hooks). */
+uint8_t game_room_script_entry(uint8_t key);
 
 /* Implemented independently by every rooms/XX.c. Read coordinates from state. */
 void enter_room(void);

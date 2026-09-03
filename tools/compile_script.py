@@ -60,8 +60,20 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          no separate "bit clear" cmp, use the false branch)
     0x06 WAIT_KEY                                        no operands
     0x07 ROOM_TRANSITION  room:1  x:1  y:1
+                         x,y are half-tile (character-cell) coordinates -
+                         the same units as game_state.player_x/player_y -
+                         not the coarser whole-tile grid; bounds-checked
+                         against PLATFORM_MAP_CHAR_WIDTH/HEIGHT (40x22).
     0x08 SOUND            id:1
     0x09 GIVE_OBJECT       type:1  quantity:1
+    0x0A ROOM_TRANSITION_HERE  room:1
+                         like ROOM_TRANSITION, but the destination is
+                         wherever the player already is (game_state.
+                         player_x/player_y, used as-is - already the same
+                         half-tile unit ROOM_TRANSITION's x,y takes)
+                         instead of a fixed x,y - for a door/edge that leads
+                         into a room continuing at the same map position,
+                         e.g. two rooms sharing a scrolled-off edge.
 
 A block (the top level of a script, a conversation topic, or either branch
 of a CHECK_FLAG) always ends with END; there is no separate "return"
@@ -111,6 +123,12 @@ DSL syntax:
                 text "The door is sealed shut."
             }
         }
+        entry 6 {
+            room_transition 01 10 5
+        }
+        entry 7 {
+            room_transition_here 01
+        }
     }
 
 A room's entry keys are whatever numbering convention its own C code (see
@@ -148,6 +166,7 @@ OP_WAIT_KEY = 0x06
 OP_ROOM_TRANSITION = 0x07
 OP_SOUND = 0x08
 OP_GIVE_OBJECT = 0x09
+OP_ROOM_TRANSITION_HERE = 0x0A
 
 CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
 
@@ -280,6 +299,11 @@ class RoomTransitionStmt(Stmt):
         self.room = room
         self.x = x
         self.y = y
+
+
+class RoomTransitionHereStmt(Stmt):
+    def __init__(self, room: int) -> None:
+        self.room = room
 
 
 class SoundStmt(Stmt):
@@ -492,6 +516,10 @@ class Parser:
             x = self.resolve_number()
             y = self.resolve_number()
             return RoomTransitionStmt(room, x, y)
+        if tok.value == "room_transition_here":
+            self.advance()
+            room = self.resolve_number()
+            return RoomTransitionHereStmt(room)
         if tok.value == "sound":
             self.advance()
             return SoundStmt(self.resolve_number())
@@ -587,6 +615,8 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
         elif isinstance(stmt, RoomTransitionStmt):
             buf += bytes([OP_ROOM_TRANSITION, check_u8(stmt.room),
                           check_u8(stmt.x), check_u8(stmt.y)])
+        elif isinstance(stmt, RoomTransitionHereStmt):
+            buf += bytes([OP_ROOM_TRANSITION_HERE, check_u8(stmt.room)])
         elif isinstance(stmt, SoundStmt):
             buf += bytes([OP_SOUND, check_u8(stmt.sound_id)])
         elif isinstance(stmt, GiveObjectStmt):

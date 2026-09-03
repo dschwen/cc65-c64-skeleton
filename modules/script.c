@@ -58,6 +58,7 @@
 #define OP_ROOM_TRANSITION  0x07u
 #define OP_SOUND            0x08u
 #define OP_GIVE_OBJECT      0x09u
+#define OP_ROOM_TRANSITION_HERE 0x0Au
 
 #define KEYWORD_BYTES       4u
 #define TOPIC_ENTRY_BYTES   6u
@@ -256,6 +257,17 @@ static void exec_block(uint16_t pos, uint16_t end) {
             case OP_GIVE_OBJECT:
                 (void)game_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
+                break;
+            case OP_ROOM_TRANSITION_HERE:
+                /* Same deferred-apply reasoning as OP_ROOM_TRANSITION above.
+                 * game_transition_request()'s x/y are half-tile coordinates
+                 * (bounds-checked against PLATFORM_MAP_CHAR_WIDTH/HEIGHT,
+                 * the character-cell grid) - the same unit game_state.
+                 * player_x/y already use, so no conversion is needed. */
+                (void)game_transition_request(read_byte(pos + 1u),
+                                              game_state.player_x,
+                                              game_state.player_y);
+                pos += 2u;
                 break;
             default:
                 return; /* malformed bytecode - stop rather than run off */

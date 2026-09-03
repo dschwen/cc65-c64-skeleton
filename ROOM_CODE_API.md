@@ -161,7 +161,7 @@ void game_damage(uint8_t amount);
 uint8_t game_spend_mana(uint8_t amount);
 
 void game_text_write(uint8_t line, const char* text, uint8_t color);
-void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
+uint8_t game_room_script_entry(uint8_t key);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 uint8_t game_take_object(uint8_t slot);
 uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
@@ -172,11 +172,12 @@ Inventory type 0 is invalid. Adds saturate a matching slot at 255 and otherwise
 use the first empty slot. Removes are atomic: insufficient total quantity
 returns `PLATFORM_ERR_NOT_FOUND` without changing inventory.
 
-`game_text_write*()` uses the two-line bottom pager. Text wraps at word
-boundaries, does not begin the second line with whitespace, and pauses before
-continuing when output exceeds two lines. The `_room` variant reads a
-PETSCII string from the current room's text pool (a same-ID resource file,
-up to `PLATFORM_ROOM_TEXT_MAX_BYTES` bytes - see `PLATFORM_API.md`).
+`game_text_write()` uses the two-line bottom pager for a literal C string.
+Text wraps at word boundaries, does not begin the second line with
+whitespace, and pauses before continuing when output exceeds two lines. A
+room's own text (and any accompanying logic - flag checks, giving an
+object, branching) is not a literal string in room code at all; it's a
+*room script* instead - see the next section.
 
 `game_transition_request()` queues a transition because a room-code overlay
 must not replace itself while one of its functions is executing. The resident
@@ -203,20 +204,55 @@ All public platform APIs in `platform.h` are also callable when the generated
 resolver finds a resident symbol. A missing import is a build error, not a
 late runtime failure.
 
-## Exit descriptions
+## Room scripts
 
-Room format 3 stores four byte offsets into `platform_room.text`, one per
-cardinal exit. Use the Room editor's description selectors, or query them:
+A room's text and simple logic - Look/Use descriptions, room-entry and
+tile-entry narration, anything that used to be a literal string in room
+code - is authored as a *room script*: DSL source at
+`assets/scripts/<hex room id>.script` (`tools/compile_script.py`, edited in
+the asset editor's Script mode), compiled to the same-ID resource the room
+itself already uses (`assets/resources/<hex room id>`).
 
-```c
-const char* description =
-    platform_room_exit_description(&platform_room, direction);
+A room script declares one or more numbered *entries*:
+
+```
+room 00 {
+    entry STORY_ROOM00_LOOK_TREE {
+        text "The tree has a knot hole."
+    }
+    entry STORY_ROOM00_USE_TREE {
+        text "You knock on the tree, but nothing happens."
+        give_object 9 1
+    }
+}
 ```
 
-The function returns `NULL` for an absent description. These strings remain
-available to room logic and transition UI. When the Look cursor is on an edge,
-pushing outward displays the enabled exit's description without loading the
-adjacent room.
+Room code runs one by key:
+
+```c
+uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
+    if (tile_x == 18u && tile_y == 3u) {
+        (void)game_room_script_entry(STORY_ROOM00_LOOK_TREE);
+        return GAME_LOOK_HANDLED;
+    }
+    return GAME_LOOK_DEFAULT;
+}
+```
+
+`game_room_script_entry()` returns 1 if a matching entry was found and run,
+0 otherwise - a normal, expected outcome for a key nothing was authored for,
+not an error. A room picks its own entry-key numbering (there's no global
+convention); naming the keys via `#define` in `src/story.h` - the same file
+flag indices already use, and `tools/compile_script.py`'s default symbol
+source - keeps the DSL source and room code's call sites in sync through one
+shared constant instead of a bare number on each side (`STORY_ROOM00_*`
+above). A script's own opcode set (branching on flags, giving an object,
+etc.) is documented in `tools/compile_script.py`'s module docstring.
+
+The four exit-description bytes in the room file header (see
+`PLATFORM_API.md`) are currently unread/reserved - not wired onto this
+mechanism yet, so `platform_look_exit()` always shows a generic message
+when the Look cursor is pushed off an edge.
 
 ## Room-code ABI and memory
 

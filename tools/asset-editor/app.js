@@ -9,27 +9,22 @@
   const ROOM_OBJECT_COUNT = 256;
   const ROOM_OBJECT_BYTES = ROOM_OBJECT_COUNT * 3;
   // Legacy embedded text pool, present in every room-file format up to and
-  // including format 3's original (pre-resource-split) 1257-byte size.
-  // Import-only now - see ROOM_TEXT_POOL_BYTES for the current format.
+  // including format 3's original (pre-resource-split) 1257-byte size. Only
+  // used to recognize/size old imports now - a room's text is gone from the
+  // engine entirely (see PLATFORM_API.md); it's a room script instead
+  // (Script mode, assets/scripts/<hex id>.script), so an old room's
+  // embedded text has nowhere to go on import except being dropped.
   const ROOM_LEGACY_TEXT_BYTES = 256;
   const ROOM_V1_FILE_BYTES = 4 + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_LEGACY_TEXT_BYTES;
   const ROOM_V2_HEADER_BYTES = 9;
   const ROOM_V2_FILE_BYTES = ROOM_V2_HEADER_BYTES + MAP_TILE_COUNT + ROOM_OBJECT_BYTES + ROOM_LEGACY_TEXT_BYTES;
   const ROOM_HEADER_BYTES = 13;
   // Format 3 originally embedded a 256-byte text pool at the end of the room
-  // file (ROOM_V3_LEGACY_FILE_BYTES); the pool is now a separate same-ID
-  // resource file (assets/resources/<hex id>, "roomtext" kind below) sized
-  // up to ROOM_TEXT_POOL_BYTES, so the room file itself shrank. Both are
-  // still nominally "format 3" (the header's format byte didn't change) -
-  // only the total file length tells them apart. See EASYFLASH_CARTRIDGE.md
-  // and src/platform.h (PLATFORM_ROOM_TEXT_MAX_BYTES) for the engine side.
+  // file (ROOM_V3_LEGACY_FILE_BYTES); still nominally "format 3" (the
+  // header's format byte didn't change) - only the total file length tells
+  // the two apart.
   const ROOM_FILE_BYTES = ROOM_HEADER_BYTES + MAP_TILE_COUNT + ROOM_OBJECT_BYTES;
   const ROOM_V3_LEGACY_FILE_BYTES = ROOM_FILE_BYTES + ROOM_LEGACY_TEXT_BYTES;
-  // The room-text resource's byte budget: it borrows the room-staging
-  // struct's full memory (see PLATFORM_ROOM_TEXT_MAX_BYTES in
-  // src/platform.c), which is exactly the room file's own header+tiles+
-  // objects size.
-  const ROOM_TEXT_POOL_BYTES = ROOM_FILE_BYTES;
   const ROOM_EXIT_NORTH = 0x01;
   const ROOM_EXIT_EAST = 0x02;
   const ROOM_EXIT_WEST = 0x04;
@@ -91,9 +86,7 @@
       westText: 0,
       southText: 0,
       data: new Uint8Array(MAP_TILE_COUNT),
-      objects: new Uint8Array(ROOM_OBJECT_BYTES),
-      text: new Uint8Array(ROOM_TEXT_POOL_BYTES),
-      textSource: ""
+      objects: new Uint8Array(ROOM_OBJECT_BYTES)
     },
     objectTypes: Array.from({ length: OBJECT_TYPE_COUNT }, () => ({
       width: 0,
@@ -227,8 +220,6 @@
     roomObjectY: document.getElementById("room-object-y"),
     updateRoomObject: document.getElementById("update-room-object"),
     deleteRoomObject: document.getElementById("delete-room-object"),
-    roomTextSource: document.getElementById("room-text-source"),
-    roomTextOffsets: document.getElementById("room-text-offsets"),
     objectTypeId: document.getElementById("object-type-id"),
     objectTypeName: document.getElementById("object-type-name"),
     objectTypeWidth: document.getElementById("object-type-width"),
@@ -282,7 +273,6 @@
       map: document.getElementById("asset-file-list-map"),
       objecttypes: document.getElementById("asset-file-list-objecttypes"),
       portrait: document.getElementById("asset-file-list-portrait"),
-      roomtext: document.getElementById("asset-file-list-roomtext"),
       script: document.getElementById("asset-file-list-script")
     },
     assetRefreshButtons: {
@@ -291,7 +281,6 @@
       map: document.getElementById("asset-refresh-map"),
       objecttypes: document.getElementById("asset-refresh-objecttypes"),
       portrait: document.getElementById("asset-refresh-portrait"),
-      roomtext: document.getElementById("asset-refresh-roomtext"),
       script: document.getElementById("asset-refresh-script")
     },
     assetOpenButtons: {
@@ -300,7 +289,6 @@
       map: document.getElementById("asset-open-map"),
       objecttypes: document.getElementById("asset-open-objecttypes"),
       portrait: document.getElementById("asset-open-portrait"),
-      roomtext: document.getElementById("asset-open-roomtext"),
       script: document.getElementById("asset-open-script")
     },
     assetSavePaths: {
@@ -309,7 +297,6 @@
       map: document.getElementById("asset-save-path-map"),
       objecttypes: document.getElementById("asset-save-path-objecttypes"),
       portrait: document.getElementById("asset-save-path-portrait"),
-      roomtext: document.getElementById("asset-save-path-roomtext"),
       script: document.getElementById("asset-save-path-script")
     },
     assetSaveChars: document.getElementById("asset-save-chars"),
@@ -317,7 +304,6 @@
     assetSaveMap: document.getElementById("asset-save-map"),
     assetSaveObjectTypes: document.getElementById("asset-save-objecttypes"),
     assetSavePortrait: document.getElementById("asset-save-portrait"),
-    assetSaveRoomText: document.getElementById("asset-save-roomtext"),
     assetSaveScript: document.getElementById("asset-save-script"),
 
     scriptId: document.getElementById("script-id"),
@@ -396,9 +382,7 @@
           westText: state.map.westText,
           southText: state.map.southText,
           data: Array.from(state.map.data),
-          objects: Array.from(state.map.objects),
-          text: Array.from(state.map.text),
-          textSource: state.map.textSource
+          objects: Array.from(state.map.objects)
         },
         objectTypes: state.objectTypes.map((type) => ({
           width: type.width,
@@ -513,10 +497,6 @@
           if (Array.isArray(parsed.map.objects) && parsed.map.objects.length === ROOM_OBJECT_BYTES) {
             state.map.objects.set(parsed.map.objects.map(clampByte));
           }
-          if (Array.isArray(parsed.map.text) && parsed.map.text.length === ROOM_TEXT_POOL_BYTES) {
-            state.map.text.set(parsed.map.text.map(clampByte));
-          }
-          state.map.textSource = typeof parsed.map.textSource === "string" ? parsed.map.textSource : "";
         }
       }
 
@@ -815,18 +795,6 @@
     if (code >= 0x61 && code <= 0x7a) return code - 0x20;
     if (code >= 0x41 && code <= 0x5a) return code + 0x80;
     return code & 0xff;
-  }
-
-  function petsciiToAscii(code) {
-    // Inverse of asciiToPetscii, for decoding an on-disk resource (already
-    // PETSCII, per tools/prepare_c64_assets.py's convention - see
-    // src/platform.c's PLATFORM_ROOM_TEXT_BUFFER and
-    // tools/compile_script.py's link_strings) back to plain ASCII for
-    // display/editing in a textarea.
-    const c = code & 0xff;
-    if (c >= 0x41 && c <= 0x5a) return c + 0x20;
-    if (c >= 0xc1 && c <= 0xda) return c - 0x80;
-    return c;
   }
 
   function petsciiToScreen(code) {
@@ -1145,98 +1113,6 @@
     }
   }
 
-  function encodeRoomTextSource(source, updateState) {
-    const bytes = new Uint8Array(ROOM_TEXT_POOL_BYTES);
-    const offsets = ["00: (empty)"];
-    let cursor = 1;
-    let truncated = false;
-    source.split(/\r?\n/).forEach((line) => {
-      if (!line) return;
-      if (cursor >= ROOM_TEXT_POOL_BYTES - 1) {
-        truncated = true;
-        return;
-      }
-      const start = cursor;
-      let i = 0;
-      for (; i < line.length && cursor < ROOM_TEXT_POOL_BYTES - 1; i += 1) {
-        bytes[cursor++] = asciiToPetscii(line.charCodeAt(i) & 0xff);
-      }
-      if (i < line.length) truncated = true;
-      bytes[cursor++] = 0;
-      offsets.push(`${start.toString(16).padStart(2, "0").toUpperCase()}: ${line}`);
-    });
-    if (updateState) state.map.text = bytes;
-    ui.roomTextOffsets.textContent = offsets.join("\n");
-    if (updateState && truncated) setStatus("Room text exceeded 256 bytes and was truncated.", true);
-    renderExitTextOptions(bytes);
-    return bytes;
-  }
-
-  function renderExitTextOptions(bytes) {
-    const entries = [[0, "00: generic exit text"]];
-    let cursor = 1;
-    while (cursor < ROOM_TEXT_POOL_BYTES) {
-      while (cursor < ROOM_TEXT_POOL_BYTES && bytes[cursor] === 0) cursor += 1;
-      if (cursor >= ROOM_TEXT_POOL_BYTES) break;
-      const start = cursor;
-      let text = "";
-      while (cursor < ROOM_TEXT_POOL_BYTES && bytes[cursor] !== 0) {
-        text += String.fromCharCode(petsciiToAscii(bytes[cursor++]));
-      }
-      entries.push([start, `${start.toString(16).padStart(2, "0").toUpperCase()}: ${text}`]);
-    }
-    [
-      [ui.roomExitTextNorth, "northText"],
-      [ui.roomExitTextEast, "eastText"],
-      [ui.roomExitTextWest, "westText"],
-      [ui.roomExitTextSouth, "southText"]
-    ].forEach(([select, field]) => {
-      const selected = state.map[field];
-      select.innerHTML = "";
-      entries.forEach(([value, label]) => {
-        const option = document.createElement("option");
-        option.value = String(value);
-        option.textContent = label;
-        select.appendChild(option);
-      });
-      if (!entries.some(([value]) => value === selected)) {
-        const option = document.createElement("option");
-        option.value = String(selected);
-        option.textContent = `${selected.toString(16).padStart(2, "0").toUpperCase()}: invalid offset`;
-        select.appendChild(option);
-      }
-      select.value = String(selected);
-    });
-  }
-
-  function decodeRoomText(bytes) {
-    const lines = [];
-    let cursor = 1;
-    while (cursor < ROOM_TEXT_POOL_BYTES) {
-      while (cursor < ROOM_TEXT_POOL_BYTES && bytes[cursor] === 0) cursor += 1;
-      if (cursor >= ROOM_TEXT_POOL_BYTES) break;
-      let line = "";
-      while (cursor < ROOM_TEXT_POOL_BYTES && bytes[cursor] !== 0) {
-        line += String.fromCharCode(petsciiToAscii(bytes[cursor++]));
-      }
-      lines.push(line);
-    }
-    return lines.join("\n");
-  }
-
-  function importRoomText(buffer) {
-    const data = new Uint8Array(buffer);
-    if (data.length > ROOM_TEXT_POOL_BYTES) {
-      setStatus(`Room text resource must be at most ${ROOM_TEXT_POOL_BYTES} bytes.`, true);
-      return;
-    }
-    state.map.text.fill(0);
-    state.map.text.set(data);
-    state.map.textSource = decodeRoomText(state.map.text);
-    setStatus(`Imported room text (${data.length} bytes).`);
-    renderAll();
-    schedulePersist();
-  }
 
   function renderObjectTypeGrid() {
     const type = state.objectTypes[state.selectedObjectType];
@@ -1315,18 +1191,17 @@
     syncObjectTypeSelect();
     ui.roomObjectType.value = String(state.selectedObjectType);
     renderRoomObjectList();
-    ui.roomTextSource.value = state.map.textSource;
-    encodeRoomTextSource(state.map.textSource, false);
     [
-      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, state.map.north],
-      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, state.map.east],
-      [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, state.map.west],
-      [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, state.map.south]
-    ].forEach(([checkbox, input, textInput, bit, value]) => {
+      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, state.map.north, state.map.northText],
+      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, state.map.east, state.map.eastText],
+      [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, state.map.west, state.map.westText],
+      [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, state.map.south, state.map.southText]
+    ].forEach(([checkbox, input, textInput, bit, value, textValue]) => {
       checkbox.checked = (state.map.exitMask & bit) !== 0;
       input.disabled = !checkbox.checked;
       textInput.disabled = !checkbox.checked;
       input.value = String(value);
+      textInput.value = String(textValue);
     });
   }
 
@@ -1919,18 +1794,6 @@
     return out;
   }
 
-  function buildRoomTextBytes() {
-    // Trim trailing zero padding - pack_easyflash.py stores resources at
-    // their exact byte length (sparse, variable-size), so saving the full
-    // ROOM_TEXT_POOL_BYTES capacity every time would waste cartridge space
-    // on empty tail bytes the engine never reads (room_commit() always
-    // zero-fills the buffer before fetching, so a shorter stored resource
-    // is equivalent to a zero-padded one at read time).
-    let end = state.map.text.length;
-    while (end > 1 && state.map.text[end - 1] === 0) end -= 1;
-    return state.map.text.slice(0, end);
-  }
-
   function buildScriptBytes() {
     return new TextEncoder().encode(state.script.source);
   }
@@ -2192,34 +2055,21 @@
     }
     state.map.data = data.slice(headerBytes, headerBytes + MAP_TILE_COUNT);
     state.map.objects.fill(0);
-    if (data.length === ROOM_V1_FILE_BYTES || data.length === ROOM_V2_FILE_BYTES ||
-        data.length === ROOM_V3_LEGACY_FILE_BYTES) {
-      // Legacy formats embedded their text pool right after the objects;
-      // extract it into the (now separate) room-text resource so importing
-      // an old room file doesn't silently drop its text. Re-save both the
-      // room and its room-text resource afterward to finish the migration.
-      state.map.objects.set(data.subarray(headerBytes + MAP_TILE_COUNT,
-        headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
-      state.map.text.fill(0);
-      state.map.text.set(data.subarray(headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
-      state.map.textSource = decodeRoomText(state.map.text);
-    } else if (data.length === ROOM_FILE_BYTES) {
-      state.map.objects.set(data.subarray(headerBytes + MAP_TILE_COUNT,
-        headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
-      // Current format: text lives in a separate assets/resources/<id> file,
-      // not in this one - leave whatever room-text pool is already loaded
-      // alone (opening a room through the asset server auto-loads its paired
-      // text resource; see loadDefaultRoomDisplayAssets).
-    }
+    state.map.objects.set(data.subarray(headerBytes + MAP_TILE_COUNT,
+      headerBytes + MAP_TILE_COUNT + ROOM_OBJECT_BYTES));
     state.selectedObjectSlot = -1;
     ui.mapId.value = String(id);
     ui.assetSavePaths.map.value = id.toString(16).padStart(2, "0").toUpperCase();
 
-    const migrated = data.length === ROOM_V1_FILE_BYTES || data.length === ROOM_V2_FILE_BYTES ||
+    // Legacy formats embedded a text pool right after the objects - the
+    // engine no longer has anywhere to put that (see PLATFORM_API.md; room
+    // content is a room script now, Script mode), so it's dropped on
+    // import rather than silently kept around with nowhere to go.
+    const hadEmbeddedText = data.length === ROOM_V1_FILE_BYTES || data.length === ROOM_V2_FILE_BYTES ||
       data.length === ROOM_V3_LEGACY_FILE_BYTES;
-    setStatus(migrated
+    setStatus(hadEmbeddedText
       ? `Imported room ${id.toString(16).padStart(2, "0").toUpperCase()} (legacy format; ` +
-        `extracted its embedded text - save both Room and Room Text to finish migrating it).`
+        `its embedded text was dropped - author room content as a script instead, Script mode).`
       : `Imported room ${id.toString(16).padStart(2, "0").toUpperCase()}.`);
     renderAll();
     schedulePersist();
@@ -2397,16 +2247,6 @@
     return loaded;
   }
 
-  async function loadRoomTextForCurrentRoom() {
-    const path = `resources/${state.map.id.toString(16).padStart(2, "0").toUpperCase()}`;
-    const file = assetFiles.find((f) => f.path.toLowerCase() === path.toLowerCase() &&
-      Array.isArray(f.kinds) && f.kinds.includes("roomtext"));
-    if (!file) return false;
-    importRoomText(await fetchAssetData(file));
-    ui.assetSavePaths.roomtext.value = file.path;
-    return true;
-  }
-
   async function loadMissingRoomObjectTypes() {
     const missing = missingRoomObjectTypeIds();
     if (missing.length === 0) return 0;
@@ -2485,10 +2325,6 @@
     }
     if (bytes.length === OBJECT_TYPE_FILE_BYTES) kinds.add("objecttypes");
     if (bytes.length === PORTRAIT_FILE_BYTES && /(^|\/)portraits\//.test(lower)) kinds.add("portrait");
-    if (parent === "resources") {
-      const resourceId = resourceIdFromName(base);
-      if (resourceId !== null && resourceId < 0xF0) kinds.add("roomtext");
-    }
     if (kinds.size > 0) return Array.from(kinds);
     if (lower.endsWith(".cchr") || lower.endsWith(".rom") || lower.endsWith(".chr")) kinds.add("charset");
     if (lower.endsWith(".ctil") || lower.endsWith(".til") || lower.endsWith(".tiles")) kinds.add("tiles");
@@ -2519,10 +2355,6 @@
       importPortrait(buffer);
       return true;
     }
-    if (kind === "roomtext") {
-      importRoomText(buffer);
-      return true;
-    }
     if (kind === "script") {
       importScriptBytes(buffer);
       return true;
@@ -2536,7 +2368,6 @@
     if (kind === "tiles") return "tile";
     if (kind === "objecttypes") return "object type";
     if (kind === "portrait") return "portrait";
-    if (kind === "roomtext") return "room text";
     if (kind === "script") return "script";
     return "room";
   }
@@ -2549,7 +2380,6 @@
     if (kind === "map") return /\.(map|cmap)$/.test(lower) || /(^|\/)[0-9a-f]{2}$/.test(lower);
     if (kind === "objecttypes") return /\.(cobj|objects)$/.test(lower);
     if (kind === "portrait") return /(^|\/)portraits\/[0-9a-f]{2}$/.test(lower);
-    if (kind === "roomtext") return /(^|\/)resources\/[0-9a-f]{2}$/.test(lower);
     if (kind === "script") return /(^|\/)scripts\/[0-9a-f]{2}\.script$/.test(lower);
     return false;
   }
@@ -2570,7 +2400,7 @@
   }
 
   function renderAssetFileLists() {
-    ["charset", "tiles", "map", "objecttypes", "portrait", "roomtext", "script"].forEach((kind) => {
+    ["charset", "tiles", "map", "objecttypes", "portrait", "script"].forEach((kind) => {
       const select = ui.assetFileLists[kind];
       const current = select.value;
       const files = assetFiles.filter((file) => Array.isArray(file.kinds) && file.kinds.includes(kind));
@@ -2641,8 +2471,6 @@
         const companions = kind === "map" ? await loadDefaultRoomDisplayAssets() : [];
         const loadedTypes = kind === "map" ? await loadMissingRoomObjectTypes() : 0;
         if (loadedTypes > 0) companions.push(`${loadedTypes} object type${loadedTypes === 1 ? "" : "s"}`);
-        const loadedText = kind === "map" ? await loadRoomTextForCurrentRoom() : false;
-        if (loadedText) companions.push("room text");
         setStatus(companions.length > 0
           ? `Opened assets/${path}; loaded ${companions.join(", ")}.`
           : `Opened assets/${path}.`);
@@ -2667,7 +2495,6 @@
       tiles: buildTilesBytes,
       objecttypes: buildObjectTypesBytes,
       portrait: buildPortraitBytes,
-      roomtext: buildRoomTextBytes,
       script: buildScriptBytes,
       map: buildMapBytes
     };
@@ -3095,11 +2922,6 @@
       renderMapEditorState();
       schedulePersist();
     });
-    ui.roomTextSource.addEventListener("input", () => {
-      state.map.textSource = ui.roomTextSource.value;
-      encodeRoomTextSource(state.map.textSource, true);
-      schedulePersist();
-    });
     ui.scriptId.addEventListener("change", () => {
       const parsed = parseInt(ui.scriptId.value, 16);
       state.script.id = Number.isNaN(parsed) ? state.script.id : clampByte(parsed);
@@ -3178,16 +3000,14 @@
     ui.assetOpenButtons.map.addEventListener("click", () => openAssetFromServer("map"));
     ui.assetOpenButtons.objecttypes.addEventListener("click", () => openAssetFromServer("objecttypes"));
     ui.assetOpenButtons.portrait.addEventListener("click", () => openAssetFromServer("portrait"));
-    ui.assetOpenButtons.roomtext.addEventListener("click", () => openAssetFromServer("roomtext"));
     ui.assetOpenButtons.script.addEventListener("click", () => openAssetFromServer("script"));
     ui.assetSaveChars.addEventListener("click", () => saveAssetToServer("charset"));
     ui.assetSaveTiles.addEventListener("click", () => saveAssetToServer("tiles"));
     ui.assetSaveMap.addEventListener("click", () => saveAssetToServer("map"));
     ui.assetSaveObjectTypes.addEventListener("click", () => saveAssetToServer("objecttypes"));
     ui.assetSavePortrait.addEventListener("click", () => saveAssetToServer("portrait"));
-    ui.assetSaveRoomText.addEventListener("click", () => saveAssetToServer("roomtext"));
     ui.assetSaveScript.addEventListener("click", () => saveAssetToServer("script"));
-    ["charset", "tiles", "map", "objecttypes", "portrait", "roomtext", "script"].forEach((kind) => {
+    ["charset", "tiles", "map", "objecttypes", "portrait", "script"].forEach((kind) => {
       ui.assetFileLists[kind].addEventListener("change", () => {
         if (ui.assetFileLists[kind].value) {
           ui.assetSavePaths[kind].value = ui.assetFileLists[kind].value;

@@ -42,7 +42,7 @@ room-transition logic even when a graphic extends in several directions.
 | `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots; look cursor uses slot 0 |
 | `$3C00-$7FFF` | platform code and read-only tables |
-| `$8000-$84E8` | current 1,257-byte room RAM |
+| `$8000-$84E8` | current room RAM (1,001-byte `PlatformRoom`; the linker region is still sized 1,257 bytes from before the room-text-pool removal, so 256 bytes here are currently unclaimed slack) |
 | `$84E9-$855C` | fixed `GameState` |
 | `$855D-$85FF` | compact native resident helpers |
 | `$8600-$8B47` | resident world-state code |
@@ -59,7 +59,7 @@ room-transition logic even when a graphic extends in several directions.
 
 The platform preallocates:
 
-- one 1,257-byte `PlatformRoom`;
+- one 1,001-byte `PlatformRoom` (in a 1,257-byte linker region - see the memory map above);
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
 - 256 object-type records, 16 KiB total;
@@ -70,7 +70,7 @@ No API allocates heap memory.
 ## Room file format
 
 Room files are named by the uppercase two-digit hexadecimal room ID: `00`
-through `FF`. Each file is exactly 1,257 bytes.
+through `FF`. Each file is exactly 1,001 bytes.
 
 | Offset | Size | Content |
 |---:|---:|---|
@@ -83,13 +83,12 @@ through `FF`. Each file is exactly 1,257 bytes.
 | `6` | 1 | east neighbor room ID |
 | `7` | 1 | west neighbor room ID |
 | `8` | 1 | south neighbor room ID |
-| `9` | 1 | north exit-description text offset |
-| `10` | 1 | east exit-description text offset |
-| `11` | 1 | west exit-description text offset |
-| `12` | 1 | south exit-description text offset |
+| `9` | 1 | north exit-description byte - currently unread, reserved |
+| `10` | 1 | east exit-description byte - reserved |
+| `11` | 1 | west exit-description byte - reserved |
+| `12` | 1 | south exit-description byte - reserved |
 | `13` | 220 | tile IDs, 20x11 row-major |
 | `233` | 768 | 256 three-byte object slots |
-| `1001` | 256 | zero-terminated room-text pool |
 
 An object slot is:
 
@@ -99,21 +98,20 @@ An object slot is:
 | 1 | hotspot x in half-tiles |
 | 2 | hotspot y in half-tiles |
 
-Text strings are addressed by their byte offset in the room's text pool - a
-same-ID resource file (`assets/resources/<hex room id>`, up to
-`PLATFORM_ROOM_TEXT_MAX_BYTES` bytes), not part of the room file itself.
-Offset 0 is conventionally kept as a zero byte so callers can select an empty
-line without a separate sentinel value.
+A room's text and simple logic (Look/Use/room-entry/tile-entry hooks) is not
+part of this file at all: it's a compiled *room script*, a same-ID resource
+(`assets/resources/<hex room id>`) authored as DSL source
+(`assets/scripts/<hex room id>.script`, `tools/compile_script.py`) and run via
+`game_room_script_entry()` (see "Room-code helper API" below and
+`ROOM_CODE_API.md`). The four exit-description bytes above are reserved for a
+future version of this same mechanism applied to exit descriptions - not
+wired up yet, so `platform_look_exit()` always shows a generic message.
 
-The asset editor (`tools/asset-editor/`) PETSCII-encodes text pool bytes
-itself when saving (see its README's `asciiToPetscii`/`petsciiToAscii`);
-`tools/prepare_c64_assets.py` no longer touches room text, since
-`tools/pack_easyflash.py` copies resource files into the cartridge verbatim.
-
-The exit mask is separate because every byte value, including room `FF`, is a
-valid destination. Links may be one-way. A description offset of zero means
-"use the generic `an exit.` text". The editor imports legacy, format-1, and
-format-2 rooms and exports format 3. Use `tools/migrate_rooms_v2.py` and then
+The exit mask is separate from the four neighbor bytes because every byte
+value, including room `FF`, is a valid destination. Links may be one-way. The
+editor imports legacy, format-1, and format-2 rooms and exports format 3 (any
+embedded text those legacy formats carried is dropped on import - see the
+asset editor README). Use `tools/migrate_rooms_v2.py` and then
 `tools/migrate_rooms_v3.py` for batch migration.
 
 ## Object-type file format
@@ -159,8 +157,6 @@ void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
-const char* platform_room_exit_description(const PlatformRoom* room,
-                                           uint8_t direction);
 uint8_t platform_object_types_load(void);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
@@ -190,7 +186,7 @@ Thus the player is the actual slot-0 object from room `00`, not a detached
 copy. The current asset defines it as actor type 1, "The Hero".
 
 `platform_room_load()` selects the fixed ROML bank and offset for `room_id`,
-reads into staging RAM, validates the 1,257-byte record, and only then commits
+reads into staging RAM, validates the 1,001-byte record, and only then commits
 it to the caller's room. Loading into the global `platform_room` also updates
 `platform_current_room` and rebinds `platform_player` to `platform_player_slot`.
 `platform_object_types_load()` reads the resident hot fields for all 256
@@ -550,11 +546,10 @@ baseline. Only then does the platform insert the actor and commit the staged
 room. Any failure leaves the current room and player intact; a successful
 leaving-room capture is harmless and idempotent if a later preflight fails.
 
-`platform_room_exit_description()` returns the selected zero-terminated room
-text string, or `NULL` when the direction is invalid or has no description.
-The tile-cursor Look command keeps its frame inside the map; pushing outward at
-an edge displays the enabled exit description without loading the neighboring
-room.
+The tile-cursor Look command keeps its frame inside the map; pushing outward
+at an edge displays a generic exit message without loading the neighboring
+room (`platform_look_exit()` - custom per-exit descriptions aren't wired up
+yet; see the room file format section above).
 
 Trigger destinations remain game-defined. Game code resolves:
 
@@ -570,16 +565,12 @@ to a destination room and hotspot before calling `platform_room_enter()`.
 
 ```c
 void game_text_write(uint8_t line, const char* text, uint8_t color);
-void game_text_write_room(uint8_t line, uint8_t text_offset, uint8_t color);
 uint8_t platform_text_screen_code(char ch);
 void platform_text_screen_enter(void);
 void platform_text_screen_leave(void);
 void platform_text_clear_line(uint8_t line);
 void platform_text_write_line(uint8_t line, uint8_t column,
                               const char* text, uint8_t color);
-void platform_text_write_room_line(const PlatformRoom* room, uint8_t line,
-                                   uint8_t column, uint8_t text_offset,
-                                   uint8_t color);
 uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
@@ -599,17 +590,20 @@ void platform_object_taken_message(uint8_t type_id, uint8_t color);
 Line 0 is screen row 23; line 1 is row 24. The raster IRQ has already selected
 charset bank 1 for these rows.
 
-Game and room code should normally use `game_text_write()` or
-`game_text_write_room()`. These clear the status area, wrap at word boundaries,
-and split words longer than 40 characters. When output needs a third line, the
-pager waits for a fresh press and release, moves the lower line to the upper
-line, clears the lower line, and continues. Explicit carriage returns and line
-feeds also advance through the same pager. The implementation is an assembly
-module whose helper block loads at `$B80D`; the pager entry remains `$B880`.
+Game and room code should normally use `game_text_write()` for a literal
+string, or - for a room's own text/logic - `game_room_script_entry()`
+(`ROOM_CODE_API.md`), which prints via the same word-wrapped pager
+internally (the script interpreter's `TEXT` opcode). `game_text_write()`
+clears the status area, wraps at word boundaries, and splits words longer
+than 40 characters. When output needs a third line, the pager waits for a
+fresh press and release, moves the lower line to the upper line, clears the
+lower line, and continues. Explicit carriage returns and line feeds also
+advance through the same pager. The implementation is an assembly module
+whose helper block loads at `$B80D`; the pager entry remains `$B880`.
 
-The lower-level `platform_text_write_line()` and
-`platform_text_write_room_line()` calls remain available for fixed-position UI
-and clip at column 40; they do not invoke wrapping or paging.
+The lower-level `platform_text_write_line()` call remains available for
+fixed-position UI and clips at column 40; it does not invoke wrapping or
+paging.
 
 `platform_text_screen_enter()` tells the assembly raster IRQ to keep charset
 bank 1 selected at raster line zero, making all 25 rows text rows.
@@ -629,9 +623,6 @@ Example:
 platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
 platform_text_write_line(PLATFORM_TEXT_LINE_TOP, 1,
                          "YOU FOUND A KEY", 1);
-platform_text_write_room_line(&platform_room,
-                              PLATFORM_TEXT_LINE_BOTTOM,
-                              1, room_string_offset, 1);
 ```
 
 `platform_look_tile_check()` must run before room-specific descriptive code. It
@@ -826,10 +817,11 @@ Room mode has fixed 20x11 dimensions and two tools:
   right-click an object to delete it.
 
 The editor enforces the 200 non-actor limit and reports total/non-actor counts.
-The room text editor accepts one string per line and displays the generated
-hexadecimal offsets used by the C API.
 
 Room mode also has enabled/destination controls for all four neighbor links.
+A room's actual content (Look/Use/room-entry/tile-entry text and logic) is
+authored separately, as a room script in the editor's Script mode (see
+`ROOM_CODE_API.md`), not in Room mode.
 
 The separate Object mode exposes dimensions, hotspot, name, actor flag, and a
 visual grid that automatically follows the selected dimensions. It paints

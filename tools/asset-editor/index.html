@@ -140,21 +140,10 @@
           <button id="asset-save-map">Save Room</button>
         </div>
 
-        <h2>Room Text Asset</h2>
-        <p class="hint">Same-ID resource file, not part of the room file - see PLATFORM_API.md.</p>
-        <label class="inline-field">Room text asset
-          <select id="asset-file-list-roomtext"></select>
-        </label>
-        <div class="inline-controls">
-          <button id="asset-refresh-roomtext">Refresh</button>
-          <button id="asset-open-roomtext">Open Room Text</button>
-        </div>
-        <label class="inline-field">Save room text as
-          <input id="asset-save-path-roomtext" type="text" value="resources/00">
-        </label>
-        <div class="button-grid">
-          <button id="asset-save-roomtext">Save Room Text</button>
-        </div>
+        <p class="hint">Room content (Look/Use/tile-entry text and logic) is
+          authored as a room script, not part of the room file - switch to
+          Script mode and open/create <code>scripts/&lt;this room's hex
+          ID&gt;.script</code>.</p>
 
         <h2>Selected</h2>
         <div class="stat-row"><span>Tile</span><strong id="selected-tile-map">0</strong></div>
@@ -311,11 +300,14 @@
           <span>Format 3</span>
         </div>
         <div class="room-exits" aria-label="Adjacent rooms">
-          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-north" disabled aria-label="North exit description"></select></label>
-          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-east" disabled aria-label="East exit description"></select></label>
-          <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-west" disabled aria-label="West exit description"></select></label>
-          <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled><select id="room-exit-text-south" disabled aria-label="South exit description"></select></label>
+          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-north" type="number" min="0" max="255" value="0" disabled aria-label="North exit description (reserved, currently unused)"></label>
+          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-east" type="number" min="0" max="255" value="0" disabled aria-label="East exit description (reserved, currently unused)"></label>
+          <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-west" type="number" min="0" max="255" value="0" disabled aria-label="West exit description (reserved, currently unused)"></label>
+          <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-south" type="number" min="0" max="255" value="0" disabled aria-label="South exit description (reserved, currently unused)"></label>
         </div>
+        <p class="hint">The four small fields are room->north_text/etc. -
+          reserved, currently unread by the engine (see PLATFORM_API.md);
+          not tied to any resource anymore.</p>
         <div class="map-toolbar">
           <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
             <button id="map-tool-tile" class="active">Tile paint</button>
@@ -348,16 +340,10 @@
               <button id="delete-room-object" class="danger-button" disabled>Delete selected</button>
             </div>
           </section>
-
-          <section class="editor-section">
-            <h3>Room Text Pool</h3>
-            <p class="hint">Up to 1001 bytes total, saved separately as this room's Room Text asset above (assets/resources/&lt;hex room id&gt;), not embedded in the room file.</p>
-            <label>One zero-terminated string per line
-              <textarea id="room-text-source" rows="8" maxlength="1000"></textarea>
-            </label>
-            <pre id="room-text-offsets" class="offset-list">00: (empty)</pre>
-          </section>
         </div>
+        <p class="hint">Room content (Look/Use/tile-entry text and logic) is
+          authored as a room script - switch to Script mode and open/create
+          <code>scripts/&lt;this room's hex ID&gt;.script</code>.</p>
 
       </section>
 
@@ -437,14 +423,27 @@ conversation wizard {
     }
 }
 
+room 00 {
+    entry STORY_ROOM00_LOOK_TREE {
+        text "The tree has a knot hole."
+    }
+    entry STORY_ROOM00_USE_TREE {
+        text "You knock on the tree, but nothing happens."
+    }
+}
+
 Statements: text "..."; portrait_show ID (left|right); portrait_hide;
 set_flag NAME VALUE; check_flag NAME (==|!=|&lt;|&gt;|&lt;=|&gt;=) VALUE { ... } else { ... };
 wait_key; room_transition ROOM X Y; sound ID; give_object TYPE QUANTITY.
 
 Topic keywords match on their first 4 uppercase letters; "*" is the
-fallback topic tried when nothing else matches. Flag/portrait/room/sound
-IDs may be a decimal/hex literal or a #define NAME from src/story.h.
-See tools/compile_script.py's docstring for the full format.</pre>
+fallback topic tried when nothing else matches. A room's entry keys are
+plain numbers - no fallback, an unmatched key is a silent no-op - looked
+up from room code via game_room_script_entry(KEY); a room picks its own
+numbering (e.g. tile index for tile-entry hooks), so name them via
+#define in src/story.h for readability, the same as the flag/portrait/
+room/sound/object-type IDs above. See tools/compile_script.py's docstring
+for the full format.</pre>
         </details>
       </section>
     </section>

@@ -57,14 +57,6 @@ def _asset_kinds(path: Path) -> list[str]:
         kinds.add("objecttypes")
     if len(data) == 256 and path.parent.name == "portraits":
         kinds.add("portrait")
-    if path.parent.name == "resources":
-        resource_id = _is_resource_id(path.name)
-        # Room text (ID < 0xF0) is checked-in binary data, edited directly.
-        # Script/conversation bytecode (ID >= 0xF0) is a build product
-        # compiled from assets/scripts/<ID>.script - see the Makefile rule -
-        # so it isn't offered as directly editable/overwritable here.
-        if resource_id is not None and resource_id < 0xF0:
-            kinds.add("roomtext")
 
     if kinds:
         return sorted(kinds)

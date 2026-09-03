@@ -415,35 +415,30 @@ The map reserves two rows of 40 characters for text. Story text wraps at word
 boundaries. If it needs more than two lines, the engine pauses for a keypress,
 scrolls, and continues. The second line does not begin with leftover whitespace.
 
-This works well for concise descriptions and short dialogue beats. Room code
-can show a speaker portrait alongside it with `platform_portrait_show()`/
-`platform_portrait_hide()` (see `PLATFORM_API.md` and the asset editor's
-Portrait mode), but the two are not wired together automatically: there is
-still no speech balloon, conversation choice, or dialogue history system, and
-no generic rule for which portrait accompanies which text.
+A room's content - Look descriptions, Use results, room-entry and tile-entry
+narration, and any logic attached to them (checking or setting a story flag,
+giving the player an object, branching on a condition) - is authored as a
+*room script*: DSL source at `assets/scripts/<hex room id>.script`, written
+and edited in the asset editor's Script mode (see `ROOM_CODE_API.md` for the
+exact syntax and how room code runs an entry). There is no longer a
+fixed-size text budget assigned per room the way there once was; a room
+script is compiled like any other asset and only costs cartridge space
+for what it actually contains.
 
-### Room text budget
+Speaker portraits (`portrait_show`/`portrait_hide` inside a script, or
+`platform_portrait_show()`/`platform_portrait_hide()` directly from room
+code - see `PLATFORM_API.md` and the asset editor's Portrait mode) show
+alongside script text, but there is still no generic rule for which portrait
+accompanies which text - that association is up to whatever script or room
+code shows both.
 
-Each room has one **up-to-1001-byte text pool** shared by:
-
-- Look descriptions;
-- Use results;
-- room-entry narration;
-- tile-entry narration;
-- four exit descriptions;
-- any other room-local strings.
-
-This pool is a same-ID resource file (`assets/resources/<hex room id>`),
-separate from the room file itself - see the asset editor's Room mode
-("Room Text Asset") and its README for the exact format. Each character
-consumes one byte and every separate string consumes an additional
-terminator byte. Offset zero is normally reserved for an empty string. The
-editor shows the generated size and identifiers.
-
-Write compactly. Repeated phrases and long conversations can exceed the room
-budget quickly. If a room needs substantial dialogue, identify it early so the
-team can decide whether to share global text, split the scene across rooms, or
-extend the content system.
+Standalone cutscenes and NPC conversations - not tied to a specific room -
+are also authored as scripts (`assets/scripts/<hex ID>.script`, IDs
+`0xF0`-`0xFF`, `game_script_play()`), with a real keyword-matched topic
+system: a `conversation` declaration's topics are matched against the first
+four letters the player types, with a reserved `"*"` fallback topic for
+anything else. See `tools/compile_script.py`'s module docstring for the full
+DSL and bytecode format.
 
 Object names have a separate 14-character limit. Use plain ASCII while
 authoring; the build converts text for the C64. The visible glyphs ultimately
@@ -456,9 +451,11 @@ checked in the game.
 - Keep speaker changes obvious in plain text.
 - Avoid essential information only in an automatic object list, which may be
   truncated.
-- Record whether a line repeats, appears once, or changes after an event.
+- Record whether a line repeats, appears once, or changes after an event -
+  a room script can check a story flag to do this directly (`check_flag`/
+  `set_flag`).
 - Supply both success and failure text for puzzle actions.
-- State whether a keypress pause is dramatically acceptable.
+- State whether a keypress pause is dramatically acceptable (`wait_key`).
 
 ## Story state and persistence
 

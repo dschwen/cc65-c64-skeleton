@@ -49,7 +49,7 @@ room-transition logic even when a graphic extends in several directions.
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A4E8` | destination-room staging |
+| `$A000-$A4E8` | destination-room staging (1,001-byte `PlatformRoom`; like `$8000-$84E8`, the linker region is still sized 1,257 bytes, so `script_resource_kind` - src/script_runtime.c - borrows one of the 256 otherwise-unclaimed slack bytes rather than costing BSSRAM, which has none free) |
 | `$A4E9-$B4FF` | rebuildable work RAM; inventory/story/save overlay while active |
 | `$B500-$B80C` | ordinary resident BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
@@ -776,10 +776,14 @@ bank) for the full 256-ID range, mirroring the room asset layout's fixed
 
 ```c
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
-uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
-                                  uint16_t capacity);
-uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
-                                       uint8_t* destination, uint16_t capacity);
+#define PLATFORM_RESOURCE_KIND_SCRIPT       0u
+#define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
+#define PLATFORM_RESOURCE_KIND_ROOM         2u
+uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
+                                  uint8_t* destination, uint16_t capacity);
+uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
+                                       uint16_t start, uint8_t* destination,
+                                       uint16_t capacity);
 uint16_t platform_resource_last_size(void);
 ```
 
@@ -788,19 +792,24 @@ because each is fixed-size and fully populated across all 256 IDs. This
 call is for content that is not: sparse, variable-size data, e.g. the
 room/cutscene/conversation scripts `modules/script.c` interprets (see
 `ROOM_CODE_API.md`'s "Room scripts" and `tools/compile_script.py`'s module
-docstring). `resource_id` is looked up in a 256-entry directory reserved in
-EasyFlash banks 57-63 (see `EASYFLASH_CARTRIDGE.md`); resource files are
-unstructured bytes (no ABI, unlike room code) and are placed by
-`tools/pack_easyflash.py` from `assets/resources/NN`.
+docstring). Each `PLATFORM_RESOURCE_KIND_*` has its own independent
+256-entry directory reserved in EasyFlash banks 57-63 (see
+`EASYFLASH_CARTRIDGE.md`), so a conversation and a standalone script can
+both use `resource_id` 5 without colliding. `assets/resources/NN` raw
+resources (unstructured bytes, no ABI, unlike room code) share
+`PLATFORM_RESOURCE_KIND_SCRIPT`'s directory with compiled cutscenes, since
+neither belongs to a room or conversation; both are placed by
+`tools/pack_easyflash.py`.
 
 `platform_resource_fetch()` copies up to `capacity` bytes from the start of
 the resource into `destination` and returns the actual length on success.
-Returns `0` if `resource_id` is unpopulated, its stored length exceeds
-`capacity`, or the copied bytes fail the directory's stored checksum --
-callers should treat `0` as "resource not available" and must not assume
-`destination` was left unmodified in that case. A resource never exceeds
-`PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH half), so a
-fetch is always a single bank selection, never a multi-bank copy.
+Returns `0` if `kind`/`resource_id` is unpopulated, its stored length
+exceeds `capacity`, or the copied bytes fail the directory's stored
+checksum -- callers should treat `0` as "resource not available" and must
+not assume `destination` was left unmodified in that case. A resource
+never exceeds `PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH
+half), so a fetch is always a single bank selection, never a multi-bank
+copy.
 
 `platform_resource_fetch_range()` is for a resource bigger than any single
 resident buffer can hold in one piece: it copies up to `capacity` bytes
@@ -810,12 +819,13 @@ resource's size, or a lookup failure). Unlike `platform_resource_fetch()`,
 it does not verify the checksum -- that covers the whole resource, not an
 arbitrary sub-range, so a corrupt directory entry is still caught, but a
 corrupt resource body is not. `platform_resource_last_size()` returns the
-size of the resource most recently looked up by either fetch call,
-regardless of how much of it fit in that call's `capacity` -- callers use
-it as the upper bound to keep fetching against. `modules/script.c` uses
-this pair to keep a sliding window into a script resource up to 8 KiB,
-re-fetching a fresh window into its much smaller (~1 KiB) resident buffer
-whenever a read falls outside the current one.
+size of the resource most recently looked up by either fetch call
+(regardless of `kind`, since it just re-reads the shared lookup buffer),
+and regardless of how much of it fit in that call's `capacity` -- callers
+use it as the upper bound to keep fetching against. `modules/script.c`
+uses this pair to keep a sliding window into a script resource up to 8
+KiB, re-fetching a fresh window into its much smaller (~1 KiB) resident
+buffer whenever a read falls outside the current one.
 
 ## Raster IRQ and water animation
 

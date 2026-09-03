@@ -112,12 +112,18 @@ extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 
-/* Runs a compiled standalone cutscene/conversation script
- * (tools/compile_script.py) by its resource ID - 240-255 are reserved for
- * these, since a room's own script claims resource_id == room_id (0-239;
- * see game_room_script_entry() below). See src/script_runtime.c and
- * modules/script.c. */
+/* Runs a compiled standalone cutscene ("script" declaration -
+ * tools/compile_script.py) by its resource ID. Independent ID space from
+ * game_conversation_play() and game_room_script_entry() below - each kind
+ * has its own full 0-255 range (see PLATFORM_RESOURCE_KIND_* in
+ * platform.h). See src/script_runtime.c and modules/script.c. */
 void game_script_play(uint8_t resource_id);
+
+/* Runs a compiled standalone conversation ("conversation" declaration) by
+ * its resource ID - matches the player's typed input against the
+ * conversation's topic keywords. Independent ID space from
+ * game_script_play() above. */
+void game_conversation_play(uint8_t resource_id);
 
 /* Runs the current room's own script entry keyed `key`, if it has one - see
  * tools/compile_script.py's `room` declaration. Returns 1 if an entry was

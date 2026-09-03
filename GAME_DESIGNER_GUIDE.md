@@ -435,12 +435,14 @@ accompanies which text - that association is up to whatever script or room
 code shows both.
 
 Standalone cutscenes and NPC conversations - not tied to a specific room -
-are also authored as scripts (`assets/scripts/<hex ID>.script`, IDs
-`0xF0`-`0xFF`, `game_script_play()`), with a real keyword-matched topic
-system: a `conversation` declaration's topics are matched against the first
-four letters the player types, with a reserved `"*"` fallback topic for
-anything else. See `tools/compile_script.py`'s module docstring for the full
-DSL and bytecode format.
+are also authored as scripts: a cutscene at
+`assets/scripts/cutscenes/<hex ID>.script` (played via `game_script_play()`)
+and a conversation at `assets/scripts/conversations/<hex ID>.script`
+(played via `game_conversation_play()`), each with its own independent
+0x00-0xFF ID space. A `conversation` declaration's topics are matched
+against the first four letters the player types, with a reserved `"*"`
+fallback topic for anything else. See `tools/compile_script.py`'s module
+docstring for the full DSL and bytecode format.
 
 Object names have a separate 14-character limit. Use plain ASCII while
 authoring; the build converts text for the C64. The visible glyphs ultimately

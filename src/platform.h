@@ -419,29 +419,41 @@ void platform_rain_disable(void);
 uint8_t platform_rain_is_active(void);
 
 /*
- * Generic sparse cartridge resource directory: 256 read-only,
- * variable-size blobs (id 0-255) for content that does not belong in a
+ * Generic sparse cartridge resource directories: three independent
+ * 256-entry, read-only, variable-size-blob directories, one per
+ * PLATFORM_RESOURCE_KIND_* below, for content that does not belong in a
  * fixed-formula table like rooms, portraits, or object types - e.g. the
  * room/cutscene/conversation scripts modules/script.c interprets (see
  * ROOM_CODE_API.md's "Room scripts" and tools/compile_script.py's module
- * docstring). A resource is guaranteed to fit within one 8 KiB EasyFlash
- * ROML/ROMH half, so a fetch never spans an EasyFlash bank switch. See
- * EASYFLASH_CARTRIDGE.md.
+ * docstring). Each kind's resource_id (0-255) is independent of the other
+ * two kinds' - a conversation and a standalone script can both use ID 5
+ * without colliding. A resource is guaranteed to fit within one 8 KiB
+ * EasyFlash ROML/ROMH half, so a fetch never spans an EasyFlash bank
+ * switch. See EASYFLASH_CARTRIDGE.md.
  *
  * Copies resource_id into destination (up to capacity bytes) and returns
  * its actual length, or 0 if the ID is unpopulated, does not fit in
  * capacity, or fails its stored checksum.
  */
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
-uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
-                                  uint16_t capacity);
+/* Matches tools/compile_script.py's KIND_SCRIPT/KIND_CONVERSATION/KIND_ROOM
+ * and tools/pack_easyflash.py's RESOURCE_KIND_* - keep all three in sync.
+ * PLATFORM_RESOURCE_KIND_SCRIPT also covers assets/resources/<ID> raw
+ * resources (see platform_resource_fetch()'s callers), since they're
+ * likewise standalone content not tied to a room or conversation. */
+#define PLATFORM_RESOURCE_KIND_SCRIPT       0u
+#define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
+#define PLATFORM_RESOURCE_KIND_ROOM         2u
+uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
+                                  uint8_t* destination, uint16_t capacity);
 /* Fetches at most `capacity` bytes starting at byte `start` of resource_id's
  * data, for a resource bigger than one resident buffer can hold at once (up
  * to PLATFORM_RESOURCE_MAX_BYTES) - see modules/script.c's windowed reader.
  * Unlike platform_resource_fetch(), does not verify the resource's
  * checksum (which covers the whole resource, not an arbitrary sub-range). */
-uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
-                                       uint8_t* destination, uint16_t capacity);
+uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
+                                       uint16_t start, uint8_t* destination,
+                                       uint16_t capacity);
 /* The resource's total size, after either fetch call above, regardless of
  * how much fit in that call's `capacity`. */
 uint16_t platform_resource_last_size(void);

@@ -438,7 +438,7 @@ reads each populated portrait from `assets/portraits/NN`, flattened to
 `PNN` alongside the other runtime assets; missing IDs are filled with `$FF`
 like missing rooms.
 
-### Generic resource directory
+### Generic resource directories
 
 Rooms, object types, and portraits all use a fixed `bank = first_bank +
 id / per_bank` formula because each is fixed-size and fully populated.
@@ -448,32 +448,49 @@ and similar - does not fit that formula, so it uses a directory instead,
 the same idea as the room-code directory above but for plain data rather
 than executable overlays.
 
+Each of the three declaration kinds (script/conversation/room - see
+`tools/compile_script.py`'s docstring) gets its own independent 256-entry
+directory, so IDs don't need to be partitioned across kinds: a conversation
+and a standalone script can both use ID 5 without colliding, and rooms can
+use the full `0x00`-`0xFF` range. `PLATFORM_RESOURCE_KIND_SCRIPT` (0),
+`_CONVERSATION` (1), and `_ROOM` (2) in `src/platform.h` select which.
+
 Banks 57-63 (the last 7 of the 64 available EasyFlash banks) are reserved
 for this pool; no banks remain free after it. `RESOURCE_DIRECTORY_BANK`
-(57) ROML holds a 256-entry, 8-byte-per-entry directory (2048 bytes, `$FF`
-for an unpopulated ID) at offset zero, matching the room-code entry
-layout: bank, mode, offset (little-endian), length (little-endian), and a
-16-bit sum-of-bytes checksum (little-endian). Mode selects which 8 KiB half
-of that bank holds the payload -- `0` for ROML, `1` for ROMH -- so, unlike
-room code, a resource can land in either half of a bank. `tools/pack_easyflash.py`
-packs populated resources first-fit in ID order, starting right after the
-directory in bank 57's ROML half and filling each 8 KiB half completely
-before moving to the next; a resource is capped at one 8 KiB half
+(57) ROML holds the three 256-entry, 8-byte-per-entry directories (2048
+bytes each, 6144 bytes total, `$FF` for an unpopulated ID) back to back
+starting at offset zero, in `PLATFORM_RESOURCE_KIND_*` order (script,
+conversation, room). Each entry matches the room-code entry layout: bank,
+mode, offset (little-endian), length (little-endian), and a 16-bit
+sum-of-bytes checksum (little-endian). Mode selects which 8 KiB half of
+that bank holds the payload -- `0` for ROML, `1` for ROMH -- so, unlike
+room code, a resource can land in either half of a bank.
+`tools/pack_easyflash.py` packs all three kinds' populated resources
+first-fit (script kind first, then conversation, then room; ID order
+within a kind) into one shared payload pool, starting right after the
+three directories and filling each 8 KiB half completely before moving to
+the next; a resource is capped at one 8 KiB half
 (`PLATFORM_RESOURCE_MAX_BYTES`, `$2000`) and therefore never crosses an
-EasyFlash bank switch. Source files live at `assets/resources/NN` (raw
-bytes, no header) and are flattened to `RNN` alongside the other runtime
-assets, mirroring the portrait convention.
+EasyFlash bank switch.
 
-`platform_resource_fetch(id, destination, capacity)` (see `PLATFORM_API.md`)
-reads the directory entry, then copies the payload with the same
-`platform_easyflash_copy_roml()`/`copy_romh()` primitives rooms, object
-types, and portraits already use, validates it against the stored
-checksum, and returns the actual length or `0` if the ID is unpopulated,
-oversized for `capacity`, or fails its checksum. `platform_resource_fetch_
-range()` copies an arbitrary byte range instead (no checksum - see
-`PLATFORM_API.md`), for a resource bigger than a caller's resident buffer
-can hold in one piece; `modules/script.c` uses it to keep a sliding window
-into a script resource up to the full 8 KiB half.
+Source files live at `assets/scripts/<ID>.script` (room),
+`assets/scripts/conversations/<ID>.script` (conversation),
+`assets/scripts/cutscenes/<ID>.script` (standalone script), or
+`assets/resources/NN` (raw bytes, no header - shares the script kind's
+directory, since it's likewise standalone content). Each is flattened to
+`RRnn`/`RCnn`/`RSnn` respectively (kind prefix + hex ID) alongside the
+other runtime assets, mirroring the portrait convention.
+
+`platform_resource_fetch(kind, id, destination, capacity)` (see
+`PLATFORM_API.md`) reads the matching directory's entry, then copies the
+payload with the same `platform_easyflash_copy_roml()`/`copy_romh()`
+primitives rooms, object types, and portraits already use, validates it
+against the stored checksum, and returns the actual length or `0` if the
+ID is unpopulated, oversized for `capacity`, or fails its checksum.
+`platform_resource_fetch_range()` copies an arbitrary byte range instead
+(no checksum - see `PLATFORM_API.md`), for a resource bigger than a
+caller's resident buffer can hold in one piece; `modules/script.c` uses it
+to keep a sliding window into a script resource up to the full 8 KiB half.
 
 Placing a resource that must exceed one 8 KiB half is a known future
 extension (a copy routine that increments `EASYFLASH_BANK` mid-copy when

@@ -9,9 +9,20 @@ by a small number room code picks, e.g. a tile index) - a conversation topic
 or room entry is just a script body reached by matching player input or a
 numeric key, respectively, instead of played straight through. A room's
 compiled resource replaces what used to be a plain room-text pool: it uses
-the same resource ID as the room itself (0-239), giving every Look/Use/
-room-entry/tile-entry/exit-description hook full script logic (flags,
-give_object, branching) instead of a static string.
+the same resource ID as the room itself, giving every Look/Use/room-entry/
+tile-entry/exit-description hook full script logic (flags, give_object,
+branching) instead of a static string.
+
+Each of the three declaration kinds has its own independent 0-255 resource
+ID space (three separate directories in the cartridge - see
+src/platform.h's PLATFORM_RESOURCE_KIND_* and EASYFLASH_CARTRIDGE.md), so a
+conversation and a standalone script can both use ID 5 without colliding,
+and rooms can use the full 0-255 range without needing to leave IDs free
+for the other two kinds. Source location determines which directory a file
+compiles into (see the Makefile): assets/scripts/<ID>.script for a room
+(ID == the room's own ID), assets/scripts/conversations/<ID>.script for a
+conversation, and assets/scripts/cutscenes/<ID>.script for a standalone
+script.
 
 Resource layout (all multi-byte fields little-endian; all offsets are
 absolute, counted from byte 0 of the resource):
@@ -826,11 +837,20 @@ def main() -> None:
                              "directly to this path (errors if the input "
                              "declares zero or more than one) - for a build "
                              "rule that maps one source file to one "
-                             "resource ID, e.g. assets/scripts/F0.script -> "
-                             "assets/resources/F0")
+                             "resource ID, e.g. "
+                             "assets/scripts/cutscenes/05.script -> "
+                             "build/assets/RS05")
     parser.add_argument("--flags", type=Path, default=Path("src/story.h"),
                         help="file to read #define NAME value symbols from "
                              "(default: src/story.h)")
+    parser.add_argument("--expect-kind", choices=("script", "conversation", "room"),
+                        help="with --single-output, fail if the input's one "
+                             "top-level declaration isn't this kind - each "
+                             "kind has its own resource ID directory (see "
+                             "src/platform.h's PLATFORM_RESOURCE_KIND_*), so "
+                             "this catches a declaration compiled into the "
+                             "wrong one (e.g. a `conversation` under a "
+                             "cutscenes/ source path) as a build error")
     args = parser.parse_args()
 
     symbols = load_symbols(args.flags)
@@ -847,10 +867,16 @@ def main() -> None:
                 f"top-level declaration, found {len(decls)} ({names})"
             )
         decl = decls[0]
+        kind = decl_kind_label(decl)
+        if args.expect_kind is not None and kind != args.expect_kind:
+            raise SystemExit(
+                f"{args.input}: expected a {args.expect_kind!r} declaration "
+                f"(this source path's resource kind), found {kind!r} "
+                f"({decl.name!r})"
+            )
         data = compile_decl(decl)
         args.single_output.parent.mkdir(parents=True, exist_ok=True)
         args.single_output.write_bytes(data)
-        kind = decl_kind_label(decl)
         print(f"{decl.name}: {kind}, {len(data)} bytes -> {args.single_output}")
         return
 

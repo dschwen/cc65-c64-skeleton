@@ -178,7 +178,7 @@
 
       <section id="side-script" class="side-panel hidden">
         <h2>Script Files</h2>
-        <p class="hint">DSL source (tools/compile_script.py); a Makefile rule compiles each to its matching resource ID (0xF0-0xFF reserved) on build - this editor only edits the source text.</p>
+        <p class="hint">DSL source (tools/compile_script.py); a Makefile rule compiles each to its matching resource ID (own 00-FF space per kind - Room/Conversation/Cutscene) on build - this editor only edits the source text.</p>
         <div class="button-grid">
           <button id="export-script">Export Script</button>
           <button id="import-script">Import Script</button>
@@ -197,7 +197,8 @@
           <button id="asset-save-script">Save Script</button>
         </div>
         <h2>Selected</h2>
-        <div class="stat-row"><span>Resource ID</span><strong id="selected-script-id">F0</strong></div>
+        <div class="stat-row"><span>Kind</span><strong id="selected-script-kind">Room</strong></div>
+        <div class="stat-row"><span>Resource ID</span><strong id="selected-script-id">00</strong></div>
       </section>
 
       <input id="chars-file" type="file" accept=".cchr,.bin,.rom" hidden>
@@ -384,17 +385,31 @@
       <section id="script-mode" class="mode-panel hidden">
         <h2>Script / Conversation Editor</h2>
         <div class="inline-controls">
-          <label>Resource ID (hex, 00-FF; F0-FF reserved for scripts)
-            <input id="script-id" type="text" value="F0" maxlength="2" size="2">
+          <label class="inline-field">Kind
+            <select id="script-kind">
+              <option value="room">Room</option>
+              <option value="conversation">Conversation</option>
+              <option value="cutscene">Cutscene (script)</option>
+            </select>
+          </label>
+          <label>Resource ID (hex, 00-FF)
+            <input id="script-id" type="text" value="00" maxlength="2" size="2">
           </label>
         </div>
         <p class="hint">
-          One top-level <code>script</code>, <code>conversation</code>, or
-          <code>room</code> declaration per file - the Makefile compiles
-          <code>assets/scripts/&lt;ID&gt;.script</code> straight to this
-          resource ID on build (<code>tools/compile_script.py
-          --single-output</code>). Nothing here is compiled live; save the
-          source, then build the cartridge to see compiler errors.
+          One top-level <code>room</code>, <code>conversation</code>, or
+          <code>script</code> declaration per file, matching Kind above -
+          each kind has its own independent 00-FF resource ID space (a
+          conversation and a cutscene can both use the same ID without
+          colliding). The Makefile compiles
+          <code>assets/scripts/&lt;ID&gt;.script</code> (Room),
+          <code>assets/scripts/conversations/&lt;ID&gt;.script</code>
+          (Conversation), or
+          <code>assets/scripts/cutscenes/&lt;ID&gt;.script</code> (Cutscene)
+          straight to this resource ID on build
+          (<code>tools/compile_script.py --single-output</code>). Nothing
+          here is compiled live; save the source, then build the cartridge
+          to see compiler errors.
         </p>
         <label>DSL source
           <textarea id="script-source" rows="20" spellcheck="false" class="code-editor"></textarea>
@@ -586,13 +601,16 @@ room 00 {
 
             <h3>Resource IDs</h3>
             <p>
-              The Resource ID field above selects which
-              <code>assets/scripts/&lt;ID&gt;.script</code> file is open.
-              <code>0x00</code>-<code>0xEF</code> are room IDs - a room's
-              script always uses the same ID as the room itself.
-              <code>0xF0</code>-<code>0xFF</code> are reserved for
-              standalone scripts and conversations not tied to any one room,
-              played via <code>game_script_play()</code>.
+              Kind and Resource ID above together select which file is
+              open: <code>assets/scripts/&lt;ID&gt;.script</code> (Room -
+              always the same ID as the room itself),
+              <code>assets/scripts/conversations/&lt;ID&gt;.script</code>
+              (Conversation, played via <code>game_conversation_play()</code>),
+              or <code>assets/scripts/cutscenes/&lt;ID&gt;.script</code>
+              (Cutscene, played via <code>game_script_play()</code>). Each
+              kind has its own independent 0x00-0xFF ID space - a
+              conversation and a cutscene can use the same ID without
+              colliding.
             </p>
 
             <p class="hint">

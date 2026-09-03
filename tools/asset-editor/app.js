@@ -115,7 +115,12 @@
       data: new Uint8Array(PORTRAIT_FILE_BYTES)
     },
     script: {
-      id: 0xf0,
+      id: 0,
+      // "room", "conversation", or "cutscene" - each is its own independent
+      // resource ID space (src/platform.h's PLATFORM_RESOURCE_KIND_*),
+      // determining assets/scripts/<ID>.script vs
+      // assets/scripts/conversations|cutscenes/<ID>.script.
+      kind: "room",
       source: ""
     },
     portraitUnderlay: {
@@ -307,8 +312,10 @@
     assetSaveScript: document.getElementById("asset-save-script"),
 
     scriptId: document.getElementById("script-id"),
+    scriptKind: document.getElementById("script-kind"),
     scriptSource: document.getElementById("script-source"),
     selectedScriptId: document.getElementById("selected-script-id"),
+    selectedScriptKind: document.getElementById("selected-script-kind"),
     exportScriptBtn: document.getElementById("export-script"),
     importScriptBtn: document.getElementById("import-script"),
     scriptFile: document.getElementById("script-file")
@@ -412,6 +419,7 @@
         },
         script: {
           id: state.script.id,
+          kind: state.script.kind,
           source: state.script.source
         }
       };
@@ -541,7 +549,9 @@
       }
 
       if (parsed.script) {
-        state.script.id = clampByte(parsed.script.id ?? 0xf0);
+        state.script.id = clampByte(parsed.script.id ?? 0);
+        state.script.kind = ["room", "conversation", "cutscene"].includes(parsed.script.kind)
+          ? parsed.script.kind : "room";
         state.script.source = typeof parsed.script.source === "string" ? parsed.script.source : "";
       }
 
@@ -1362,6 +1372,7 @@
     ui.selectedTileMap.textContent = String(state.selectedTile);
     ui.selectedPortraitId.textContent = String(state.portrait.id);
     ui.selectedScriptId.textContent = state.script.id.toString(16).padStart(2, "0").toUpperCase();
+    ui.selectedScriptKind.textContent = state.script.kind.charAt(0).toUpperCase() + state.script.kind.slice(1);
   }
 
   function renderAll() {
@@ -1394,9 +1405,22 @@
     ui.charPaste.disabled = !state.charClipboard;
   }
 
+  // Each kind is its own independent 0-255 resource ID space (see
+  // src/platform.h's PLATFORM_RESOURCE_KIND_*), located under its own
+  // assets/scripts/ subdirectory - the Makefile and tools/compile_script.py
+  // pick which of the three cartridge directories a file compiles into by
+  // this same source location.
+  function scriptSourcePath(kind, id) {
+    const hex = id.toString(16).padStart(2, "0").toUpperCase();
+    if (kind === "conversation") return `scripts/conversations/${hex}.script`;
+    if (kind === "cutscene") return `scripts/cutscenes/${hex}.script`;
+    return `scripts/${hex}.script`;
+  }
+
   function renderScriptEditor() {
     const id = state.script.id.toString(16).padStart(2, "0").toUpperCase();
     if (ui.scriptId.value !== id) ui.scriptId.value = id;
+    if (ui.scriptKind.value !== state.script.kind) ui.scriptKind.value = state.script.kind;
     if (ui.scriptSource.value !== state.script.source) ui.scriptSource.value = state.script.source;
   }
 
@@ -1806,7 +1830,8 @@
   }
 
   function exportScript() {
-    const name = `${state.script.id.toString(16).padStart(2, "0").toUpperCase()}.script`;
+    const hex = state.script.id.toString(16).padStart(2, "0").toUpperCase();
+    const name = `${state.script.kind}-${hex}.script`;
     downloadBinary(name, buildScriptBytes());
     setStatus(`Exported ${name}`);
   }
@@ -2303,11 +2328,24 @@
     return parseInt(name, 16);
   }
 
+  function isScriptSourcePath(path) {
+    // assets/scripts/<ID>.script (room), assets/scripts/conversations/<ID>.script,
+    // and assets/scripts/cutscenes/<ID>.script - see src/platform.h's
+    // PLATFORM_RESOURCE_KIND_* for why each is its own resource ID space.
+    const parts = path.split("/");
+    const base = parts[parts.length - 1] || "";
+    const parent = parts[parts.length - 2] || "";
+    const grandparent = parts[parts.length - 3] || "";
+    const isRoomScript = parent === "scripts";
+    const isConversationOrCutscene = (parent === "conversations" || parent === "cutscenes") &&
+      grandparent === "scripts";
+    return (isRoomScript || isConversationOrCutscene) && /\.script$/i.test(base) &&
+      resourceIdFromName(base.replace(/\.script$/i, "")) !== null;
+  }
+
   function detectAssetKinds(path, bytes) {
     const lower = path.toLowerCase();
-    const base = path.split("/").pop() || "";
-    const parent = path.split("/").slice(-2, -1)[0] || "";
-    if (parent === "scripts" && /\.script$/i.test(lower) && resourceIdFromName(base.replace(/\.script$/i, "")) !== null) {
+    if (isScriptSourcePath(path)) {
       return ["script"];
     }
     const kinds = new Set();
@@ -2380,7 +2418,7 @@
     if (kind === "map") return /\.(map|cmap)$/.test(lower) || /(^|\/)[0-9a-f]{2}$/.test(lower);
     if (kind === "objecttypes") return /\.(cobj|objects)$/.test(lower);
     if (kind === "portrait") return /(^|\/)portraits\/[0-9a-f]{2}$/.test(lower);
-    if (kind === "script") return /(^|\/)scripts\/[0-9a-f]{2}\.script$/.test(lower);
+    if (kind === "script") return isScriptSourcePath(lower);
     return false;
   }
 
@@ -2927,7 +2965,13 @@
       state.script.id = Number.isNaN(parsed) ? state.script.id : clampByte(parsed);
       const hex = state.script.id.toString(16).padStart(2, "0").toUpperCase();
       ui.scriptId.value = hex;
-      ui.assetSavePaths.script.value = `scripts/${hex}.script`;
+      ui.assetSavePaths.script.value = scriptSourcePath(state.script.kind, state.script.id);
+      renderSelection();
+      schedulePersist();
+    });
+    ui.scriptKind.addEventListener("change", () => {
+      state.script.kind = ui.scriptKind.value;
+      ui.assetSavePaths.script.value = scriptSourcePath(state.script.kind, state.script.id);
       renderSelection();
       schedulePersist();
     });

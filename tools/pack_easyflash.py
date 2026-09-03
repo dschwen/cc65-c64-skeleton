@@ -54,28 +54,51 @@ ROOM_HELPERS_OFFSET = 1024
 # src/script_runtime.c's SCRIPT_EF_OFFSET.
 SCRIPT_BANK = TYPE_BANK_1
 SCRIPT_OFFSET = 2048
-# Compiled script/conversation bytecode (tools/compile_script.py) is data,
-# not code, and goes through the generic resource directory below like any
-# other resource - NOT through SCRIPT_BANK/OFFSET, which is only this
-# overlay's own interpreter code. Resource IDs 240-255 are reserved for it;
-# room text (resource_id == room_id) claims 0-239, since every byte value up
-# to 239 rooms is a usable room ID today. No enforcement of that split here
-# yet - keep an eye on it if the room count ever grows past 239.
-SCRIPT_RESOURCE_FIRST_ID = 240
+# Compiled script/conversation/room bytecode (tools/compile_script.py) is
+# data, not code, and goes through the generic resource directory below like
+# any other resource - NOT through SCRIPT_BANK/OFFSET, which is only this
+# overlay's own interpreter code.
+#
+# Each of the three declaration kinds (script/conversation/room - see
+# tools/compile_script.py's docstring) gets its own independent 256-entry
+# directory, so IDs don't need to be partitioned across kinds: a conversation
+# and a standalone script can both use ID 5 without colliding, and rooms can
+# use the full 0x00-0xFF range. Source layout (see the Makefile):
+#   assets/scripts/<ID>.script              - room (ID == the room's own ID)
+#   assets/scripts/conversations/<ID>.script - conversation
+#   assets/scripts/cutscenes/<ID>.script     - standalone script (cutscene)
+# assets/resources/<ID> (raw, unstructured bytes, no ABI - see
+# platform_resource_fetch() in src/platform.c) shares the script/cutscene
+# kind's directory, since it's likewise standalone content not tied to a
+# room or conversation.
+RESOURCE_KIND_SCRIPT = 0
+RESOURCE_KIND_CONVERSATION = 1
+RESOURCE_KIND_ROOM = 2
+# Build-intermediate filename prefix per kind (build/assets/<prefix><ID>) -
+# keep in sync with the Makefile's rules and src/platform.h's
+# PLATFORM_RESOURCE_KIND_* constants, which use the same 0/1/2 values.
+RESOURCE_KIND_PREFIX = {
+    RESOURCE_KIND_SCRIPT: "RS",
+    RESOURCE_KIND_CONVERSATION: "RC",
+    RESOURCE_KIND_ROOM: "RR",
+}
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
 PORTRAIT_BANKS = 8
-# Generic sparse resource directory: 256 read-only, variable-size blobs for
-# future variable-size/sparse content (see platform_resource_fetch() in
-# src/platform.c). Reserves every remaining EasyFlash bank up to the 64-bank
-# hardware limit, so no banks remain free after this pool.
+# Generic sparse resource directories: three 256-entry, read-only,
+# variable-size-blob directories (one per kind above), back to back at the
+# head of RESOURCE_DIRECTORY_BANK's ROML half, in RESOURCE_KIND_* order.
+# Reserves every remaining EasyFlash bank up to the 64-bank hardware limit,
+# so no banks remain free after this pool.
 RESOURCE_DIRECTORY_BANK = FIRST_PORTRAIT_BANK + PORTRAIT_BANKS
 RESOURCE_FIRST_BANK = RESOURCE_DIRECTORY_BANK
 RESOURCE_LAST_BANK = 63
 RESOURCE_HALF_BYTES = ROML_BYTES
 RESOURCE_DIRECTORY_ENTRY_BYTES = 8
 RESOURCE_DIRECTORY_BYTES = 256 * RESOURCE_DIRECTORY_ENTRY_BYTES
+RESOURCE_DIRECTORY_COUNT = 3
+RESOURCE_DIRECTORIES_BYTES = RESOURCE_DIRECTORY_COUNT * RESOURCE_DIRECTORY_BYTES
 OUTPUT_BANKS = RESOURCE_LAST_BANK + 1
 ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
@@ -198,8 +221,8 @@ def pack_room_code(image: bytearray, code_dir: Path, asset_dir: Path) -> None:
     image[start:start + ROOM_CODE_DIRECTORY_BYTES] = directory
 
 
-def load_resource(asset_dir: Path, resource_id: int) -> bytes | None:
-    path = asset_dir / f"R{resource_id:02X}"
+def load_resource(asset_dir: Path, kind: int, resource_id: int) -> bytes | None:
+    path = asset_dir / f"{RESOURCE_KIND_PREFIX[kind]}{resource_id:02X}"
     if not path.exists():
         return None
     data = path.read_bytes()
@@ -210,46 +233,59 @@ def load_resource(asset_dir: Path, resource_id: int) -> bytes | None:
 
 def pack_resources(image: bytearray, asset_dir: Path) -> None:
     """Pack sparse, variable-size resources into banks RESOURCE_FIRST_BANK-
-    RESOURCE_LAST_BANK behind a 256-entry directory at the head of
-    RESOURCE_DIRECTORY_BANK's ROML half.
+    RESOURCE_LAST_BANK behind three 256-entry directories (one per
+    RESOURCE_KIND_*, in that order) at the head of RESOURCE_DIRECTORY_BANK's
+    ROML half.
 
     Each 8-byte directory entry is (bank, mode, offset lo/hi, length lo/hi,
     checksum lo/hi); mode 0 selects the bank's ROML half, mode 1 its ROMH
-    half. Entries are packed first-fit in ID order and a resource never
+    half. Within a kind, entries are packed first-fit in ID order; all three
+    kinds share one running packing cursor (script kind first, then
+    conversation, then room) so they pack into the same payload pool back to
+    back rather than each getting its own reserved space. A resource never
     crosses an 8 KiB half, so it never spans an EasyFlash bank switch.
     """
-    directory = bytearray([0xFF]) * RESOURCE_DIRECTORY_BYTES
+    directories = {
+        kind: bytearray([0xFF]) * RESOURCE_DIRECTORY_BYTES
+        for kind in RESOURCE_KIND_PREFIX
+    }
     bank = RESOURCE_DIRECTORY_BANK
     mode = 0
-    offset = RESOURCE_DIRECTORY_BYTES
+    offset = RESOURCE_DIRECTORIES_BYTES
 
-    for resource_id in range(256):
-        data = load_resource(asset_dir, resource_id)
-        if data is None:
-            continue
-        if offset + len(data) > RESOURCE_HALF_BYTES:
-            mode += 1
-            offset = 0
-            if mode > 1:
-                mode = 0
-                bank += 1
-        if bank > RESOURCE_LAST_BANK:
-            raise ValueError(
-                "generic resources exceed reserved EasyFlash banks "
-                f"{RESOURCE_FIRST_BANK}-{RESOURCE_LAST_BANK}")
+    for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
+                 RESOURCE_KIND_ROOM):
+        directory = directories[kind]
+        for resource_id in range(256):
+            data = load_resource(asset_dir, kind, resource_id)
+            if data is None:
+                continue
+            if offset + len(data) > RESOURCE_HALF_BYTES:
+                mode += 1
+                offset = 0
+                if mode > 1:
+                    mode = 0
+                    bank += 1
+            if bank > RESOURCE_LAST_BANK:
+                raise ValueError(
+                    "generic resources exceed reserved EasyFlash banks "
+                    f"{RESOURCE_FIRST_BANK}-{RESOURCE_LAST_BANK}")
 
-        checksum = sum(data) & 0xFFFF
-        entry = bytes((bank, mode, offset & 0xFF, offset >> 8,
-                       len(data) & 0xFF, len(data) >> 8,
-                       checksum & 0xFF, checksum >> 8))
-        start = resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES
-        directory[start:start + RESOURCE_DIRECTORY_ENTRY_BYTES] = entry
-        destination = bank * BANK_BYTES + mode * RESOURCE_HALF_BYTES + offset
-        image[destination:destination + len(data)] = data
-        offset += len(data)
+            checksum = sum(data) & 0xFFFF
+            entry = bytes((bank, mode, offset & 0xFF, offset >> 8,
+                           len(data) & 0xFF, len(data) >> 8,
+                           checksum & 0xFF, checksum >> 8))
+            start = resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES
+            directory[start:start + RESOURCE_DIRECTORY_ENTRY_BYTES] = entry
+            destination = bank * BANK_BYTES + mode * RESOURCE_HALF_BYTES + offset
+            image[destination:destination + len(data)] = data
+            offset += len(data)
 
     start = RESOURCE_DIRECTORY_BANK * BANK_BYTES
-    image[start:start + RESOURCE_DIRECTORY_BYTES] = directory
+    for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
+                 RESOURCE_KIND_ROOM):
+        image[start:start + RESOURCE_DIRECTORY_BYTES] = directories[kind]
+        start += RESOURCE_DIRECTORY_BYTES
 
 
 def load_overlay(path: Path, magic: bytes) -> bytes:

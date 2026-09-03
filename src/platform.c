@@ -24,6 +24,11 @@
 #define EF_PORTRAITS_PER_BANK   32u
 #define EF_RESOURCE_DIRECTORY_BANK   57u
 #define RESOURCE_DIRECTORY_ENTRY_BYTES 8u
+/* One kind's directory (256 entries); three sit back to back at the head of
+ * EF_RESOURCE_DIRECTORY_BANK's ROML half, in PLATFORM_RESOURCE_KIND_* order
+ * - keep in sync with tools/pack_easyflash.py's RESOURCE_DIRECTORY_BYTES/
+ * RESOURCE_KIND_* ordering. */
+#define RESOURCE_DIRECTORY_BYTES (256u * RESOURCE_DIRECTORY_ENTRY_BYTES)
 
 /*
  * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
@@ -310,25 +315,27 @@ const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
 #pragma code-name (pop)
 
 /*
- * Generic sparse resource directory: 256 read-only, variable-size blobs
- * across EasyFlash banks 57-63, indexed by a fixed 256-entry, 8-byte-per-
- * entry directory at the head of bank 57's ROML half. tools/pack_easyflash.py
- * places entries first-fit into ROML/ROMH halves in bank order and never
- * splits a resource across a bank switch (see EASYFLASH_CARTRIDGE.md).
- * Entry layout: bank, mode (0 = ROML half, 1 = ROMH half), offset within
- * that half (little-endian), length (little-endian), 16-bit sum-of-bytes
- * checksum (little-endian).
+ * Generic sparse resource directories: three read-only, variable-size-blob
+ * directories (one per PLATFORM_RESOURCE_KIND_*, see platform.h), each 256
+ * entries, back to back at the head of bank 57's ROML half, across EasyFlash
+ * banks 57-63. tools/pack_easyflash.py places entries first-fit into
+ * ROML/ROMH halves in bank order (all three kinds sharing one packing pass)
+ * and never splits a resource across a bank switch (see
+ * EASYFLASH_CARTRIDGE.md). Entry layout: bank, mode (0 = ROML half, 1 =
+ * ROMH half), offset within that half (little-endian), length
+ * (little-endian), 16-bit sum-of-bytes checksum (little-endian).
  */
-/* Looks up resource_id's directory entry into bank/mode/offset/size.
+/* Looks up kind/resource_id's directory entry into bank/mode/offset/size.
  * Returns PLATFORM_OK, or PLATFORM_ERR_NOT_FOUND for an absent/corrupt
  * entry. Shared by platform_resource_fetch() and
  * platform_resource_fetch_range(). */
 #pragma code-name (push, "HIGHCODE")
-static uint8_t resource_directory_lookup(uint8_t resource_id, uint8_t* bank,
-                                         uint8_t* mode, uint16_t* offset,
-                                         uint16_t* size) {
+static uint8_t resource_directory_lookup(uint8_t kind, uint8_t resource_id,
+                                         uint8_t* bank, uint8_t* mode,
+                                         uint16_t* offset, uint16_t* size) {
     platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
-    platform_ef_copy_offset = (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
+    platform_ef_copy_offset = (uint16_t)kind * RESOURCE_DIRECTORY_BYTES +
+        (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
     platform_ef_copy_destination = (uint16_t)resource_directory_entry;
     platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
     platform_easyflash_copy_roml();
@@ -346,8 +353,8 @@ static uint8_t resource_directory_lookup(uint8_t resource_id, uint8_t* bank,
     return PLATFORM_OK;
 }
 
-uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
-                                  uint16_t capacity) {
+uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
+                                  uint8_t* destination, uint16_t capacity) {
     uint8_t bank;
     uint8_t mode;
     uint16_t offset;
@@ -356,8 +363,8 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
     uint16_t sum;
     uint16_t i;
 
-    if (resource_directory_lookup(resource_id, &bank, &mode, &offset, &size) !=
-        PLATFORM_OK) {
+    if (resource_directory_lookup(kind, resource_id, &bank, &mode, &offset,
+                                  &size) != PLATFORM_OK) {
         return 0u;
     }
     checksum = (uint16_t)resource_directory_entry[6] |
@@ -389,8 +396,9 @@ uint16_t platform_resource_fetch(uint8_t resource_id, uint8_t* destination,
  * separate pass over every byte before a caller could use any of it; a
  * corrupt directory entry (the actual failure mode this guards against)
  * is still caught by resource_directory_lookup()'s own bounds checks. */
-uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
-                                       uint8_t* destination, uint16_t capacity) {
+uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
+                                       uint16_t start, uint8_t* destination,
+                                       uint16_t capacity) {
     uint8_t bank;
     uint8_t mode;
     uint16_t offset;
@@ -398,8 +406,8 @@ uint16_t platform_resource_fetch_range(uint8_t resource_id, uint16_t start,
     uint16_t remaining;
     uint16_t chunk;
 
-    if (resource_directory_lookup(resource_id, &bank, &mode, &offset, &size) !=
-        PLATFORM_OK) {
+    if (resource_directory_lookup(kind, resource_id, &bank, &mode, &offset,
+                                  &size) != PLATFORM_OK) {
         return 0u;
     }
     if (start >= size) return 0u;

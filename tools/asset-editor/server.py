@@ -35,12 +35,19 @@ def _asset_kinds(path: Path) -> list[str]:
     kinds: set[str] = set()
     suffix = path.suffix.lower()
 
-    # assets/scripts/<ID>.script is plain-text DSL source (see
+    # assets/scripts/<ID>.script (room), assets/scripts/conversations/<ID>.script,
+    # and assets/scripts/cutscenes/<ID>.script are plain-text DSL source (see
     # tools/compile_script.py) - identified by location/extension, not
     # content, same as portraits are identified by living under
-    # assets/portraits/.
-    if path.parent.name == "scripts" and suffix == ".script" and \
-            _is_resource_id(path.stem) is not None:
+    # assets/portraits/. Each of the three locations is its own independent
+    # resource ID space (see src/platform.h's PLATFORM_RESOURCE_KIND_*), but
+    # all three share one "script" kind here - this only gates which asset
+    # files the editor's generic file browser will open/save as DSL source.
+    is_room_script = path.parent.name == "scripts"
+    is_conversation_or_cutscene = (path.parent.name in ("conversations", "cutscenes")
+                                    and path.parent.parent.name == "scripts")
+    if (is_room_script or is_conversation_or_cutscene) and suffix == ".script" \
+            and _is_resource_id(path.stem) is not None:
         return ["script"]
 
     data = path.read_bytes()

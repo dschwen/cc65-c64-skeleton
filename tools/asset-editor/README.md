@@ -102,18 +102,21 @@ The server has no third-party dependencies and only exposes file operations unde
     toggles it without discarding it. The image is edit-only: it is never
     written to the portrait file and is not kept across a page reload.
 - Script mode:
-  - Edits cutscene/conversation/room DSL *source text* only
-    (`assets/scripts/<hex ID>.script`, see `tools/compile_script.py`'s
-    docstring for the full language) - nothing is compiled or validated in
-    the browser. A Makefile rule compiles each source file straight to its
-    matching resource ID when you build the cartridge; that build is where
-    syntax/semantic errors surface.
-  - Resource ID (hex, 00-FF) selects which `assets/scripts/<ID>.script` file
-    is open; there is no in-editor multi-script browser, so switch IDs and
-    open/save each script individually, the same way Portrait mode works.
-    `0x00`-`0xEF` are room IDs (a `room` declaration - see the DSL reference
-    below); `0xF0`-`0xFF` are reserved for standalone cutscenes/
-    conversations not tied to a specific room.
+  - Edits cutscene/conversation/room DSL *source text* only (see
+    `tools/compile_script.py`'s docstring for the full language) - nothing
+    is compiled or validated in the browser. A Makefile rule compiles each
+    source file straight to its matching resource ID when you build the
+    cartridge; that build is where syntax/semantic errors surface.
+  - Kind (Room/Conversation/Cutscene) plus Resource ID (hex, 00-FF) together
+    select which file is open: `assets/scripts/<ID>.script` (Room - a
+    `room` declaration, ID == the room's own ID),
+    `assets/scripts/conversations/<ID>.script` (Conversation), or
+    `assets/scripts/cutscenes/<ID>.script` (Cutscene, a `script`
+    declaration). Each kind has its own independent 00-FF resource ID space
+    (see `src/platform.h`'s `PLATFORM_RESOURCE_KIND_*`) - a conversation and
+    a cutscene can use the same ID without colliding. There is no in-editor
+    multi-script browser, so switch Kind/ID and open/save each script
+    individually, the same way Portrait mode works.
   - A collapsible DSL syntax reference is included in the panel. There is no
     binary format to document here - this editor only edits DSL source text,
     never compiled bytecode. That format (opcodes, string table, topic

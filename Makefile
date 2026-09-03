@@ -30,11 +30,25 @@ C64_OBJECT_TYPES_INITIAL := $(C64_ASSET_OUTDIR)/objects-initial.hot
 PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
 PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
 C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
+# Each script/conversation/room declaration kind has its own independent
+# 0-255 resource ID space (three separate directories - see
+# src/platform.h's PLATFORM_RESOURCE_KIND_* and tools/pack_easyflash.py),
+# so each gets its own source location and build-output prefix (RS/RC/RR).
+# assets/resources/<ID> (raw, unstructured bytes) shares the script kind's
+# ID space with compiled cutscenes, since neither belongs to a room or
+# conversation.
 RESOURCE_ASSETS := $(wildcard assets/resources/[0-9A-F][0-9A-F])
-SCRIPT_SOURCES := $(wildcard assets/scripts/[0-9A-F][0-9A-F].script)
-SCRIPT_RESOURCE_IDS := $(basename $(notdir $(SCRIPT_SOURCES)))
-RESOURCE_IDS := $(sort $(notdir $(RESOURCE_ASSETS)) $(SCRIPT_RESOURCE_IDS))
-C64_RESOURCE_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/R,$(RESOURCE_IDS))
+CUTSCENE_SOURCES := $(wildcard assets/scripts/cutscenes/[0-9A-F][0-9A-F].script)
+CUTSCENE_IDS := $(basename $(notdir $(CUTSCENE_SOURCES)))
+SCRIPT_IDS := $(sort $(notdir $(RESOURCE_ASSETS)) $(CUTSCENE_IDS))
+C64_SCRIPT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RS,$(SCRIPT_IDS))
+CONVERSATION_SOURCES := $(wildcard assets/scripts/conversations/[0-9A-F][0-9A-F].script)
+CONVERSATION_IDS := $(basename $(notdir $(CONVERSATION_SOURCES)))
+C64_CONVERSATION_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RC,$(CONVERSATION_IDS))
+ROOM_SCRIPT_SOURCES := $(wildcard assets/scripts/[0-9A-F][0-9A-F].script)
+ROOM_SCRIPT_IDS := $(basename $(notdir $(ROOM_SCRIPT_SOURCES)))
+C64_ROOM_SCRIPT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RR,$(ROOM_SCRIPT_IDS))
+C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS)
 ROOM_CFG := cfg/room_overlay.cfg
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
@@ -137,17 +151,24 @@ $(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR
 $(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
 	cp $< $@
 
-$(C64_ASSET_OUTDIR)/R%: assets/resources/% | $(C64_ASSET_OUTDIR)
+$(C64_ASSET_OUTDIR)/RS%: assets/resources/% | $(C64_ASSET_OUTDIR)
 	cp $< $@
 
-# Cutscene/conversation scripts are source (assets/scripts/<ID>.script, one
-# top-level declaration each - see tools/compile_script.py), compiled
+# Script/conversation/room declarations are source (assets/scripts/...,
+# one top-level declaration each - see tools/compile_script.py), compiled
 # straight to the build output, the same way rooms/<ID>.c compiles straight
-# to build/rooms/C<ID> without an intermediate assets/ artifact. Only room
-# text resources (0x00-0xEF) are checked-in binary data matched by the copy
-# rule above; this rule covers the reserved script IDs (0xF0-0xFF).
-$(C64_ASSET_OUTDIR)/R%: assets/scripts/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
-	python3 tools/compile_script.py --input $< --single-output $@
+# to build/rooms/C<ID> without an intermediate assets/ artifact. --expect-
+# kind catches a file in the wrong location (e.g. a `conversation`
+# declaration under cutscenes/) as a build error instead of a silently
+# misfiled resource.
+$(C64_ASSET_OUTDIR)/RS%: assets/scripts/cutscenes/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
+	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind script
+
+$(C64_ASSET_OUTDIR)/RC%: assets/scripts/conversations/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
+	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind conversation
+
+$(C64_ASSET_OUTDIR)/RR%: assets/scripts/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
+	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind room
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<

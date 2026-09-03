@@ -210,8 +210,12 @@ A room's text and simple logic - Look/Use descriptions, room-entry and
 tile-entry narration, anything that used to be a literal string in room
 code - is authored as a *room script*: DSL source at
 `assets/scripts/<hex room id>.script` (`tools/compile_script.py`, edited in
-the asset editor's Script mode), compiled to the same-ID resource the room
-itself already uses (`assets/resources/<hex room id>`).
+the asset editor's Script mode), compiled to the room-kind resource with
+the same ID as the room itself (`PLATFORM_RESOURCE_KIND_ROOM` - an
+independent 0x00-0xFF ID space from conversations and standalone scripts,
+which live under `assets/scripts/conversations/` and
+`assets/scripts/cutscenes/` respectively - see `PLATFORM_API.md`'s
+"Generic cartridge resources").
 
 A room script declares one or more numbered *entries*:
 

@@ -71,6 +71,7 @@
 
 #define ROOM_ENTRY_BYTES    3u
 
+extern uint8_t script_resource_kind;
 extern uint8_t script_resource_id;
 extern uint8_t script_entry_key;
 extern uint8_t script_entry_found;
@@ -103,7 +104,8 @@ static uint16_t script_len;
  * window's worth of contiguous room from its own start, not whatever
  * happened to be left over from wherever the window last was. */
 static void ensure_window_at(uint16_t pos) {
-    window_len = platform_resource_fetch_range(script_resource_id, pos,
+    window_len = platform_resource_fetch_range(script_resource_kind,
+                                               script_resource_id, pos,
                                                script_buf, script_cap);
     window_base = pos;
 }
@@ -439,7 +441,8 @@ void script_overlay_run(void) {
     script_buf = platform_room_scratch();
     script_cap = platform_room_scratch_bytes();
     window_base = 0u;
-    window_len = platform_resource_fetch_range(script_resource_id, 0u,
+    window_len = platform_resource_fetch_range(script_resource_kind,
+                                               script_resource_id, 0u,
                                                script_buf, script_cap);
     if (window_len < 3u) return; /* unpopulated resource ID, or a lookup failure */
     script_len = platform_resource_last_size();

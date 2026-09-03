@@ -716,7 +716,8 @@ sprites 1-5 from the requested asset.
 ## Rain weather layer
 
 ```c
-void platform_rain_enable(void);
+void __fastcall__ platform_rain_enable(void (*setup)(void));
+void platform_rain_activate(void);
 void platform_rain_disable(void);
 uint8_t platform_rain_is_active(void);
 ```
@@ -733,13 +734,29 @@ Because sprites 1-5 are shared with the portrait API above, rain and a shown
 portrait are mutually exclusive - `platform_portrait_show()`/`hide()` handle
 pausing and resuming rain automatically (see Portraits). `game_enter_room()`
 disables rain before dispatching the destination room's `enter_room()`, so
-rainy rooms opt in explicitly:
+whether a room ever shows rain is purely that room's own code's decision -
+there is no data-driven "this room is rainy" flag anywhere else (not in the
+room file, not in the DSL). A rainy room opts in explicitly, from its own
+`enter_room()`:
 
 ```c
+static void rain_setup(void) { /* sprite pointer/color/VIC-attribute pokes */ }
 void enter_room(void) {
-    platform_rain_enable();
+    platform_rain_enable(rain_setup);
 }
 ```
+
+`setup` is a one-time callback that pokes the sprite pointer, color, and
+VIC-attribute registers for sprites 1-7 (see `rooms/00.c`); it is not part
+of the always-resident code because it only ever needs to run synchronously
+from room entry or the portrait-resume path, both guaranteed to still have
+the calling room's own EasyFlash bank paged in. Pass `0` to reuse whichever
+setup was last registered instead of supplying a new one - this is what the
+portrait-resume path does, since it never has a setup of its own to give.
+`platform_rain_activate()` is the lower-level "just (re)seed and turn the
+streaks on" step `platform_rain_enable()` performs after running `setup`;
+callers outside the portrait-resume path normally want
+`platform_rain_enable()`, not this directly.
 
 `platform_rain_is_active()` reports whether rain is currently on; it exists
 mainly for callers (like the portrait code) that need to pause and later

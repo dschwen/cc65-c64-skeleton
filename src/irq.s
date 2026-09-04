@@ -5,6 +5,7 @@
 .export _raster_irq_install, _raster_irq_vectors_restore, _raster_irq_resync
 .export _raster_irq_suspend, _raster_irq_resume
 .export _platform_frame_counter
+.export platform_raster_irq_active
 .export _platform_text_screen_enter, _platform_text_screen_leave
 .export _platform_rain_enable, _platform_rain_activate
 .export _platform_rain_disable, _platform_rain_is_active

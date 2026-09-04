@@ -21,6 +21,9 @@
 .export _platform_bank_call_leave
 
 .import _raster_irq_resync
+.import platform_raster_irq_active
+
+VIC_CTRL1 = $d011
 
 .segment "DATA"
 _platform_ef_copy_bank:
@@ -205,6 +208,31 @@ _platform_easyflash_disable:
 
 _platform_bank_call_enter:
     sta bank_call_scratch
+
+    ; Wait for a raster line safely away from TEXT_RASTER (the map/text
+    ; charset-switch boundary, near the bottom of the frame) before
+    ; disabling interrupts: a bank switch can run for many raster lines,
+    ; and interrupts disabled anywhere near that one exact line risks
+    ; missing the switch entirely, leaving the wrong charset on screen for
+    ; a frame. Waiting here for the 9-bit raster to wrap (VIC_CTRL1 bit 7
+    ; clearing) puts us at the top of a fresh frame instead - maximum
+    ; distance from that boundary. Skipped when the raster IRQ isn't
+    ; installed yet (early boot - platform_raster_irq_active starts at 0)
+    ; or is currently suspended by raster_irq_suspend() (which already
+    ; masks the interrupt source and pins tile charset for its whole
+    ; window - room transitions and script/inventory/saveload loads all
+    ; go through that, so this wait is a no-op for them). Same
+    ; wraparound-wait idiom _raster_irq_resync already uses, for the same
+    ; reason - reading VIC_CTRL1 depends only on the VIC-II's own raster
+    ; counter, not on interrupts actually firing, so this can't hang on a
+    ; masked IRQ.
+    lda platform_raster_irq_active
+    beq @raster_wait_done
+@raster_wait_top:
+    lda VIC_CTRL1
+    bmi @raster_wait_top
+@raster_wait_done:
+
     php
     pla
     ldx bank_stack_index

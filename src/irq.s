@@ -198,9 +198,20 @@ _raster_irq_resync:
     plp
     rts
 
-; Room transactions keep the tile charset selected and do not need the split
-; while no status text is visible. Clearing first avoids leaving text glyphs
-; on screen when D018 is forced to the tile bank.
+; Room transactions call this from ordinary map mode and want the tile
+; charset with no split while no status text is visible - clearing rows
+; 22-24 first avoids leaving text glyphs on screen when D018 is forced to
+; the tile bank. But inventory/save/load close out through this same path
+; (see saveload_cleanup() and game_inventory_show()) while still in a full
+; text screen: platform_text_screen_enter() was called by the loaded
+; overlay module itself, and platform_text_screen_active stays 1 until the
+; resident wrapper calls platform_text_screen_leave() - *after* this
+; suspend, not before. Forcing TILE_MEMPTR unconditionally here briefly
+; reinterpreted rows 0-21 of a still-fully-populated inventory/save screen
+; through the wrong charset before the wrapper's own memset cleared them -
+; a real, visible one-frame glitch. Pick the charset the same way
+; _raster_irq_resync's map-phase branch already does, instead of assuming
+; tile.
 _raster_irq_suspend:
     jsr _platform_text_area_clear_native
     php
@@ -208,7 +219,13 @@ _raster_irq_suspend:
     lda #0
     sta platform_raster_irq_active
     sta VIC_IRQ_ENABLE
+    lda platform_text_screen_active
+    beq @suspend_tile
+    lda #TEXT_MEMPTR
+    bne @suspend_set
+@suspend_tile:
     lda #TILE_MEMPTR
+@suspend_set:
     sta VIC_MEMPTR
     lda #$01
     sta VIC_IRQ_STATUS

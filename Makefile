@@ -358,6 +358,20 @@ $(DISK_BOOT_PRG): $(DISK_BOOT_OBJ) $(DISK_BOOT_CFG)
 $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
+# Alternative room-code source: a small DSL (tools/compile_room.py) covering
+# the mechanical patterns most room code turns out to need (empty handler,
+# flag bump, tile-coordinate dispatch), compiling straight to assembly
+# instead of C. Both paths converge on the same room-%.o target, so a room
+# is authored as either rooms/<ID>.c or rooms/<ID>.rc - whichever source
+# file exists selects which rule fires (the same "let Make pick by which
+# prerequisite exists" pattern already used for the R%/RS%/RC%/RR% resource
+# rules above). See ROOM_CODE_API.md's "Room scripts" for the DSL syntax.
+$(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py | $(ROOM_OUTDIR)
+	python3 tools/compile_room.py --input $< --output $@
+
+$(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
 $(ROOM_OUTDIR)/header-%.o: rooms/room_header.s | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) --asm-define ROOM_ID=0x$* -c -o $@ $<
 

@@ -239,18 +239,19 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
 
 
 def gen_simple(name: str, handler: SimpleHandler, out: list[str]) -> None:
-    out.append(f".export _{name}")
     if handler.kind == "asm":
-        # The escape hatch: the named .s fragment is expected to define
-        # _NAME itself (verbatim, unchanged) - nothing to generate here
-        # beyond the export, which the fragment's own file also provides;
-        # duplicate .export lines are harmless in ca65, and this keeps
-        # every handler uniformly listed at the top of the output for
-        # anyone skimming it.
-        out.append(f"; {name}: see {handler.asm_path} (spliced in separately,")
-        out.append(f"; not regenerated here - pass it to the assembler alongside")
-        out.append(f"; this file's own output)")
+        # The escape hatch: splice the named .s fragment's own text in
+        # verbatim (it supplies its own .export _NAME, label, and body) -
+        # this keeps every room's code in one object file, so no change is
+        # needed to the linker inputs that assemble/link a room overlay.
+        fragment_path = Path(handler.asm_path)
+        if not fragment_path.exists():
+            raise SystemExit(f"{name}: asm fragment not found: {handler.asm_path}")
+        out.append(f"; {name}: spliced in verbatim from {handler.asm_path}")
+        out.append(fragment_path.read_text(encoding="utf-8").rstrip("\n"))
+        out.append("")
         return
+    out.append(f".export _{name}")
     out.append('.segment "CODE"')
     out.append(f"_{name}:")
     if handler.kind == "default":

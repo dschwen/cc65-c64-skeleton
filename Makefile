@@ -365,9 +365,15 @@ $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROO
 # is authored as either rooms/<ID>.c or rooms/<ID>.rc - whichever source
 # file exists selects which rule fires (the same "let Make pick by which
 # prerequisite exists" pattern already used for the R%/RS%/RC%/RR% resource
-# rules above). See ROOM_CODE_API.md's "Room scripts" for the DSL syntax.
+# rules above). See ROOM_CODE_API.md's "Room-code DSL (.rc files)" section.
 $(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py | $(ROOM_OUTDIR)
 	python3 tools/compile_room.py --input $< --output $@
+
+# Room 00's enter_room uses the DSL's asm escape hatch (rain_setup() pokes
+# VIC-II registers directly - no DSL statement covers that), spliced in by
+# compile_room.py at compile time. Make can't see that dependency through
+# the Python call above, so it's declared here explicitly.
+$(ROOM_OUTDIR)/room-00.s: rooms/asm/00_enter_room.s
 
 $(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<

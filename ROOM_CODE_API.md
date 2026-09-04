@@ -83,6 +83,57 @@ uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
 }
 ```
 
+## Room-code DSL (.rc files)
+
+Most room code turns out to be one of three mechanical shapes: an empty
+handler, an unconditional flag bump on tile entry, or a tile-coordinate
+dispatch to a room script. A room can be authored as `rooms/XX.rc` in a
+small declarative DSL instead of `rooms/XX.c` - `tools/compile_room.py`
+compiles it straight to the same `.s` a hand-written room would produce.
+The Makefile picks whichever source file exists (`rooms/XX.c` or
+`rooms/XX.rc`) for a given room ID; both forms coexist in this project,
+room by room.
+
+```
+enter_room: default
+enter_tile: flag STORY_STATE_ROOM_01_TILE_ENTRY_COUNT increment
+
+look_at:
+    at 18,3 -> script STORY_ROOM00_LOOK_TREE
+    default -> GAME_LOOK_DEFAULT
+
+use_at:
+    at 18,3 -> script STORY_ROOM00_USE_TREE
+    default -> GAME_USE_DEFAULT
+```
+
+`enter_room`/`enter_tile` take one line: `default` (empty handler),
+`flag NAME increment`, `flag NAME set VALUE`, or `asm "path"` (see escape
+hatch below). `look_at`/`use_at` each start an indented block of zero or
+more `at X,Y -> script KEY` lines followed by a mandatory
+`default -> RETURN_CONST` line. `X`, `Y`, `KEY`, and `RETURN_CONST` may be
+decimal/hex literals or `#define` symbols from `src/story.h`/`src/game.h`
+(or files passed via `--flags`).
+
+This does not solve a space problem - compiled room overlays are nowhere
+near their `$0400` ceiling. The point is authoring simplicity: a room's
+flag-bump/dispatch logic becomes one declarative line each, instead of
+hand-written (and hand-copied) C.
+
+### Escape hatch: genuinely custom logic
+
+`enter_room: asm "path/to/fragment.s"` (or the same for `enter_tile`)
+splices a hand-written `.s` fragment's text verbatim into the generated
+output. The fragment supplies its own `.export _enter_room` (or
+`_enter_tile`), label, and body - nothing else is generated for that
+handler. Use this for logic no DSL statement covers, such as room 00's
+`enter_room()` poking VIC-II sprite registers directly for the rain
+effect (`rooms/asm/00_enter_room.s`, referenced from `rooms/00.rc`).
+Make can't see a `.rc` file's `asm "..."` reference through the Python
+compile step, so a room using the escape hatch needs an explicit extra
+Makefile prerequisite line (see the one for `room-00.s` in `Makefile`)
+so the fragment's own edits trigger a rebuild.
+
 ## Global game state
 
 `game_state` is resident at `$84E9` and survives overlay replacement:
@@ -295,7 +346,9 @@ activates the overlay before the normal room draw rebuilds those buffers.
 ## Adding a room
 
 1. Create/export `assets/XX` in Room mode.
-2. Copy `rooms/template.c` to `rooms/XX.c` and implement the four handlers.
+2. Copy `rooms/template.c` to `rooms/XX.c` and implement the four handlers,
+   or write `rooms/XX.rc` in the DSL above if the room's logic is one of
+   the three mechanical shapes it covers.
 3. Run `make d64 cartridge`.
 4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
    cannot be resolved.

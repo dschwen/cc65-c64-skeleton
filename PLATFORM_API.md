@@ -388,7 +388,9 @@ assembly loop patches its brightness destination and distance-table row once
 per tile row, derives each band from `radius - 2 * tile_distance`, and performs
 a strict max write. There is no C call or multiplication in the per-tile path.
 
-`platform_lightning()` is bound to `F` in the sample game. Its assembly routine
+`platform_lightning()` has no manual test keybinding; it's triggered from a
+room script via the `lightning` statement (see `tools/compile_script.py`'s
+module docstring and `modules/script.c`'s `OP_LIGHTNING`). Its assembly routine
 sets the VIC border and background to white, clears only the 40x22 map portion
 of Color RAM to black, waits for two raster-frame counter changes, restores the
 VIC colors to black, and tail-calls the native lighting pass to reconstruct

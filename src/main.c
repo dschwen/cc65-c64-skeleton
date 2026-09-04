@@ -164,9 +164,6 @@ int main(void) {
                     platform_lighting_set_global(platform_global_light + 1u);
                 }
                 break;
-            case PLATFORM_KEY_LIGHTNING:
-                platform_lightning();
-                break;
             case PLATFORM_KEY_LOOK:
                 look_x = platform_player->x >> 1;
                 look_y = platform_player->y >> 1;

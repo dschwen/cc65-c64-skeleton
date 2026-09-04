@@ -327,9 +327,10 @@ be tested in the actual game before a puzzle depends on one exact fringe tile.
 ### Lightning
 
 The engine has a white lightning flash that lasts two frames and then restores
-the existing lighting. The sample binds it to `F`. It is a visual effect, not a
-temporary source for Look or Take. It can support storms, magic, alarms, or
-traps, but story-triggered timing still needs to be implemented.
+the existing lighting. Trigger it from a room script with the `lightning`
+statement (no operands - see `tools/compile_script.py`'s module docstring). It
+is a visual effect, not a temporary source for Look or Take. It can support
+storms, magic, alarms, or traps, timed however the triggering script chooses.
 
 ## Player commands
 

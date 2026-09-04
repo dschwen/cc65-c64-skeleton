@@ -54,7 +54,6 @@
 #define PLATFORM_KEY_CURSOR_LEFT      157u
 #define PLATFORM_KEY_LIGHT_DOWN       45u
 #define PLATFORM_KEY_LIGHT_UP         43u
-#define PLATFORM_KEY_LIGHTNING        70u
 #define PLATFORM_KEY_LOOK             76u
 #define PLATFORM_KEY_TAKE             84u
 #define PLATFORM_KEY_USE              85u

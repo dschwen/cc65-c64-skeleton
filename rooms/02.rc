@@ -1,0 +1,8 @@
+enter_room: default
+enter_tile: default
+
+look_at:
+    default -> GAME_LOOK_DEFAULT
+
+use_at:
+    default -> GAME_USE_DEFAULT

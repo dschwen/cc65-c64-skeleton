@@ -841,6 +841,38 @@ entry and derives the correct phase from `$D011` bit 7 plus `$D012`; the copy
 routine explicitly resynchronizes `$D018` and the next compare before restoring
 interrupts.
 
+**Contract: interrupt code never bank-switches, and stays on resident data.**
+`src/irq.s` never touches `EASYFLASH_BANK`/`EASYFLASH_CONTROL`/`ef_shadow_*`
+and never will - the raster IRQ, keyboard polling, and rain/water advance all
+run fully resident. This is more than a style preference: most of
+`$8000-$BFFF` - `GameState`, resident `BSS`, the cc65 software stack, the
+active room-code overlay - physically sits inside the EasyFlash ROML/ROMH
+banking window, so an interrupt that ran while that window was switched to
+cart ROM would read garbage there even if its own code never issued a bank
+switch itself. Interrupts are therefore kept off for a foreground bank
+switch's *entire* switched-in duration, not just around the bank register
+writes.
+
+Every foreground (non-interrupt) banked call goes through the general "thin
+call wrapper" pair in `src/banking.s`: `_platform_bank_call_enter`/
+`_platform_bank_call_leave` (or the `BANK_CALL` macro in `platform.inc`),
+bracketing a `jsr` to the banked routine:
+
+```asm
+    lda #MY_BANK
+    jsr _platform_bank_call_enter
+    jsr my_banked_routine
+    jsr _platform_bank_call_leave
+```
+
+These save/restore the previous bank, EasyFlash mode, CPU memory map, and
+interrupt-flag state through a small fixed-depth array (a real bank stack,
+not the CPU hardware stack - a `jsr`'d "enter" can't leave state on the
+hardware stack for a *different* `jsr`'d "leave" to find, since `rts`
+always pops whatever is on top regardless of what pushed it), so nested
+banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
+`platform_easyflash_copy_roml`/`_romh`) is itself built on this pair.
+
 The gameplay handler is entered directly through RAM `$FFFE/$FFFF`, saves and
 restores A/X/Y, and ends in `RTI`. A second `$0314` entry supports KERNAL-mapped
 disk intervals. Keyboard polling uses a short `$37` wrapper and restores the

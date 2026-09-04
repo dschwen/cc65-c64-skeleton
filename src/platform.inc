@@ -39,3 +39,19 @@ EASYFLASH_16K       = $07
 CART_MARKER         = $033c
 CART_MARKER_0       = $ef
 CART_MARKER_1       = $64
+
+; Thin call wrapper for any resident routine that needs to run banked code:
+; switches to the given EasyFlash bank (16 KiB mode), makes the call, then
+; unwinds back to whatever bank/mode/CPU map was active before - safe to
+; nest. See src/banking.s's _platform_bank_call_enter/_leave for the
+; contract this depends on (interrupt code never bank-switches). Requires
+; ".import _platform_bank_call_enter, _platform_bank_call_leave" in the
+; including file.
+;
+;   BANK_CALL #MY_BANK, my_banked_routine
+.macro BANK_CALL bank, routine
+    lda bank
+    jsr _platform_bank_call_enter
+    jsr routine
+    jsr _platform_bank_call_leave
+.endmacro

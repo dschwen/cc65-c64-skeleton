@@ -17,6 +17,8 @@
 .export _platform_irq_restore
 .export _platform_object_types_clear
 .export _platform_boot_is_easyflash
+.export _platform_bank_call_enter
+.export _platform_bank_call_leave
 
 .import _raster_irq_resync
 
@@ -29,6 +31,48 @@ _platform_ef_copy_destination:
     .word 0
 _platform_ef_copy_size:
     .word 0
+
+; The general bank stack: a real array, not the CPU hardware stack. A "thin
+; call wrapper" needs enter/jsr-target/leave as three separate steps, and
+; the hardware stack can't carry state across that middle jsr - anything
+; bank_call_enter pushes there before its own rts would sit *above* the
+; return address rts must pop next, corrupting it. Depth 2 supports one
+; level of real nesting beyond the base case - today's only caller
+; (easyflash_copy_window) never nests at all - kept this small because
+; PROGRAM (where DATA lives, see below) has very little free margin; see
+; MEMORY_MAP.md. No overflow guard: a depth-3 nested banked call is not
+; reachable by anything in this codebase today, so this trusts the
+; invariant rather than spending bytes to check it, matching how the rest
+; of this file's low-level routines already trust their preconditions.
+; DATA, not BSS, for the same reason as ef_shadow_bank/control below (must
+; stay readable as ordinary RAM even when $8000-$BFFF is already banked to
+; cart ROM).
+.segment "DATA"
+BANK_STACK_DEPTH = 2
+bank_stack_bank:
+    .byte 0, 0
+bank_stack_control:
+    .byte 0, 0
+bank_stack_cpuport:
+    .byte 0, 0
+; The actual interrupt-flag bit at the moment of each enter - not assumed
+; to always be "enabled". A very first call (this file's own boot-time
+; object-type load, before the game has ever issued its own cli) runs with
+; interrupts still off from CPU reset; a leave that unconditionally
+; re-enabled them there jumped into the raster IRQ before it was installed
+; and reachable, and hung/crashed on real hardware timing (found live in
+; VICE - this exact call site hung solid, only "fixed" by the accident of
+; a monitor breakpoint perturbing timing enough to dodge it. That was
+; never a real fix). Restoring the exact captured flag per level, the same
+; way php/plp would if it could safely cross the jsr/rts boundary here
+; (see bank_stack_index's comment), avoids assuming anything about the
+; caller's interrupt state.
+bank_stack_flags:
+    .byte 0, 0
+bank_stack_index:
+    .byte 0
+bank_call_scratch:
+    .byte 0
 
 ; EASYFLASH_BANK is write-only on real hardware (no readback), so
 ; easyflash_copy_window below needs a readable shadow of the current
@@ -112,20 +156,115 @@ _platform_easyflash_disable:
     plp
     rts
 
+; General banked-call building blocks - the "thin call wrapper" primitive:
+; every future banked call site is expected to bracket its jsr with these
+; two instead of hand-rolling its own push/switch/pop sequence:
+;
+;     lda #MY_BANK
+;     jsr _platform_bank_call_enter
+;     jsr my_banked_routine
+;     jsr _platform_bank_call_leave
+;
+; Contract: interrupt code (src/irq.s) never calls these and never touches
+; EasyFlash bank state - it stays fully resident on resident data - so the
+; only thing these ever need to protect against is a *foreground* nested
+; call finding its own previous bank/mode disturbed, not a concurrent
+; IRQ-driven switch. Interrupts still have to be off for the whole
+; switched-in window regardless (see the ef_shadow_bank comment above and
+; PLATFORM_API.md's "Raster IRQ and water animation": most of $8000-$BFFF,
+; including GameState, resident BSS, and the software stack, physically
+; sits inside this banking window, so an interrupt that ran while ROM was
+; banked in would read garbage there even if its own code never banks
+; anything itself).
+;
+; fastcall: A = target EasyFlash bank number. Always switches 16 KiB mode
+; (both ROML and ROMH), matching every current banked use. Nests correctly
+; through the bank stack array above: a banked routine that needs to call
+; into a *different* bank just wraps its own nested jsr with another
+; enter/leave pair, each level unwinding back to exactly the bank/mode/CPU
+; map it found on entry.
+; No php/plp here (unlike this file's other routines): each is its own
+; jsr/rts pair, and a php pushed here would sit on the hardware stack
+; *above* the jsr's own return address, so the matching plp - needed in
+; _platform_bank_call_leave, a *different* jsr/rts pair - would pop the
+; wrong bytes and misdirect the rts (see bank_stack_index's comment above
+; for the general problem). Instead the interrupt flag is captured into
+; bank_stack_flags (php+pla, safe - both within this one routine) and
+; restored explicitly in _platform_bank_call_leave via pha+plp (also both
+; within that one routine) - functionally the same save/restore php/plp
+; would give, just carried across the jsr/rts boundary through memory
+; instead of the hardware stack.
+;
+; HIGHCODE, not LOWCODE like this file's other simple mapping routines:
+; PROGRAM (LOWCODE's memory area) has very little free margin, while HIGH
+; has plenty. Both are equally always-resident and reachable by plain
+; jsr/rts regardless of EasyFlash banking state - only the DATA above
+; (must stay byte-for-byte readable even when $8000-$BFFF is banked to
+; cart ROM) needed the specific placement reasoning; this is just code.
+.segment "HIGHCODE"
+
+_platform_bank_call_enter:
+    sta bank_call_scratch
+    php
+    pla
+    ldx bank_stack_index
+    sta bank_stack_flags,x
+    sei
+
+    lda CPU_PORT
+    sta bank_stack_cpuport,x
+    and #$f8
+    ora #CPU_MAP_CART_16K
+    sta CPU_PORT
+
+    lda ef_shadow_bank
+    sta bank_stack_bank,x
+    lda ef_shadow_control
+    sta bank_stack_control,x
+    inx
+    stx bank_stack_index
+
+    lda bank_call_scratch
+    sta ef_shadow_bank
+    sta EASYFLASH_BANK
+    lda #EASYFLASH_16K
+    sta ef_shadow_control
+    sta EASYFLASH_CONTROL
+    rts
+
+; Unwind one level pushed by _platform_bank_call_enter: restore the previous
+; bank/mode and CPU map, resynchronize the raster IRQ's phase tracking (an
+; unknown, possibly large number of cycles just ran with interrupts off),
+; then restore the exact interrupt-flag state _platform_bank_call_enter
+; captured for this level.
+_platform_bank_call_leave:
+    dec bank_stack_index
+    ldx bank_stack_index
+
+    lda bank_stack_control,x
+    sta ef_shadow_control
+    sta EASYFLASH_CONTROL
+    lda bank_stack_bank,x
+    sta ef_shadow_bank
+    sta EASYFLASH_BANK
+    lda bank_stack_cpuport,x
+    sta CPU_PORT
+    jsr _raster_irq_resync
+
+    ldx bank_stack_index        ; reload: the jsr above may have clobbered X
+    lda bank_stack_flags,x
+    pha
+    plp
+    rts
+
 .segment "HIGHCODE"
 
 ; Copy ROML/ROMH into underlying RAM without touching C stack or BSS while the
-; cartridge mapping hides $8000-$BFFF. Saves the previous EasyFlash bank and
-; mode on entry and restores them right before this routine's own rts, the
-; same bracket already used below for CPU_PORT (pha at entry, pla right
-; before rts, nothing in between that returns early) - so it's safe to call
-; from code that is itself already running from a banked-in cartridge
-; window (e.g. a nested cold-object-info fetch), unwinding back to exactly
-; the bank/mode it found on entry. An earlier version of this split the
-; push and the pop into two separately-callable routines; that's unsafe in
-; general (the second routine's own jsr/rts would fight over stack space
-; with whatever's left there from the first), but doesn't apply here since
-; both happen inside this one call.
+; cartridge mapping hides $8000-$BFFF. Uses the general bank_call_enter/leave
+; primitives above to save/restore the previous EasyFlash bank and mode
+; around the copy, so it's safe to call from code that is itself already
+; running from a banked-in cartridge window (e.g. a nested cold-object-info
+; fetch), unwinding back to exactly the bank/mode it found on entry.
 _platform_easyflash_copy_roml:
     lda #$80
     bne easyflash_copy_window
@@ -134,13 +273,6 @@ _platform_easyflash_copy_romh:
     lda #$a0
 easyflash_copy_window:
     sta $f8
-    php
-    sei
-    lda CPU_PORT
-    pha
-    and #$f8
-    ora #CPU_MAP_CART_16K
-    sta CPU_PORT
 
     lda _platform_ef_copy_offset
     sta $fb
@@ -153,16 +285,8 @@ easyflash_copy_window:
     lda _platform_ef_copy_destination+1
     sta $fe
 
-    lda ef_shadow_bank
-    pha
-    lda ef_shadow_control
-    pha
     lda _platform_ef_copy_bank
-    sta ef_shadow_bank
-    sta EASYFLASH_BANK
-    lda #EASYFLASH_16K
-    sta ef_shadow_control
-    sta EASYFLASH_CONTROL
+    jsr _platform_bank_call_enter
 
     lda _platform_ef_copy_size
     ora _platform_ef_copy_size+1
@@ -189,16 +313,7 @@ easyflash_copy_window:
     bne @romh_byte
 
 @romh_done:
-    pla
-    sta ef_shadow_control
-    sta EASYFLASH_CONTROL
-    pla
-    sta ef_shadow_bank
-    sta EASYFLASH_BANK
-    pla
-    sta CPU_PORT
-    jsr _raster_irq_resync
-    plp
+    jsr _platform_bank_call_leave
     rts
 
 .segment "LOWCODE"

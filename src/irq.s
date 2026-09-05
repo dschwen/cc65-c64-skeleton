@@ -518,6 +518,16 @@ rain_advance:
     bne @loop
     rts
 
+; Advance the visual rain, then tail-jump into the current room's
+; environment module's per-frame tick (src/platform.inc) - its own rts
+; returns all the way back to weather_animate's caller. Always safe to
+; call unconditionally: game_enter_room() (src/game.c) installs a no-op
+; stub there for any room without one (see PLATFORM_API.md's "Room
+; environment module").
+rain_advance_and_tick:
+    jsr rain_advance
+    jmp ENVCODE_TICK
+
 .segment "RAINCODE"
 ; Tail-jumps to the room's registered setup callback; its own rts returns
 ; to whichever instruction follows the jsr that reached here (native 6502
@@ -544,7 +554,12 @@ weather_animate:
     bpl @roll_water
 
 @rain:
-    jmp rain_advance
+    jmp rain_advance_and_tick   ; RAINCODE (this segment) is a fixed,
+                                 ; nearly-full 64-byte area reusing old
+                                 ; sprite-slot-7 storage - no room to grow
+                                 ; here, so the actual two-call sequence
+                                 ; lives in HIGHCODE instead (just below
+                                 ; rain_advance), which has plenty.
 
 _platform_rain_disable:
     lda #0

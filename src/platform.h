@@ -443,6 +443,29 @@ uint8_t platform_rain_is_active(void);
 #define PLATFORM_RESOURCE_KIND_SCRIPT       0u
 #define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
 #define PLATFORM_RESOURCE_KIND_ROOM         2u
+/* A room's environment module (weather + ambient sound) - see
+ * PLATFORM_API.md's "Room environment module". resource_id is the room ID,
+ * same as PLATFORM_RESOURCE_KIND_ROOM. Fetched into ENVCODE_BASE, never into
+ * ordinary heap/stack memory - see game_enter_room()'s own fetch call, not
+ * a generic caller. ENVCODE_BASE/_SIZE must match src/platform.inc's own
+ * (asm-side) copies exactly - both hardcode the same reserved cfg/myc64.cfg
+ * address since one is a linker-config constant and the other a plain
+ * preprocessor one, with no single shared source to derive both from. */
+#define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
+#define ENVCODE_BASE ((uint8_t*)0x7E00u)
+#define ENVCODE_SIZE 0x0200u
+/* C-callable trampolines into the module currently loaded at ENVCODE_BASE
+ * (src/env_dispatch.s) - env_init() after a fresh fetch, env_enable()/
+ * _disable() to pause/resume both the visual and sound side together
+ * (e.g. platform_portrait_show()/_hide()). env_install_null() overwrites
+ * ENVCODE_BASE with a no-op (all four vectors just rts), for a room with
+ * no environment resource of its own - so calling any of these, or the
+ * raster IRQ's own tick call (src/irq.s), is always safe regardless of
+ * which room (if any) last loaded a real module there. */
+void env_init(void);
+void env_enable(void);
+void env_disable(void);
+void env_install_null(void);
 uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
                                   uint8_t* destination, uint16_t capacity);
 /* Fetches at most `capacity` bytes starting at byte `start` of resource_id's

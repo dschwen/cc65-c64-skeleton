@@ -816,6 +816,13 @@ void platform_init(void) {
      * player_spawn_slot are plain BSS globals, already 0 - see above. */
     platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
+    /* Must happen before the IRQ is installed: weather_animate (src/irq.s)
+     * calls into ENVCODE_TICK unconditionally every frame, and the first
+     * real environment module isn't fetched until game_enter_room() (called
+     * later, in main()) - so the raster IRQ would otherwise jump into
+     * whatever garbage happens to be sitting in that reserved RAM the very
+     * first time it fires. */
+    env_install_null();
     raster_irq_install();
 }
 
@@ -1721,8 +1728,6 @@ void platform_look_cursor_hide(void) {
 }
 #pragma code-name (pop)
 
-static uint8_t rain_paused_for_portrait;
-
 static uint8_t portrait_load_easyflash(uint8_t portrait_id) {
     platform_ef_copy_bank =
         (uint8_t)(EF_PORTRAIT_FIRST_BANK + portrait_id / EF_PORTRAITS_PER_BANK);
@@ -1771,8 +1776,7 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
     status = portrait_load_easyflash(portrait_id);
     if (status != PLATFORM_OK) return status;
 
-    rain_paused_for_portrait = platform_rain_is_active();
-    if (rain_paused_for_portrait) platform_rain_disable();
+    env_disable();
 
     memset(PORTRAIT_BG_DATA, 0xffu, 63u);
     PORTRAIT_BG_DATA[63] = 0u;
@@ -1815,9 +1819,6 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
 #pragma code-name (push, "UPPERCODE")
 void platform_portrait_hide(void) {
     P_VIC(0x15) &= 0xc1u;
-    if (rain_paused_for_portrait) {
-        rain_paused_for_portrait = 0u;
-        platform_rain_enable(0);
-    }
+    env_enable();
 }
 #pragma code-name (pop)

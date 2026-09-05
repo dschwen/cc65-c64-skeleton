@@ -7,6 +7,8 @@ void game_room_enter_tile_native(void);
 uint8_t __fastcall__ game_room_look_at_native(uint8_t tile_x, uint8_t tile_y);
 void game_room_enter_room_native(void);
 uint8_t __fastcall__ game_room_use_at_native(uint8_t tile_x, uint8_t tile_y);
+void raster_irq_suspend(void);
+void raster_irq_resume(void);
 
 #pragma bss-name (push, "GAMESTATE")
 GameState game_state;
@@ -41,6 +43,24 @@ void game_enter_tile(void) {
 
 void game_enter_room(void) {
     platform_rain_disable();
+    /* raster_irq_suspend()/_resume() bracket the fetch+init: the raster IRQ
+     * calls ENVCODE_TICK every frame, and platform_resource_fetch()'s own
+     * post-copy checksum loop re-enables interrupts before it finishes
+     * summing the just-copied bytes. Without this, the IRQ could fire mid-
+     * checksum and run the freshly-copied (but not yet validated) module's
+     * tick, which mutates its own persistent-state bytes - changing the
+     * very bytes still being summed and spuriously failing the checksum.
+     * Found live in VICE: room 00's real environment module kept getting
+     * replaced by the null stub, even though the copy and checksum were
+     * both independently correct. */
+    raster_irq_suspend();
+    if (platform_resource_fetch(PLATFORM_RESOURCE_KIND_ENVIRONMENT,
+                                game_state.current_room, ENVCODE_BASE,
+                                ENVCODE_SIZE) == 0u) {
+        env_install_null();
+    }
+    env_init();
+    raster_irq_resume();
     game_room_enter_room_native();
 }
 

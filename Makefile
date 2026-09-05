@@ -48,7 +48,18 @@ C64_CONVERSATION_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RC,$(CONVERSATION_IDS
 ROOM_SCRIPT_SOURCES := $(wildcard assets/scripts/[0-9A-F][0-9A-F].script)
 ROOM_SCRIPT_IDS := $(basename $(notdir $(ROOM_SCRIPT_SOURCES)))
 C64_ROOM_SCRIPT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RR,$(ROOM_SCRIPT_IDS))
-C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS)
+# A room's environment module (weather + ambient sound - see src/platform.h's
+# PLATFORM_RESOURCE_KIND_ENVIRONMENT and PLATFORM_API.md's "Room environment
+# module"). Unlike the other resource kinds, this one is linked code (fixed
+# origin ENVCODE_BASE), not a raw asset or compiled script - see ENV_OUTDIR's
+# rules below.
+ENV_SOURCES := $(wildcard rooms/env/[0-9A-F][0-9A-F].s)
+ENV_IDS := $(basename $(notdir $(ENV_SOURCES)))
+C64_ENV_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RE,$(ENV_IDS))
+ENV_OUTDIR := $(OUTDIR)/env
+ENV_MODULE_CFG := cfg/env_module.cfg
+C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS) \
+	$(C64_ENV_ASSETS)
 ROOM_CFG := cfg/room_overlay.cfg
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
@@ -141,6 +152,9 @@ $(OUTDIR):
 
 $(ROOM_OUTDIR):
 	mkdir -p $(ROOM_OUTDIR)
+
+$(ENV_OUTDIR):
+	mkdir -p $(ENV_OUTDIR)
 
 $(C64_ASSET_OUTDIR):
 	mkdir -p $(C64_ASSET_OUTDIR)
@@ -401,12 +415,6 @@ $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROO
 $(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py | $(ROOM_OUTDIR)
 	python3 tools/compile_room.py --input $< --output $@
 
-# Room 00's enter_room uses the DSL's asm escape hatch (rain_setup() pokes
-# VIC-II registers directly - no DSL statement covers that), spliced in by
-# compile_room.py at compile time. Make can't see that dependency through
-# the Python call above, so it's declared here explicitly.
-$(ROOM_OUTDIR)/room-00.s: rooms/asm/00_enter_room.s
-
 $(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<
 
@@ -431,6 +439,31 @@ $(ROOM_OUTDIR)/room-%.raw: $(ROOM_OUTDIR)/header-%.o $(ROOM_OUTDIR)/room-%.o \
 $(ROOM_OUTDIR)/C%: $(ROOM_OUTDIR)/room-%.raw tools/finalize_room_code.py
 	python3 tools/finalize_room_code.py --input $< \
 		--map $(ROOM_OUTDIR)/room-$*.map --room $* --output $@
+
+# A room's environment module (weather + ambient sound - see ENV_SOURCES
+# above and PLATFORM_API.md's "Room environment module"). Hand-written
+# ca65, not a DSL - this is the escape-hatch tier from the start, since VIC/
+# SID register poking has no mechanical pattern worth a DSL statement, the
+# same reasoning rooms/asm/ used for room-code's own escape hatch. Built
+# like room code (assemble, resolve against the resident image, link) but
+# at a fixed origin with no header-patching step - the generic resource
+# directory already checksums and size-validates the linked output, so it
+# *is* the final "RE" resource content directly.
+$(ENV_OUTDIR)/env-%.o: rooms/env/%.s | $(ENV_OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(ENV_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ENV_OUTDIR)/env-%.o \
+		tools/generate_room_resolver.py | $(ENV_OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(ENV_OUTDIR)/env-$*.o
+
+$(ENV_OUTDIR)/resolver-%.o: $(ENV_OUTDIR)/resolver-%.s
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(C64_ASSET_OUTDIR)/RE%: $(ENV_OUTDIR)/env-%.o $(ENV_OUTDIR)/resolver-%.o \
+		$(ENV_MODULE_CFG) | $(C64_ASSET_OUTDIR)
+	$(LD65) -C $(ENV_MODULE_CFG) -m $(ENV_OUTDIR)/env-$*.map -o $@ \
+		$(ENV_OUTDIR)/env-$*.o $(ENV_OUTDIR)/resolver-$*.o
 
 $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
 	$(CL65) $(CFLAGS) -c -o $@ $<

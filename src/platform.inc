@@ -40,6 +40,19 @@ CART_MARKER         = $033c
 CART_MARKER_0       = $ef
 CART_MARKER_1       = $64
 
+; The current room's environment module (weather + ambient sound) - see
+; PLATFORM_API.md's "Room environment module". Copied in from EasyFlash at
+; room entry, called every frame from the resident raster IRQ, so it lives
+; in reserved, always-RAM address space (cfg/myc64.cfg's ENVCODE), never a
+; banked window. Fixed jump-table layout, 3 bytes per vector (a plain JMP):
+; offset 0 init, 3 tick, 6 enable, 9 disable.
+ENVCODE_BASE    = $7E00
+ENVCODE_SIZE    = $0200
+ENVCODE_INIT    = ENVCODE_BASE
+ENVCODE_TICK    = ENVCODE_BASE + 3
+ENVCODE_ENABLE  = ENVCODE_BASE + 6
+ENVCODE_DISABLE = ENVCODE_BASE + 9
+
 ; Thin call wrapper for any resident routine that needs to run banked code:
 ; switches to the given EasyFlash bank (16 KiB mode), makes the call, then
 ; unwinds back to whatever bank/mode/CPU map was active before - safe to

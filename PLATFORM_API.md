@@ -761,8 +761,10 @@ callers outside the portrait-resume path normally want
 `platform_rain_enable()`, not this directly.
 
 `platform_rain_is_active()` reports whether rain is currently on; it exists
-mainly for callers (like the portrait code) that need to pause and later
-resume rain without assuming its prior state.
+for callers that need to pause and later resume rain without assuming its
+prior state (the portrait code goes through `env_disable()`/`env_enable()`
+instead - see "Room environment module" below - rather than calling this
+directly).
 
 The shared streak bitmap occupies `$3B80-$3BBF`; all seven sprite pointers
 point at it (`$EE`), since the bitmap is static and only sprite position
@@ -774,6 +776,63 @@ bank) for the full 256-ID range, mirroring the room asset layout's fixed
 `bank = first_bank + id / per_bank` formula. See
 `EASYFLASH_CARTRIDGE.md` for the complete bank table.
 
+## Room environment module
+
+A room's environment module unifies its weather (the rain sprites above)
+and ambient sound (a SID rain-bed/droplet/footstep routine) behind one
+small jump-table API, refreshed per room the same way room code is:
+
+```
+offset 0  JMP env_init     - once, on room entry
+offset 3  JMP env_tick     - once per frame, from the raster IRQ
+offset 6  JMP env_enable   - resume after a pause
+offset 9  JMP env_disable  - pause (e.g. a portrait/conversation)
+```
+
+This is reserved, always-resident RAM (`ENVCODE_BASE`, `$7E00-$7FFF` -
+`src/platform.inc`/`cfg/myc64.cfg`), never a banked `$A4E9`-style overlay:
+the raster IRQ calls `env_tick` every frame via `weather_animate`
+(`src/irq.s`), and interrupt code can never bank-switch to reach a room's
+own EasyFlash bank to fetch it fresh. Instead, the *whole module* - init,
+tick, enable, disable, and whatever persistent state it needs - is copied
+into this one fixed, non-banked address range at room entry, and the
+existing raster IRQ, `game_enter_room()`, and `platform_portrait_show()`/
+`_hide()` all call fixed addresses within it, regardless of which room's
+module (if any) is currently loaded there.
+
+`game_enter_room()` (`src/game.c`) fetches the new room's module via
+`platform_resource_fetch(PLATFORM_RESOURCE_KIND_ENVIRONMENT, room_id,
+ENVCODE_BASE, ENVCODE_SIZE)` - a normal generic resource fetch (see
+"Generic cartridge resources" below), keyed by room ID like
+`PLATFORM_RESOURCE_KIND_ROOM`. A room with no module of its own gets
+`env_install_null()` instead: a stub whose four vectors all just `rts`, so
+every call site can call unconditionally with no "is anything loaded"
+check. The fetch and the two init calls are bracketed by
+`raster_irq_suspend()`/`_resume()` - not just the usual safety margin: the
+fetch's own post-copy checksum verification re-enables interrupts before
+it finishes, and without this bracket the raster IRQ could fire mid-fetch
+and run the *just-copied* module's tick, which mutates its own persistent-
+state bytes - changing the very bytes still being checksummed and
+spuriously failing the fetch. Found live in VICE, not by inspection: room
+00's module kept silently reverting to the null stub even though the copy
+and checksum were each independently correct.
+
+`env_enable()`/`env_disable()` (`src/env_dispatch.s`, thin `jmp` trampolines
+so C code can call them like ordinary functions) are what
+`platform_portrait_show()`/`_hide()` call to pause and resume a room's
+environment unconditionally, replacing what used to be a portrait-specific
+`platform_rain_is_active()`/`_disable()`/`_enable(0)` dance. A room with no
+module simply no-ops.
+
+`rooms/env/<ID>.s` is hand-written ca65 (see `rooms/env/00.s`), not a DSL:
+VIC/SID register poking has no mechanical pattern worth one, the same
+reasoning that made room code's own `asm` escape hatch necessary before
+this. It's built like room code (assembled, resolved against the resident
+image via `tools/generate_room_resolver.py`, linked) but at the fixed
+`ENVCODE_BASE` origin (`cfg/env_module.cfg`) with no header-patching step -
+the generic resource directory already checksums and size-validates the
+linked output, so it *is* the final resource content directly.
+
 ## Generic cartridge resources
 
 ```c
@@ -781,6 +840,7 @@ bank) for the full 256-ID range, mirroring the room asset layout's fixed
 #define PLATFORM_RESOURCE_KIND_SCRIPT       0u
 #define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
 #define PLATFORM_RESOURCE_KIND_ROOM         2u
+#define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
 uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
                                   uint8_t* destination, uint16_t capacity);
 uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,

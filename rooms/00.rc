@@ -1,4 +1,4 @@
-enter_room: asm "rooms/asm/00_enter_room.s"
+enter_room: default
 enter_tile: flag STORY_STATE_ROOM_00_TILE_ENTRY_COUNT increment
 
 look_at:

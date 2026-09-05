@@ -81,13 +81,22 @@ LOOK_HELPERS_OFFSET = 4864
 RESOURCE_KIND_SCRIPT = 0
 RESOURCE_KIND_CONVERSATION = 1
 RESOURCE_KIND_ROOM = 2
+# A room's environment module (weather + ambient sound - see
+# src/platform.h's PLATFORM_RESOURCE_KIND_ENVIRONMENT and rooms/env/). Built
+# from rooms/env/<ID>.s the same way room code is: assembled, resolved
+# against build/game.lbl, linked at a fixed origin (cfg/env_module.cfg
+# targets ENVCODE_BASE) - unlike the other three kinds' build-intermediate
+# files, this one is a linked, relocated binary, not a raw asset copy or a
+# tools/compile_script.py output.
+RESOURCE_KIND_ENVIRONMENT = 3
 # Build-intermediate filename prefix per kind (build/assets/<prefix><ID>) -
 # keep in sync with the Makefile's rules and src/platform.h's
-# PLATFORM_RESOURCE_KIND_* constants, which use the same 0/1/2 values.
+# PLATFORM_RESOURCE_KIND_* constants, which use the same 0/1/2/3 values.
 RESOURCE_KIND_PREFIX = {
     RESOURCE_KIND_SCRIPT: "RS",
     RESOURCE_KIND_CONVERSATION: "RC",
     RESOURCE_KIND_ROOM: "RR",
+    RESOURCE_KIND_ENVIRONMENT: "RE",
 }
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
@@ -104,7 +113,7 @@ RESOURCE_LAST_BANK = 63
 RESOURCE_HALF_BYTES = ROML_BYTES
 RESOURCE_DIRECTORY_ENTRY_BYTES = 8
 RESOURCE_DIRECTORY_BYTES = 256 * RESOURCE_DIRECTORY_ENTRY_BYTES
-RESOURCE_DIRECTORY_COUNT = 3
+RESOURCE_DIRECTORY_COUNT = 4
 RESOURCE_DIRECTORIES_BYTES = RESOURCE_DIRECTORY_COUNT * RESOURCE_DIRECTORY_BYTES
 OUTPUT_BANKS = RESOURCE_LAST_BANK + 1
 ROOM_CODE_HEADER_BYTES = 24
@@ -261,7 +270,7 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
     offset = RESOURCE_DIRECTORIES_BYTES
 
     for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
-                 RESOURCE_KIND_ROOM):
+                 RESOURCE_KIND_ROOM, RESOURCE_KIND_ENVIRONMENT):
         directory = directories[kind]
         for resource_id in range(256):
             data = load_resource(asset_dir, kind, resource_id)
@@ -290,7 +299,7 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
 
     start = RESOURCE_DIRECTORY_BANK * BANK_BYTES
     for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
-                 RESOURCE_KIND_ROOM):
+                 RESOURCE_KIND_ROOM, RESOURCE_KIND_ENVIRONMENT):
         image[start:start + RESOURCE_DIRECTORY_BYTES] = directories[kind]
         start += RESOURCE_DIRECTORY_BYTES
 

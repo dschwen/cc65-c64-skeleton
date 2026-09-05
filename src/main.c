@@ -4,6 +4,9 @@
 #include "game.h"
 #include "world.h"
 
+void raster_irq_suspend(void);
+void raster_irq_resume(void);
+
 #pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
 
@@ -20,10 +23,17 @@ int main(void) {
     platform_init();
     game_state_init();
     game_world_init();
+    /* Same screen-blanked, interrupt-suspended bracket as a room switch
+     * (see platform_room_enter()'s comment) - the starting room's code and
+     * environment module are both bank-copied somewhere in here too. */
+    platform_screen_blank();
+    raster_irq_suspend();
     (void)game_room_code_load_current();
     platform_room_draw(&platform_room, platform_player);
     game_enter_room();
     game_enter_tile();
+    raster_irq_resume();
+    platform_screen_unblank();
     command = 0u;
 
     for (;;) {

@@ -1428,6 +1428,14 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
     return PLATFORM_ERR_FULL;
 }
 
+void platform_screen_blank(void) {
+    P_VIC(0x11) &= 0xefu;
+}
+
+void platform_screen_unblank(void) {
+    P_VIC(0x11) |= 0x10u;
+}
+
 #pragma code-name (push, "LOWCODE")
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y) {
@@ -1439,7 +1447,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 
     if (actor_type == 0u || new_x >= PLATFORM_MAP_CHAR_WIDTH ||
         new_y >= PLATFORM_MAP_CHAR_HEIGHT) return PLATFORM_ERR_ARGUMENT;
-    raster_irq_suspend();
     actor.type = actor_type;
     actor.x = new_x;
     actor.y = new_y;
@@ -1493,7 +1500,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     platform_room_draw(&platform_room, platform_player);
     result = PLATFORM_OK;
 transition_done:
-    raster_irq_resume();
     return result;
 }
 #pragma code-name (pop)

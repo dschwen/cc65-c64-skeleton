@@ -240,10 +240,30 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
 
 /*
+ * Blank/restore the display (VIC_CTRL1's DEN bit) - not just the border, the
+ * whole screen, since border/background are already black throughout
+ * gameplay (see platform_init()). Cheap (one register write, no screen-RAM
+ * clearing) and instant, unlike redrawing over stale content. Bracket a
+ * room switch's bank-copying work with these (see platform_room_enter()'s
+ * own comment) so nothing partially-updated is ever visible.
+ */
+void platform_screen_blank(void);
+void platform_screen_unblank(void);
+
+/*
  * Atomically replace the resident room while carrying one actor. The
  * destination is staged, restored, collision-checked, and allocated a slot
  * before the current player is removed. Persistent mutations other than the
  * runtime player's original spawn remain the storage/save layer's concern.
+ *
+ * Does not suspend the raster IRQ or blank the screen itself - every caller
+ * is followed immediately by game_enter_room()/game_enter_tile() (see
+ * game_process_pending_transition() and saveload_apply_pending()), and all
+ * of it - this call, that sync, and both of those - needs to run as one
+ * screen-blanked, interrupt-suspended room switch with no gap in between,
+ * not two separately-bracketed halves. Bracket the whole sequence with
+ * platform_screen_blank()/_unblank() and raster_irq_suspend()/_resume()
+ * yourself.
  */
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);

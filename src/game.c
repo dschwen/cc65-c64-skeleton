@@ -41,26 +41,28 @@ void game_enter_tile(void) {
     game_room_enter_tile_native();
 }
 
+/* Fetches and activates the current room's environment module - a real
+ * EasyFlash bank-copy into IRQ-reachable memory (env_init(), and the
+ * fetch's own destination, are both live the moment the raster IRQ's next
+ * tick runs). The caller must already be inside a raster_irq_suspend()/
+ * platform_screen_blank() bracket covering the whole room switch (see
+ * platform_room_enter()'s own comment) - not just this call, since
+ * platform_resource_fetch()'s post-copy checksum loop re-enables
+ * interrupts before it finishes summing the just-copied bytes, and without
+ * the bracket the IRQ could fire mid-checksum and run the freshly-copied
+ * (but not yet validated) module's tick, which mutates its own persistent-
+ * state bytes - changing the very bytes still being summed and spuriously
+ * failing the checksum. Found live in VICE: room 00's real environment
+ * module kept getting replaced by the null stub, even though the copy and
+ * checksum were each independently correct. */
 void game_enter_room(void) {
     platform_rain_disable();
-    /* raster_irq_suspend()/_resume() bracket the fetch+init: the raster IRQ
-     * calls ENVCODE_TICK every frame, and platform_resource_fetch()'s own
-     * post-copy checksum loop re-enables interrupts before it finishes
-     * summing the just-copied bytes. Without this, the IRQ could fire mid-
-     * checksum and run the freshly-copied (but not yet validated) module's
-     * tick, which mutates its own persistent-state bytes - changing the
-     * very bytes still being summed and spuriously failing the checksum.
-     * Found live in VICE: room 00's real environment module kept getting
-     * replaced by the null stub, even though the copy and checksum were
-     * both independently correct. */
-    raster_irq_suspend();
     if (platform_resource_fetch(PLATFORM_RESOURCE_KIND_ENVIRONMENT,
                                 game_state.current_room, ENVCODE_BASE,
                                 ENVCODE_SIZE) == 0u) {
         env_install_null();
     }
     env_init();
-    raster_irq_resume();
     game_room_enter_room_native();
 }
 
@@ -118,6 +120,12 @@ uint8_t game_process_pending_transition(void) {
     x = game_state.pending_x;
     y = game_state.pending_y;
     game_state.pending_transition = 0u;
+    /* One screen-blanked, interrupt-suspended bracket for the whole switch
+     * - room data, room code, and the environment module all get bank-
+     * copied somewhere in here - not two separately-bracketed halves (see
+     * platform_room_enter()'s own comment for why that gap is unsafe). */
+    platform_screen_blank();
+    raster_irq_suspend();
     result = platform_room_enter(room, platform_player->type, x, y);
     if (result == PLATFORM_OK) {
         game_player_sync_from_platform();
@@ -125,6 +133,8 @@ uint8_t game_process_pending_transition(void) {
         game_enter_room();
         game_enter_tile();
     }
+    raster_irq_resume();
+    platform_screen_unblank();
     return result;
 }
 

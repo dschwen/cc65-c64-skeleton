@@ -113,6 +113,13 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
 ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
+LOOK_HELPERS_C_OBJ := $(OUTDIR)/look-helpers-module.o
+LOOK_HELPERS_HEADER_OBJ := $(OUTDIR)/look-helpers-header.o
+LOOK_HELPERS_RESOLVER_SRC := $(OUTDIR)/look-helpers-resolver.s
+LOOK_HELPERS_RESOLVER_OBJ := $(OUTDIR)/look-helpers-resolver.o
+LOOK_HELPERS_MODULE_CFG := cfg/look_helpers_overlay.cfg
+LOOK_HELPERS_MODULE_RAW := $(OUTDIR)/look-helpers.raw
+LOOK_HELPERS_MODULE := $(OUTDIR)/LH
 SCRIPT_C_OBJ := $(OUTDIR)/script-module.o
 SCRIPT_HEADER_OBJ := $(OUTDIR)/script-header.o
 SCRIPT_RESOLVER_SRC := $(OUTDIR)/script-resolver.s
@@ -127,7 +134,7 @@ DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
 all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE) \
-	$(ROOM_HELPERS_MODULE) $(SCRIPT_MODULE)
+	$(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE)
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -324,6 +331,31 @@ $(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
 	python3 tools/finalize_inventory_overlay.py --input $< \
 		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
 
+$(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(LOOK_HELPERS_HEADER_OBJ): modules/look_helpers_header.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(LOOK_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(LOOK_HELPERS_C_OBJ) \
+		$(LOOK_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(LOOK_HELPERS_C_OBJ) $(LOOK_HELPERS_HEADER_OBJ)
+
+$(LOOK_HELPERS_RESOLVER_OBJ): $(LOOK_HELPERS_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(LOOK_HELPERS_MODULE_RAW): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
+		$(LOOK_HELPERS_RESOLVER_OBJ) $(LOOK_HELPERS_MODULE_CFG)
+	$(LD65) -C $(LOOK_HELPERS_MODULE_CFG) -m $(OUTDIR)/look-helpers.map -o $@ \
+		$(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
+		$(LOOK_HELPERS_RESOLVER_OBJ)
+
+$(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_MODULE_RAW) \
+		tools/finalize_inventory_overlay.py
+	python3 tools/finalize_inventory_overlay.py --input $< \
+		--map $(OUTDIR)/look-helpers.map --magic LH --output $@
+
 $(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h | $(OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
@@ -407,13 +439,15 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
-		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(SCRIPT_MODULE) tools/pack_easyflash.py \
+		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE) \
+		tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
 		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
+		--look-helpers $(LOOK_HELPERS_MODULE) \
 		--script $(SCRIPT_MODULE) \
 		--output $@
 

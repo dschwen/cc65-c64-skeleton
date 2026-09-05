@@ -54,6 +54,13 @@ ROOM_HELPERS_OFFSET = 1024
 # src/script_runtime.c's SCRIPT_EF_OFFSET.
 SCRIPT_BANK = TYPE_BANK_1
 SCRIPT_OFFSET = 2048
+# Look-helpers overlay ("LH": platform_look_tile/_check/object_take_prompt/
+# object_taken_message, see modules/look_helpers.c). Same shared half, at a
+# further offset past script (measured script size today is ~2.5 KiB, so
+# this leaves it room to grow); keep in sync with src/platform.c's
+# LOOK_HELPERS_EF_OFFSET.
+LOOK_HELPERS_BANK = TYPE_BANK_1
+LOOK_HELPERS_OFFSET = 4864
 # Compiled script/conversation/room bytecode (tools/compile_script.py) is
 # data, not code, and goes through the generic resource directory below like
 # any other resource - NOT through SCRIPT_BANK/OFFSET, which is only this
@@ -310,7 +317,8 @@ def load_overlay(path: Path, magic: bytes) -> bytes:
 
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
                 code_dir: Path, inventory: Path, saveload: Path,
-                saveload_save: Path, room_helpers: Path, script: Path) -> bytes:
+                saveload_save: Path, room_helpers: Path, look_helpers: Path,
+                script: Path) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -355,6 +363,13 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         raise ValueError("script overlay exceeds its ROML half")
     start = SCRIPT_BANK * BANK_BYTES + SCRIPT_OFFSET
     image[start:start + len(script_data)] = script_data
+    look_helpers_data = load_overlay(look_helpers, b"LH")
+    if LOOK_HELPERS_OFFSET < SCRIPT_OFFSET + len(script_data):
+        raise ValueError("LOOK_HELPERS_OFFSET overlaps the script overlay")
+    if LOOK_HELPERS_OFFSET + len(look_helpers_data) > ROML_BYTES:
+        raise ValueError("look-helpers overlay exceeds its ROML half")
+    start = LOOK_HELPERS_BANK * BANK_BYTES + LOOK_HELPERS_OFFSET
+    image[start:start + len(look_helpers_data)] = look_helpers_data
     for portrait_id in range(256):
         bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
         offset = (portrait_id % PORTRAITS_PER_BANK) * PORTRAIT_BYTES
@@ -374,13 +389,15 @@ def main() -> None:
     parser.add_argument("--saveload", type=Path, required=True)
     parser.add_argument("--saveload-save", type=Path, required=True)
     parser.add_argument("--room-helpers", type=Path, required=True)
+    parser.add_argument("--look-helpers", type=Path, required=True)
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
                     args.room_code, args.inventory, args.saveload,
-                    args.saveload_save, args.room_helpers, args.script)
+                    args.saveload_save, args.room_helpers, args.look_helpers,
+                    args.script)
     )
 
 

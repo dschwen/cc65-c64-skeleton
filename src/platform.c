@@ -188,9 +188,6 @@ const uint8_t platform_light_distance[16u * 16u] = {
     15, 16, 16, 16, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
 };
 static const uint8_t look_cursor_colors[8] = {0, 11, 12, 15, 1, 15, 12, 11};
-static const uint8_t look_range_by_light[PLATFORM_LIGHT_LEVEL_COUNT] = {
-    0, 2, 6, 0xff
-};
 #pragma rodata-name (pop)
 
 static uint8_t dirty_cells[DIRTY_BYTES];
@@ -229,21 +226,12 @@ static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
-static uint8_t look_counts[PLATFORM_OBJECT_TYPE_COUNT];
-static char look_buffer[81];
 #pragma bss-name (pop)
 static PlatformRoomStoreHook room_store_hook;
 static PlatformRoomRestoreHook room_restore_hook;
 static uint8_t player_spawn_room;
 static uint8_t player_spawn_slot;
 static uint8_t player_spawn_type;
-static uint8_t look_length;
-static uint8_t look_truncated;
-#pragma rodata-name (push, "UPPERRODATA")
-static const char take_prompt_prefix[] = "Take: ";
-static const char take_prompt_arrows[] = "   < >";
-static const char taken_suffix[] = " taken.";
-#pragma rodata-name (pop)
 
 #pragma code-name (push, "CODE")
 static void write_screen_cell(uint8_t x, uint8_t y,
@@ -549,6 +537,95 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     return room_helpers_result;
+}
+#pragma code-name (pop)
+
+/*
+ * Look-helpers overlay ("LH"): platform_look_tile/_check/object_take_prompt/
+ * object_taken_message's actual bodies (modules/look_helpers.c). Same
+ * shared TYPE_BANK_1 ROML half as room-helpers/script above, at a further
+ * offset past both - see tools/pack_easyflash.py's LOOK_HELPERS_EF_OFFSET.
+ * platform_look_exit() stays here (not moved): it calls
+ * platform_room_neighbor() above, itself an overlay in this same window,
+ * so it must stay resident to call that sequentially without overwriting
+ * its own still-executing code if it were overlay content too.
+ */
+#define LOOK_HELPERS_EF_BANK    47u
+#define LOOK_HELPERS_EF_OFFSET  4864u
+#define LOOK_HELPERS_MAGIC_0    0x4Cu /* 'L' */
+#define LOOK_HELPERS_MAGIC_1    0x48u /* 'H' */
+#define LOOK_HELPERS_OP_TILE         0u
+#define LOOK_HELPERS_OP_TILE_CHECK   1u
+#define LOOK_HELPERS_OP_TAKE_PROMPT  2u
+#define LOOK_HELPERS_OP_TAKEN_MSG    3u
+
+/* Explicitly zero-initialized (not plain BSS) - see room_helpers_room's own
+ * comment above for why. */
+const PlatformRoom* look_helpers_room = 0;
+const PlatformObject* look_helpers_viewer = 0;
+uint8_t look_helpers_tile_x = 0;
+uint8_t look_helpers_tile_y = 0;
+uint8_t look_helpers_color = 0;
+uint8_t look_helpers_type_id = 0;
+uint8_t look_helpers_op = 0;
+uint8_t look_helpers_result = 0;
+
+#pragma code-name (push, "HIGHCODE")
+uint8_t platform_look_tile_check(const PlatformRoom* room,
+                                 const PlatformObject* viewer,
+                                 uint8_t tile_x, uint8_t tile_y,
+                                 uint8_t color) {
+    uint8_t status;
+
+    look_helpers_op = LOOK_HELPERS_OP_TILE_CHECK;
+    look_helpers_room = room;
+    look_helpers_viewer = viewer;
+    look_helpers_tile_x = tile_x;
+    look_helpers_tile_y = tile_y;
+    look_helpers_color = color;
+    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
+                                   LOOK_HELPERS_EF_OFFSET,
+                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    if (status != PLATFORM_OK) return status;
+    platform_overlay_run_native();
+    return look_helpers_result;
+}
+
+uint8_t platform_look_tile(const PlatformRoom* room,
+                           uint8_t tile_x, uint8_t tile_y, uint8_t color) {
+    uint8_t status;
+
+    look_helpers_op = LOOK_HELPERS_OP_TILE;
+    look_helpers_room = room;
+    look_helpers_tile_x = tile_x;
+    look_helpers_tile_y = tile_y;
+    look_helpers_color = color;
+    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
+                                   LOOK_HELPERS_EF_OFFSET,
+                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    if (status != PLATFORM_OK) return status;
+    platform_overlay_run_native();
+    return look_helpers_result;
+}
+
+void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
+    look_helpers_op = LOOK_HELPERS_OP_TAKE_PROMPT;
+    look_helpers_type_id = type_id;
+    look_helpers_color = color;
+    if (platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
+                              LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1) !=
+        PLATFORM_OK) return;
+    platform_overlay_run_native();
+}
+
+void platform_object_taken_message(uint8_t type_id, uint8_t color) {
+    look_helpers_op = LOOK_HELPERS_OP_TAKEN_MSG;
+    look_helpers_type_id = type_id;
+    look_helpers_color = color;
+    if (platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
+                              LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1) !=
+        PLATFORM_OK) return;
+    platform_overlay_run_native();
 }
 #pragma code-name (pop)
 
@@ -1491,34 +1568,6 @@ void platform_text_write_line(uint8_t line, uint8_t column,
     }
 }
 
-static void look_append_char(char ch) {
-    if (look_length < 80u) {
-        look_buffer[look_length++] = ch;
-    } else {
-        look_truncated = 1u;
-    }
-}
-
-static void look_append_string(const char* text) {
-    while (*text != '\0') look_append_char(*text++);
-}
-
-static void look_append_count(uint8_t count) {
-    if (count >= 100u) look_append_char((char)('0' + count / 100u));
-    if (count >= 10u) look_append_char((char)('0' + (count / 10u) % 10u));
-    look_append_char((char)('0' + count % 10u));
-    look_append_char(' ');
-}
-
-static void look_append_type_name(uint8_t type_id) {
-    const PlatformObjectTypeInfo* info;
-    uint8_t i;
-    info = platform_object_type_info_get(type_id);
-    for (i = 0u; i < sizeof(info->name) && info->name[i] != '\0'; ++i) {
-        look_append_char(info->name[i]);
-    }
-}
-
 /* Lets a one-shot overlay (e.g. the script/conversation interpreter) borrow
  * this same buffer as scratch RAM while it runs, the same "temporally
  * exclusive" reuse room_commit() already does with room_stage itself. Only
@@ -1534,19 +1583,6 @@ uint8_t* platform_room_scratch(void) {
 
 uint16_t platform_room_scratch_bytes(void) {
     return PLATFORM_ROOM_SCRATCH_MAX_BYTES;
-}
-
-static void look_write_buffer(uint8_t color) {
-    if (look_truncated) {
-        look_buffer[77] = '.';
-        look_buffer[78] = '.';
-        look_buffer[79] = '.';
-        look_length = 80u;
-    }
-    look_buffer[look_length] = '\0';
-    platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
-    platform_text_output_color = color & 0x0fu;
-    platform_text_output_native(look_buffer);
 }
 
 uint8_t platform_object_intersects_tile(const PlatformObject* object,
@@ -1585,48 +1621,16 @@ uint8_t platform_object_intersects_tile(const PlatformObject* object,
     return 0u;
 }
 
-static void look_write_message(const char* text, uint8_t color) {
-    look_length = 0u;
-    look_truncated = 0u;
-    look_append_string(text);
-    look_write_buffer(color);
-}
-
-uint8_t platform_look_tile_check(const PlatformRoom* room,
-                                 const PlatformObject* viewer,
-                                 uint8_t tile_x, uint8_t tile_y,
-                                 uint8_t color) {
-    uint16_t offset;
-    uint8_t light;
-    uint8_t distance_x;
-    uint8_t distance_y;
-    uint8_t distance;
-
-    if (room == 0 || room != rendered_room || viewer == 0 ||
-        tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
-        return PLATFORM_ERR_ARGUMENT;
-    }
-    offset = (uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x;
-    if (platform_view_tiles[offset] == 0u) {
-        look_write_message("I cannot see that.", color);
-        return PLATFORM_ERR_BLOCKED;
-    }
-
-    light = platform_brightness[offset] & 0x03u;
-
-    distance_x = (viewer->x >> 1) > tile_x
-                     ? (uint8_t)((viewer->x >> 1) - tile_x)
-                     : (uint8_t)(tile_x - (viewer->x >> 1));
-    distance_y = (viewer->y >> 1) > tile_y
-                     ? (uint8_t)((viewer->y >> 1) - tile_y)
-                     : (uint8_t)(tile_y - (viewer->y >> 1));
-    distance = distance_x > distance_y ? distance_x : distance_y;
-    if (light == PLATFORM_LIGHT_NONE || distance > look_range_by_light[light]) {
-        look_write_message(
-            "It is too dark to make anything out. I need to get closer!", color);
-        return PLATFORM_ERR_BLOCKED;
-    }
-    return PLATFORM_OK;
+/* platform_look_tile_check()'s real body now lives in the look-helpers
+ * overlay (see the platform_look_tile_check wrapper earlier in this file);
+ * platform_look_exit() calls that wrapper like any other caller. Its own
+ * two messages are fixed literals - unlike look_tile/_check's dynamically
+ * assembled ones, they need none of the moved look_buffer/look_append_*
+ * machinery, just a direct write. */
+static void look_exit_write(const char* text, uint8_t color) {
+    platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
+    platform_text_output_color = color & 0x0fu;
+    platform_text_output_native(text);
 }
 
 #pragma code-name (push, "UPPERCODE")
@@ -1641,7 +1645,7 @@ uint8_t platform_look_exit(const PlatformRoom* room,
     result = platform_look_tile_check(room, viewer, edge_x, edge_y, color);
     if (result != PLATFORM_OK) return result;
     if (platform_room_neighbor(room, direction, &neighbor) != PLATFORM_OK) {
-        look_write_message("There is no exit that way.", color);
+        look_exit_write("There is no exit that way.", color);
         return PLATFORM_ERR_NOT_FOUND;
     }
 
@@ -1649,72 +1653,10 @@ uint8_t platform_look_exit(const PlatformRoom* room,
      * etc. are currently unread (see the PlatformRoom doc comment); this
      * always shows the generic message until that's built on top of the
      * room-script mechanism (game_room_script_entry()). */
-    look_length = 0u;
-    look_truncated = 0u;
-    look_append_string("An exit.");
-    look_write_buffer(color);
+    look_exit_write("An exit.", color);
     return PLATFORM_OK;
-}
-
-void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
-    look_length = 0u;
-    look_truncated = 0u;
-    look_append_string(take_prompt_prefix);
-    look_append_type_name(type_id);
-    look_append_string(take_prompt_arrows);
-    look_write_buffer(color);
-}
-
-void platform_object_taken_message(uint8_t type_id, uint8_t color) {
-    look_length = 0u;
-    look_truncated = 0u;
-    look_append_type_name(type_id);
-    look_append_string(taken_suffix);
-    look_write_buffer(color);
 }
 #pragma code-name (pop)
-
-uint8_t platform_look_tile(const PlatformRoom* room,
-                           uint8_t tile_x, uint8_t tile_y, uint8_t color) {
-    uint16_t i;
-    uint16_t limit;
-    uint8_t type_id;
-    uint8_t count;
-    uint8_t found;
-
-    if (room == 0 || tile_x >= PLATFORM_MAP_WIDTH ||
-        tile_y >= PLATFORM_MAP_HEIGHT) {
-        return PLATFORM_ERR_ARGUMENT;
-    }
-    look_length = 0u;
-    look_truncated = 0u;
-    look_append_string("You see: ");
-
-    memset(look_counts, 0, sizeof(look_counts));
-    limit = room == rendered_room ? rendered_object_limit : PLATFORM_ROOM_OBJECT_COUNT;
-    for (i = 0u; i < limit; ++i) {
-        type_id = room->objects[i].type;
-        if (type_id == 0u ||
-            !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
-        if (look_counts[type_id] != 0xffu) ++look_counts[type_id];
-    }
-    found = 0u;
-    for (i = 0u; i < limit; ++i) {
-        type_id = room->objects[i].type;
-        count = look_counts[type_id];
-        if (type_id == 0u || count == 0u ||
-            !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
-        if (found) look_append_string(", ");
-        if (count > 1u) look_append_count(count);
-        look_append_type_name(type_id);
-        look_counts[type_id] = 0u;
-        found = 1u;
-    }
-    if (!found) look_append_string("nothing");
-    look_append_char('.');
-    look_write_buffer(color);
-    return PLATFORM_OK;
-}
 
 static void look_cursor_position(uint8_t tile_x, uint8_t tile_y) {
     uint16_t sprite_x;

@@ -1,8 +1,9 @@
 enter_room: default
-enter_tile: flag STORY_STATE_ROOM_00_TILE_ENTRY_COUNT increment
+enter_tile: asm "rooms/asm/00_enter_tile.s"
 
 look_at:
     at 18,3 -> script STORY_ROOM00_LOOK_TREE
+    at 7,5 -> script STORY_ROOM00_LOOK_MILESTONE
     default -> GAME_LOOK_DEFAULT
 
 use_at:

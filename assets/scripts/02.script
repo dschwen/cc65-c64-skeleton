@@ -1,0 +1,7 @@
+/* Room 02 - the inn's guest room. See rooms/02.rc for the door dispatch and
+ * STORY_ROOM02_* in src/story.h for this key. */
+room 02 {
+    entry STORY_ROOM02_LEAVE_INN {
+        room_transition 1 21 5
+    }
+}

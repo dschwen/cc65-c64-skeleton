@@ -6,6 +6,9 @@
 /* Story-owned GameState.flags byte indices. Keep assigned values stable. */
 #define STORY_STATE_ROOM_00_TILE_ENTRY_COUNT  0u
 #define STORY_STATE_ROOM_01_TILE_ENTRY_COUNT  1u
+#define STORY_STATE_ROOM_00_MILESTONE_SEEN    2u
+#define STORY_STATE_ROOM_00_MYSTERY_TRIGGERED 3u
+#define STORY_STATE_ROOM_01_ARRIVAL_SHOWN     4u
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -15,6 +18,13 @@
  * Keep assigned values stable per room, same as the flag indices above. */
 #define STORY_ROOM00_LOOK_TREE  1u
 #define STORY_ROOM00_USE_TREE   2u
+#define STORY_ROOM00_LOOK_MILESTONE     3u
+#define STORY_ROOM00_MYSTERY_SEQUENCE   4u
+
+#define STORY_ROOM01_ARRIVAL     1u
+#define STORY_ROOM01_ENTER_INN   2u
+
+#define STORY_ROOM02_LEAVE_INN   1u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

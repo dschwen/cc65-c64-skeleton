@@ -1,0 +1,11 @@
+/* Room 01 - crossroads and inn exterior. See rooms/01.rc/rooms/asm/
+ * 01_enter_room.s for the arrival hook, and STORY_ROOM01_* in src/story.h
+ * for these keys. */
+room 01 {
+    entry STORY_ROOM01_ARRIVAL {
+        text "Suddenly a mysterious inn appears, a stroke of luck for the weary traveler, or a cursed mirage?"
+    }
+    entry STORY_ROOM01_ENTER_INN {
+        room_transition 2 17 19
+    }
+}

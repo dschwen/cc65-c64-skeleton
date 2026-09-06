@@ -5,4 +5,5 @@ look_at:
     default -> GAME_LOOK_DEFAULT
 
 use_at:
+    at 8,10 -> script STORY_ROOM02_LEAVE_INN
     default -> GAME_USE_DEFAULT

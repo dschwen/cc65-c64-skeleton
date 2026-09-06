@@ -25,15 +25,18 @@ int main(void) {
     game_world_init();
     /* Same screen-blanked, interrupt-suspended bracket as a room switch
      * (see platform_room_enter()'s comment) - the starting room's code and
-     * environment module are both bank-copied somewhere in here too. */
-    platform_screen_blank();
+     * environment module are both bank-copied somewhere in here too.
+     * game_transition_message is always empty on startup in practice -
+     * wired through the same two helpers as game_process_pending_transition()
+     * purely for consistency. */
+    game_transition_message_show();
     raster_irq_suspend();
     (void)game_room_code_load_current();
-    platform_room_draw(&platform_room, platform_player);
     game_enter_room();
+    platform_sprites_hide_all();
     game_enter_tile();
     raster_irq_resume();
-    platform_screen_unblank();
+    game_transition_reveal();
     command = 0u;
 
     for (;;) {

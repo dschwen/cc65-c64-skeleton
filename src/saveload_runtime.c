@@ -85,8 +85,12 @@ static uint8_t saveload_apply_pending(void) {
 
     /* One screen-blanked, interrupt-suspended bracket for the whole switch,
      * same as game_process_pending_transition() - see platform_room_enter()'s
-     * own comment for why the gap between two separate brackets is unsafe. */
-    platform_screen_blank();
+     * own comment for why the gap between two separate brackets is unsafe.
+     * game_transition_message is always empty on this path in practice
+     * (nothing sets it for a save/load restore) - wired through the same
+     * two helpers as game_process_pending_transition() purely for
+     * consistency, not because this path needs the loading-message feature. */
+    game_transition_message_show();
     raster_irq_suspend();
     result = platform_room_enter(room, type, x, y);
     game_world_enable_store_hook();
@@ -94,10 +98,11 @@ static uint8_t saveload_apply_pending(void) {
         game_player_sync_from_platform();
         game_entry_reason = GAME_ENTRY_LOAD;
         game_enter_room();
+        platform_sprites_hide_all();
         game_enter_tile();
     }
     raster_irq_resume();
-    platform_screen_unblank();
+    game_transition_reveal();
     return result;
 }
 

@@ -1335,6 +1335,7 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     uint8_t direction;
     uint8_t room_id;
     uint8_t tile;
+    uint8_t result;
 
     if (platform_player == 0 || platform_player->type == 0u) {
         return PLATFORM_ERR_ARGUMENT;
@@ -1366,8 +1367,10 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     if (platform_room_neighbor(&platform_room, direction, &room_id) != PLATFORM_OK) {
         return PLATFORM_ERR_BLOCKED;
     }
-    return platform_room_enter(room_id, platform_player->type,
-                               (uint8_t)new_x, (uint8_t)new_y);
+    result = platform_room_enter(room_id, platform_player->type,
+                                 (uint8_t)new_x, (uint8_t)new_y);
+    platform_room_draw(&platform_room, platform_player);
+    return result;
 }
 
 #pragma code-name (push, "LOWCODE")
@@ -1436,6 +1439,10 @@ void platform_screen_unblank(void) {
     P_VIC(0x11) |= 0x10u;
 }
 
+void platform_sprites_hide_all(void) {
+    P_VIC(0x15) = 0u;
+}
+
 #pragma code-name (push, "LOWCODE")
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y) {
@@ -1466,27 +1473,23 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     }
     result = game_room_code_prepare(room_id);
     if (result != PLATFORM_OK) {
-        platform_room_draw(&platform_room, platform_player);
         goto transition_done;
     }
     if (room_store_hook != 0) {
         result = room_store_hook(&platform_room);
         if (result != PLATFORM_OK) {
-            platform_room_draw(&platform_room, platform_player);
             goto transition_done;
         }
     }
     if (room_restore_hook != 0) {
         result = room_restore_hook(&room_stage);
         if (result != PLATFORM_OK) {
-            platform_room_draw(&platform_room, platform_player);
             goto transition_done;
         }
     }
     result = platform_room_object_add(&room_stage, actor.type,
                                       actor.x, actor.y, &slot);
     if (result != PLATFORM_OK) {
-        platform_room_draw(&platform_room, platform_player);
         goto transition_done;
     }
 
@@ -1497,7 +1500,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     room_commit(&platform_room, room_id);
     platform_player = &platform_room.objects[slot];
     game_room_code_activate();
-    platform_room_draw(&platform_room, platform_player);
     result = PLATFORM_OK;
 transition_done:
     return result;

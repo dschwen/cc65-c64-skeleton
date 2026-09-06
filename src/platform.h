@@ -250,6 +250,13 @@ const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
 void platform_screen_blank(void);
 void platform_screen_unblank(void);
 
+/* Clears VIC sprite-enable ($D015) to 0 - used to suppress an environment
+ * module's env_init()-enabled sprites (e.g. rain) while a loading message
+ * keeps the display on (DEN) during a transition; env_enable() restores
+ * whatever the current module wants visible again (see
+ * game_transition_reveal() in src/game.c). */
+void platform_sprites_hide_all(void);
+
 /*
  * Atomically replace the resident room while carrying one actor. The
  * destination is staged, restored, collision-checked, and allocated a slot
@@ -264,6 +271,13 @@ void platform_screen_unblank(void);
  * not two separately-bracketed halves. Bracket the whole sequence with
  * platform_screen_blank()/_unblank() and raster_irq_suspend()/_resume()
  * yourself.
+ *
+ * Does not draw either, on success or failure - call
+ * platform_room_draw(&platform_room, platform_player) yourself exactly once
+ * after this returns (correct either way: the old room on failure, the new
+ * one on success), deferred until whenever the caller wants it to become
+ * visible - see game_transition_reveal() in src/game.c, which needs that
+ * deferred until after an optional loading message's keypress.
  */
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);

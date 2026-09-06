@@ -52,6 +52,25 @@ typedef struct GameState {
 extern GameState game_state;
 extern uint8_t game_entry_reason;
 
+/* Set (with the message already shown - see game_transition_show_message()
+ * below) when a loading message is up and should keep the screen black
+ * through the next transition's whole load, then wait for a keypress before
+ * revealing the new room; 0 for today's immediate-reveal behavior. Set by
+ * modules/script.c's OP_ROOM_TRANSITION/OP_ROOM_TRANSITION_HERE handling.
+ * Transient - not part of GameState, never saved, always cleared after one
+ * use (see game_transition_reveal()). */
+extern uint8_t game_transition_pending_message;
+
+/* Resident (unlike platform_text_output_native, not a banked overlay - the
+ * script interpreter overlay calls this directly on its own windowed string
+ * data, the same way it already calls game_transition_request()). Blanks,
+ * clears the map area (rows 0-22; game_text_write clears the status rows
+ * itself), writes text into the top status row, unblanks, and sets
+ * game_transition_pending_message - all synchronously, right when the
+ * script opcode that specified the message runs (long before the deferred
+ * transition itself is applied). */
+void game_transition_show_message(const char* text);
+
 /* Resident engine API. Room handlers normally use the room-overlay API below. */
 void game_state_init(void);
 void game_player_sync_from_platform(void);
@@ -61,6 +80,19 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y);
 uint8_t game_process_pending_transition(void);
 void game_enter_room(void);
 void game_enter_tile(void);
+/* Phase A/C of a message-aware transition bracket - see
+ * game_transition_pending_message's own comment. game_transition_message_show()
+ * replaces a bare platform_screen_blank() before raster_irq_suspend(): a
+ * no-op (today's exact behavior) if no message is pending, since the
+ * message (if any) was already shown - see game_transition_show_message() -
+ * and should stay up through the whole load rather than being blanked away
+ * now. game_transition_reveal() replaces the final platform_room_draw()+
+ * platform_screen_unblank() after raster_irq_resume(): waits for a keypress
+ * first if a message was shown, then blanks, draws, clears the message out
+ * of the status rows, restores the new room's environment module's visual
+ * state, and unblanks. */
+void game_transition_message_show(void);
+void game_transition_reveal(void);
 uint8_t __fastcall__ game_look_at(uint8_t tile_x, uint8_t tile_y);
 uint8_t __fastcall__ game_use_at(uint8_t tile_x, uint8_t tile_y);
 uint8_t game_room_code_prepare(uint8_t room_id);

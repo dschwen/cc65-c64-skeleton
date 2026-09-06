@@ -70,21 +70,33 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          multiple yes/no facts into one flag byte; there's
                          no separate "bit clear" cmp, use the false branch)
     0x06 WAIT_KEY                                        no operands
-    0x07 ROOM_TRANSITION  room:1  x:1  y:1
+    0x07 ROOM_TRANSITION  room:1  x:1  y:1  msg:2
                          x,y are half-tile (character-cell) coordinates -
                          the same units as game_state.player_x/player_y -
                          not the coarser whole-tile grid; bounds-checked
                          against PLATFORM_MAP_CHAR_WIDTH/HEIGHT (40x22).
+                         msg is an absolute string-table offset (0xFFFF =
+                         no message, the DSL's default when the trailing
+                         string is omitted) copied into a resident buffer
+                         before the transition is queued - see
+                         game_transition_message in src/game.h. When set,
+                         the screen goes black with that message visible
+                         for the whole (possibly multi-frame) load, then
+                         waits for a keypress before revealing the new
+                         room; when not set, the reveal is immediate, same
+                         as before this operand existed.
     0x08 SOUND            id:1
     0x09 GIVE_OBJECT       type:1  quantity:1
-    0x0A ROOM_TRANSITION_HERE  room:1
+    0x0A ROOM_TRANSITION_HERE  room:1  msg:2
                          like ROOM_TRANSITION, but the destination is
                          wherever the player already is (game_state.
                          player_x/player_y, used as-is - already the same
                          half-tile unit ROOM_TRANSITION's x,y takes)
                          instead of a fixed x,y - for a door/edge that leads
                          into a room continuing at the same map position,
-                         e.g. two rooms sharing a scrolled-off edge.
+                         e.g. two rooms sharing a scrolled-off edge. msg is
+                         the same optional loading-message offset as
+                         ROOM_TRANSITION's.
     0x0B SET_BIT          index:1  bit:1
                          sets bit `bit` (0-7) of flags[index], leaving its
                          other bits untouched - a no-op if bit >= 8. The
@@ -155,6 +167,9 @@ DSL syntax:
         }
         entry 7 {
             room_transition_here 01
+        }
+        entry 10 {
+            room_transition 02 17 19 "Entering the tavern..."
         }
         entry 8 {
             text "You break the seal."
@@ -349,15 +364,17 @@ class LightningStmt(Stmt):
 
 
 class RoomTransitionStmt(Stmt):
-    def __init__(self, room: int, x: int, y: int) -> None:
+    def __init__(self, room: int, x: int, y: int, text: str | None) -> None:
         self.room = room
         self.x = x
         self.y = y
+        self.text = text
 
 
 class RoomTransitionHereStmt(Stmt):
-    def __init__(self, room: int) -> None:
+    def __init__(self, room: int, text: str | None) -> None:
         self.room = room
+        self.text = text
 
 
 class SoundStmt(Stmt):
@@ -582,11 +599,13 @@ class Parser:
             room = self.resolve_number()
             x = self.resolve_number()
             y = self.resolve_number()
-            return RoomTransitionStmt(room, x, y)
+            text = self.advance().value if self.peek().kind == "string" else None
+            return RoomTransitionStmt(room, x, y, text)
         if tok.value == "room_transition_here":
             self.advance()
             room = self.resolve_number()
-            return RoomTransitionHereStmt(room)
+            text = self.advance().value if self.peek().kind == "string" else None
+            return RoomTransitionHereStmt(room, text)
         if tok.value == "sound":
             self.advance()
             return SoundStmt(self.resolve_number())
@@ -690,8 +709,18 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
         elif isinstance(stmt, RoomTransitionStmt):
             buf += bytes([OP_ROOM_TRANSITION, check_u8(stmt.room),
                           check_u8(stmt.x), check_u8(stmt.y)])
+            if stmt.text is not None:
+                patches.append(Patch(len(buf), stmt.text))
+                buf += bytes(2)
+            else:
+                buf += b"\xff\xff"
         elif isinstance(stmt, RoomTransitionHereStmt):
             buf += bytes([OP_ROOM_TRANSITION_HERE, check_u8(stmt.room)])
+            if stmt.text is not None:
+                patches.append(Patch(len(buf), stmt.text))
+                buf += bytes(2)
+            else:
+                buf += b"\xff\xff"
         elif isinstance(stmt, SoundStmt):
             buf += bytes([OP_SOUND, check_u8(stmt.sound_id)])
         elif isinstance(stmt, GiveObjectStmt):

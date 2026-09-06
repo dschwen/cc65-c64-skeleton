@@ -63,6 +63,8 @@
 #define OP_CLEAR_BIT        0x0Cu
 #define OP_LIGHTNING        0x0Du
 
+#define TRANSITION_MSG_NONE 0xFFFFu
+
 #define KEYWORD_BYTES       4u
 #define TOPIC_ENTRY_BYTES   6u
 #define KEY_RETURN          13u
@@ -131,6 +133,26 @@ static uint8_t read_byte(uint16_t pos) {
 
 static uint16_t read_u16(uint16_t pos) {
     return (uint16_t)read_byte(pos) | ((uint16_t)read_byte(pos + 1u) << 8);
+}
+
+/* Handles OP_ROOM_TRANSITION/OP_ROOM_TRANSITION_HERE's optional trailing
+ * message operand. offset == TRANSITION_MSG_NONE (the DSL's default, no
+ * trailing string) clears game_transition_pending_message, so a message
+ * from an earlier transition can never leak into a later message-less one.
+ * Otherwise, ensure_window_at(offset) re-centers script_buf so the string
+ * starts at script_buf[0] with the window's full remaining capacity behind
+ * it (same trick say() uses), then hands that contiguous pointer straight
+ * to game_transition_show_message() - a resident function, not another
+ * banked overlay, so this is safe to call directly, the same way this file
+ * already calls game_transition_request(). Must happen now, synchronously,
+ * before this overlay returns and script_buf's window is gone. */
+static void set_transition_message(uint16_t offset) {
+    if (offset == TRANSITION_MSG_NONE) {
+        game_transition_pending_message = 0u;
+        return;
+    }
+    ensure_window_at(offset);
+    game_transition_show_message((const char*)script_buf);
 }
 
 /* Written as explicit if/return, not `return (a == b);` - a bare comparison
@@ -284,11 +306,14 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * main loop applies the transition (via
                  * game_process_pending_transition()) once this overlay has
                  * returned and freed $A4E9 - the same reason
-                 * saveload_runtime.c's saveload_apply_pending() defers it. */
+                 * saveload_runtime.c's saveload_apply_pending() defers it.
+                 * The optional message string must be copied out now too,
+                 * for the same reason - see set_transition_message(). */
+                set_transition_message(read_u16(pos + 4u));
                 (void)game_transition_request(read_byte(pos + 1u),
                                               read_byte(pos + 2u),
                                               read_byte(pos + 3u));
-                pos += 4u;
+                pos += 6u;
                 break;
             case OP_SOUND:
                 /* No sound-effect table yet; reserved for one. */
@@ -304,10 +329,11 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * (bounds-checked against PLATFORM_MAP_CHAR_WIDTH/HEIGHT,
                  * the character-cell grid) - the same unit game_state.
                  * player_x/y already use, so no conversion is needed. */
+                set_transition_message(read_u16(pos + 2u));
                 (void)game_transition_request(read_byte(pos + 1u),
                                               game_state.player_x,
                                               game_state.player_y);
-                pos += 2u;
+                pos += 4u;
                 break;
             case OP_SET_BIT:
                 set_bit(read_byte(pos + 1u), read_byte(pos + 2u));

@@ -24,7 +24,7 @@ TYPE_BANK_1 = 47
 OBJECT_TYPE_FILE_BYTES = 64
 OBJECT_TYPE_HOT_BYTES = 35
 OBJECT_TYPE_COLD_BYTES = 15
-OBJECT_TYPE_ZONE_A_COUNT = 109
+OBJECT_TYPE_ZONE_A_COUNT = 106
 OBJECT_TYPE_ZONE_B_COUNT = 117
 OBJECT_TYPE_ZONE_AB_COUNT = OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT
 OBJECT_TYPE_ZONE_C_COUNT = 256 - OBJECT_TYPE_ZONE_AB_COUNT
@@ -48,7 +48,7 @@ SAVELOAD_SAVE_BANK = TYPE_BANK_1
 # with room for it to grow some; keep in sync with src/platform.c's
 # ROOM_HELPERS_EF_OFFSET.
 ROOM_HELPERS_BANK = TYPE_BANK_1
-ROOM_HELPERS_OFFSET = 1088
+ROOM_HELPERS_OFFSET = 1216
 # Script/conversation interpreter overlay ("SC": modules/script.c). Same
 # reasoning and same shared half as room-helpers above, at a further offset
 # past it (with margin for room-helpers to grow); keep in sync with

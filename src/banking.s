@@ -319,6 +319,15 @@ _platform_bank_call_leave:
 ; over zero page, low RAM or $C000+ until the software stack moves below
 ; $8000. See MEMORY_MAP_TARGET.md.
 _platform_far_call:
+    ; Register contract, so a banked routine can be an ordinary cc65
+    ; __fastcall__ function: A and X are passed through to the callee and its
+    ; A/X return comes back to the caller. Y is the trampoline's own scratch
+    ; (it carries the argument, then the return byte, across the stretch where
+    ; A is busy switching banks) and is NOT preserved in either direction.
+    ; That covers cc65's 8- and 16-bit argument/return passing, which use A
+    ; and A/X.
+    tay
+
     ; Raster-safe point before disabling interrupts - identical reasoning to
     ; _platform_bank_call_enter's wait above.
     lda platform_raster_irq_active
@@ -349,8 +358,10 @@ far_call_bank_operand = * - 1
     sta ef_shadow_control
     sta EASYFLASH_CONTROL
 
+    tya                         ; hand the argument back to the callee in A
     jsr $0000                   ; operand patched by FAR_CALL
 far_call_target_operand = * - 2
+    tay                         ; stash the callee's return byte
 
     ; Nothing below here is patched, so an inner FAR_CALL cannot disturb this
     ; invocation's unwind - the whole basis of the reentrancy argument above.
@@ -377,8 +388,13 @@ far_call_target_operand = * - 2
     and #CPU_PORT_MASK
     cmp #CPU_MAP_GAME
     bne @skip_resync
+    txa                         ; _raster_irq_resync may clobber X, which
+    pha                         ; carries the high byte of a 16-bit return
     jsr _raster_irq_resync
+    pla
+    tax
 @skip_resync:
+    tya                         ; A := return byte, before plp restores flags
     plp
     rts
 
@@ -508,5 +524,6 @@ _platform_object_types_clear:
     sta CPU_PORT
     plp
     rts
+
 
 

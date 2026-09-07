@@ -87,12 +87,18 @@ ENVCODE_DISABLE = ENVCODE_BASE + 9
 ; Not safe against an interrupt that itself far-calls between the patch and
 ; the jsr below - the codebase contract is that interrupt code never
 ; bank-switches at all.
+; A is carried through in Y while the operands are patched - the patching
+; itself needs A, so without this the callee would receive the target's high
+; byte instead of its argument. Y is the trampoline's scratch either way and
+; is not preserved in either direction; A and X are.
 .macro FAR_CALL bank, target
+    tay
     lda #(bank)
     sta far_call_bank_operand
     lda #<(target)
     sta far_call_target_operand
     lda #>(target)
     sta far_call_target_operand+1
+    tya
     jsr _platform_far_call
 .endmacro

@@ -131,6 +131,14 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
 ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
+# Banked module executed in place from its EasyFlash bank (never copied into
+# RAM, unlike the RH/SC/LH/IV/SL/SV overlays) - see cfg/banked_typeinfo.cfg.
+TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
+TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
+TYPEINFO_RESOLVER_SRC := $(OUTDIR)/typeinfo-resolver.s
+TYPEINFO_RESOLVER_OBJ := $(OUTDIR)/typeinfo-resolver.o
+TYPEINFO_CFG := cfg/banked_typeinfo.cfg
+TYPEINFO_MODULE := $(OUTDIR)/BT
 LOOK_HELPERS_C_OBJ := $(OUTDIR)/look-helpers-module.o
 LOOK_HELPERS_HEADER_OBJ := $(OUTDIR)/look-helpers-header.o
 LOOK_HELPERS_RESOLVER_SRC := $(OUTDIR)/look-helpers-resolver.s
@@ -367,6 +375,27 @@ $(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
 	python3 tools/finalize_inventory_overlay.py --input $< \
 		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
 
+$(TYPEINFO_C_OBJ): modules/typeinfo.c src/platform.h | $(OUTDIR)
+	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+
+$(TYPEINFO_ENTRY_OBJ): modules/typeinfo_entry.s | $(OUTDIR)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+$(TYPEINFO_RESOLVER_SRC): $(OUT_PRG) $(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ) \
+		tools/generate_room_resolver.py | $(OUTDIR)
+	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
+		$(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ)
+
+$(TYPEINFO_RESOLVER_OBJ): $(TYPEINFO_RESOLVER_SRC)
+	$(CL65) $(CFLAGS) -c -o $@ $<
+
+# No finalize step: nothing copies or validates this at run time, so the linked
+# binary is the module - it is executed exactly where the packer puts it.
+$(TYPEINFO_MODULE): $(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) \
+		$(TYPEINFO_RESOLVER_OBJ) $(TYPEINFO_CFG)
+	$(LD65) -C $(TYPEINFO_CFG) -m $(OUTDIR)/typeinfo.map -o $@ \
+		$(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) $(TYPEINFO_RESOLVER_OBJ)
+
 $(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h | $(OUTDIR)
 	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
 
@@ -495,6 +524,7 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
 		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE) \
+		$(TYPEINFO_MODULE) \
 		tools/pack_easyflash.py \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
@@ -502,6 +532,7 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
 		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
+		--typeinfo $(TYPEINFO_MODULE) \
 		--look-helpers $(LOOK_HELPERS_MODULE) \
 		--script $(SCRIPT_MODULE) \
 		--output $@

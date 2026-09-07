@@ -127,7 +127,11 @@ static PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
 static PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
 #pragma bss-name (pop)
 PlatformObjectType platform_object_type_scratch;
-static PlatformObjectTypeInfo object_type_info_scratch;
+/* LOWBSS, and public: the banked module in modules/typeinfo.c fills this, and
+ * it must stay readable while that bank is mapped over $8000-$BFFF. */
+#pragma bss-name (push, "LOWBSS")
+PlatformObjectTypeInfo platform_object_type_info_scratch;
+#pragma bss-name (pop)
 static uint8_t resource_directory_entry[RESOURCE_DIRECTORY_ENTRY_BYTES];
 uint8_t platform_overlay_magic0;
 uint8_t platform_overlay_magic1;
@@ -300,22 +304,11 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
 #pragma code-name (pop)
 
 #pragma code-name (push, "HIGHCODE")
-/* Cold records live alone in EF_TYPE_BANK_0's ROMH half, which nothing else
- * uses. They used to sit in EF_TYPE_BANK_1's ROML half right after the Zone C
- * hot table - but that half also hosts the room-helpers, script and
- * look-helpers overlays at fixed offsets, and zone C + cold + those three
- * need ~9.5 KiB in an 8 KiB half. The overlays are packed last and simply
- * overwrote the cold table, so every type from offset ROOM_HELPERS_OFFSET
- * onwards read back overlay code instead of its name and flags. */
-const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
-    platform_ef_copy_bank = EF_TYPE_BANK_0;
-    platform_ef_copy_offset = OBJECT_TYPE_COLD_BASE +
-        (uint16_t)type_id * OBJECT_TYPE_COLD_BYTES;
-    platform_ef_copy_destination = (uint16_t)&object_type_info_scratch;
-    platform_ef_copy_size = OBJECT_TYPE_COLD_BYTES;
-    platform_easyflash_copy_romh();
-    return &object_type_info_scratch;
-}
+/* platform_object_type_info_get() now lives in an EasyFlash bank and runs in
+ * place - see modules/typeinfo.c for the implementation and src/banked_api.s
+ * for the resident FAR_CALL stub that forwards to it. Cold records themselves
+ * live alone in EF_TYPE_BANK_0's ROMH half; they used to trail the Zone C hot
+ * table in EF_TYPE_BANK_1's ROML half, where the overlays overwrote them. */
 #pragma code-name (pop)
 
 /*

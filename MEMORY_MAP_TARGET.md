@@ -53,7 +53,40 @@ software stack (`$BA00-$BBFF`) and `WORLDDELTA` (`$BC00-$BFE7`) also stay in
 stage 1; they only need to move in stage 2, when the cartridge becomes
 persistent.
 
-## Where the overlay window goes
+## Where the overlay window goes — `$E400` was tried and does NOT work
+
+**Attempted and reverted (kept as `git stash` "overlay window -> E400 WIP").**
+Relocating the window to `$E400` links cleanly: all six overlays relink, the
+finalize tools validate, room code still stages correctly through the new window
+to `$9900`, object types still load, and boot reaches the main loop. But
+**overlay validation then rejects every overlay at the checksum step**, so
+nothing ever runs. Confirmed as a genuine regression by testing the same
+inventory keypress on the previous commit, where `platform_overlay_run_native`
+is reached and `_platform_overlay_validate_invalid` is not.
+
+What is known: the fetched payload is byte-identical in RAM to the built
+overlay file (all 1166 bytes of `IV`), the file's own stored checksum is
+internally consistent, and validation gets as far as
+`_platform_overlay_validate_bss_bounds` — so the size, magic, ABI and
+entry-target checks all pass. Only the checksum loop, which walks the payload
+via `(ptr1),y` from `$E410`, disagrees.
+
+The likely reason is that `$E000-$FFFF` is a bad neighbourhood for anything
+the CPU must *read* around a bank call: the ROMH copy path uses
+`CPU_MAP_CART_16K` (`$07`, HIRAM=1), which maps the KERNAL straight over the
+destination window while copying into it. Writes pass through to RAM, which is
+why the bytes land, but any read in that window under that map returns ROM.
+Whatever the exact mechanism, under-KERNAL RAM is the wrong home for executable
+overlays, and this should not be retried without first proving CPU reads at the
+new base under every map the load path passes through.
+
+Note also that this whole move is **throwaway**: once far calls land and
+overlays become banked code executed in place, the window disappears entirely.
+Freeing `$A000-$AFFF` for the charsets may be better achieved by attacking the
+problem from the far-call end first, rather than relocating a window that is
+about to be deleted.
+
+## Where the overlay window goes (original analysis, superseded above)
 
 The obvious-looking home, `$9000-$9FFF` (VIC-blind, CPU-fine), does **not** work:
 the room-code window already lives at `$9900-$9CFF` and the pristine object

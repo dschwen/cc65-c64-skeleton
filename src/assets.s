@@ -2,19 +2,34 @@
 
 .include "platform.inc"
 
+.export _charset_tile
+.export _charset_text
 .export _tile_data
 .export _tile_properties
 .export _initial_room_data
 .export _initial_object_type_data
 
+; Charsets, tile bitmaps and tile properties are no longer linked into the
+; program image - they are PLATFORM_RESOURCE_KIND_ASSET resources, fetched
+; straight to these reserved destinations by platform_init(). That keeps 6,400
+; bytes out of the contiguous blob cart/ef_boot.s copies into RAM at boot, and
+; makes them swappable at runtime. See src/platform.h's asset IDs and the
+; Makefile's RA%% rules, which slice them out of the same editor files these
+; used to .incbin from.
 .segment "CHARSETS"
-    .incbin "assets/charset.cchr", 8, 4096
+_charset_tile:
+    .res 2048
+_charset_text:
+    .res 2048
 
+; _tile_data and _tile_properties are deliberately adjacent and fetched as one
+; blob: tile bitmaps and their property table must never drift out of step, or
+; collision silently disagrees with what is drawn.
 .segment "TILESET"
 _tile_data:
-    .incbin "assets/tiles.ctil", 8, 2048
+    .res 2048
 _tile_properties:
-    .incbin "assets/tiles.ctil", 2056, 256
+    .res 256
 
 ; Startup data is kept in low read-only memory, then copied into the mutable
 ; platform room and the empty/player type records needed by a standalone PRG

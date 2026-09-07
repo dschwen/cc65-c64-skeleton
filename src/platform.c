@@ -24,11 +24,13 @@
 #define EF_PORTRAITS_PER_BANK   32u
 #define EF_RESOURCE_DIRECTORY_BANK   57u
 #define RESOURCE_DIRECTORY_ENTRY_BYTES 8u
-/* One kind's directory (256 entries); three sit back to back at the head of
- * EF_RESOURCE_DIRECTORY_BANK's ROML half, in PLATFORM_RESOURCE_KIND_* order
- * - keep in sync with tools/pack_easyflash.py's RESOURCE_DIRECTORY_BYTES/
- * RESOURCE_KIND_* ordering. */
+/* One kind's directory (256 entries), in PLATFORM_RESOURCE_KIND_* order - keep
+ * in sync with tools/pack_easyflash.py's RESOURCE_DIRECTORY_BYTES/
+ * RESOURCE_KIND_* ordering. Four of these exactly fill
+ * EF_RESOURCE_DIRECTORY_BANK's 8 KiB ROML half, so kinds 0-3 live there and
+ * kinds 4+ continue at the head of its ROMH half. */
 #define RESOURCE_DIRECTORY_BYTES (256u * RESOURCE_DIRECTORY_ENTRY_BYTES)
+#define RESOURCE_DIRECTORIES_PER_HALF 4u
 
 /*
  * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
@@ -69,8 +71,14 @@
 #define HOTSPOT_X(t)     ((uint8_t)((t)->hotspot >> 4))
 #define HOTSPOT_Y(t)     ((uint8_t)((t)->hotspot & 0x0f))
 
-extern const uint8_t tile_data[];
-extern const uint8_t tile_properties[];
+/* Not const any more: these are reserved destinations that platform_init()
+ * fetches PLATFORM_RESOURCE_KIND_ASSET resources into at boot, not linked-in
+ * read-only data (see src/assets.s). Everything past platform_init() should
+ * still treat them as read-only. */
+extern uint8_t charset_tile[];
+extern uint8_t charset_text[];
+extern uint8_t tile_data[];
+extern uint8_t tile_properties[];
 extern const uint8_t initial_room_data[];
 extern const uint8_t initial_object_type_data[];
 void raster_irq_install(void);
@@ -322,11 +330,22 @@ static uint8_t resource_directory_lookup(uint8_t kind, uint8_t resource_id,
                                          uint8_t* bank, uint8_t* mode,
                                          uint16_t* offset, uint16_t* size) {
     platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
-    platform_ef_copy_offset = (uint16_t)kind * RESOURCE_DIRECTORY_BYTES +
-        (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
     platform_ef_copy_destination = (uint16_t)resource_directory_entry;
     platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
-    platform_easyflash_copy_roml();
+    /* Kinds 0-3 exactly fill the ROML half (4 x 256 x 8 = 8 KiB), so kinds 4+
+     * continue at the head of the ROMH half - see PLATFORM_RESOURCE_KIND_ASSET
+     * in platform.h and pack_resources() in tools/pack_easyflash.py. */
+    if (kind >= RESOURCE_DIRECTORIES_PER_HALF) {
+        platform_ef_copy_offset =
+            (uint16_t)(kind - RESOURCE_DIRECTORIES_PER_HALF) *
+                RESOURCE_DIRECTORY_BYTES +
+            (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
+        platform_easyflash_copy_romh();
+    } else {
+        platform_ef_copy_offset = (uint16_t)kind * RESOURCE_DIRECTORY_BYTES +
+            (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
+        platform_easyflash_copy_roml();
+    }
     if (resource_directory_entry[0] == 0xffu) return PLATFORM_ERR_NOT_FOUND;
 
     *bank = resource_directory_entry[0];
@@ -809,6 +828,23 @@ void platform_init(void) {
     platform_memory_game();
     memcpy(&platform_room, initial_room_data, sizeof(platform_room));
     if (cartridge) {
+        /* Static assets are fetched, not linked in - see src/assets.s. This
+         * must happen before anything draws (nothing does until main() gets
+         * past platform_init()) and before the raster IRQ is installed below,
+         * since the split-screen handler points the VIC at both charsets every
+         * frame. Failure leaves the reserved destinations zeroed, i.e. blank
+         * glyphs and all-zero tile properties - visibly wrong rather than
+         * subtly wrong, which is the intent. */
+        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
+                                      PLATFORM_ASSET_CHARSET_TILE,
+                                      charset_tile, 2048u);
+        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
+                                      PLATFORM_ASSET_CHARSET_TEXT,
+                                      charset_text, 2048u);
+        /* Bitmaps and properties as one blob, so they cannot drift apart. */
+        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
+                                      PLATFORM_ASSET_TILES,
+                                      tile_data, 2048u + 256u);
         (void)platform_object_types_load();
         (void)platform_room_load(&platform_room, 0u);
     }

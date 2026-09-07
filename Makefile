@@ -58,8 +58,15 @@ ENV_IDS := $(basename $(notdir $(ENV_SOURCES)))
 C64_ENV_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RE,$(ENV_IDS))
 ENV_OUTDIR := $(OUTDIR)/env
 ENV_MODULE_CFG := cfg/env_module.cfg
+# Static assets (PLATFORM_RESOURCE_KIND_ASSET, prefix RA) - charsets and tile
+# data, sliced straight out of the editor files. These used to be .incbin'd
+# into the program image by src/assets.s; as resources they are fetched to
+# their reserved destinations at boot instead, keeping 6,400 bytes out of the
+# blob cart/ef_boot.s copies into RAM. IDs match src/platform.h's
+# PLATFORM_ASSET_* constants.
+C64_STATIC_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RA,00 01 02)
 C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS) \
-	$(C64_ENV_ASSETS)
+	$(C64_ENV_ASSETS) $(C64_STATIC_ASSETS)
 ROOM_CFG := cfg/room_overlay.cfg
 DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
@@ -174,6 +181,21 @@ $(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
 
 $(C64_ASSET_OUTDIR)/RS%: assets/resources/% | $(C64_ASSET_OUTDIR)
 	cp $< $@
+
+# Static assets, sliced out of the editor files past their 8-byte headers -
+# the same offsets src/assets.s used to .incbin from, so the bytes on the
+# cartridge are identical to what used to be linked into the image.
+# RA00/RA01: the two 2 KiB charsets. RA02: tile bitmaps (2 KiB) immediately
+# followed by the 256-byte property table, fetched as one blob so the two can
+# never drift apart.
+$(C64_ASSET_OUTDIR)/RA00: assets/charset.cchr | $(C64_ASSET_OUTDIR)
+	dd if=$< of=$@ bs=1 skip=8 count=2048 status=none
+
+$(C64_ASSET_OUTDIR)/RA01: assets/charset.cchr | $(C64_ASSET_OUTDIR)
+	dd if=$< of=$@ bs=1 skip=2056 count=2048 status=none
+
+$(C64_ASSET_OUTDIR)/RA02: assets/tiles.ctil | $(C64_ASSET_OUTDIR)
+	dd if=$< of=$@ bs=1 skip=8 count=2304 status=none
 
 # Script/conversation/room declarations are source (assets/scripts/...,
 # one top-level declaration each - see tools/compile_script.py), compiled

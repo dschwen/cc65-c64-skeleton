@@ -89,15 +89,32 @@ RESOURCE_KIND_ROOM = 2
 # files, this one is a linked, relocated binary, not a raw asset copy or a
 # tools/compile_script.py output.
 RESOURCE_KIND_ENVIRONMENT = 3
+# Static assets that used to be linked into the program image (charsets, tile
+# bitmaps + properties, sprite bitmaps) - see src/platform.h's
+# PLATFORM_RESOURCE_KIND_ASSET. Fetched at boot straight to fixed destinations,
+# so they cost nothing in the contiguous PRG blob cart/ef_boot.s copies.
+RESOURCE_KIND_ASSET = 4
 # Build-intermediate filename prefix per kind (build/assets/<prefix><ID>) -
 # keep in sync with the Makefile's rules and src/platform.h's
-# PLATFORM_RESOURCE_KIND_* constants, which use the same 0/1/2/3 values.
+# PLATFORM_RESOURCE_KIND_* constants, which use the same 0-4 values.
 RESOURCE_KIND_PREFIX = {
     RESOURCE_KIND_SCRIPT: "RS",
     RESOURCE_KIND_CONVERSATION: "RC",
     RESOURCE_KIND_ROOM: "RR",
     RESOURCE_KIND_ENVIRONMENT: "RE",
+    RESOURCE_KIND_ASSET: "RA",
 }
+# Packing/lookup order. Four 256-entry directories exactly fill the directory
+# bank's 8 KiB ROML half, so kinds 0-3 live there and kinds 4+ continue at the
+# head of its ROMH half - resource_directory_lookup() in src/platform.c splits
+# on exactly this boundary.
+RESOURCE_KIND_ORDER = (
+    RESOURCE_KIND_SCRIPT,
+    RESOURCE_KIND_CONVERSATION,
+    RESOURCE_KIND_ROOM,
+    RESOURCE_KIND_ENVIRONMENT,
+    RESOURCE_KIND_ASSET,
+)
 PORTRAIT_BYTES = 256
 PORTRAITS_PER_BANK = 32
 FIRST_PORTRAIT_BANK = 49
@@ -113,8 +130,13 @@ RESOURCE_LAST_BANK = 63
 RESOURCE_HALF_BYTES = ROML_BYTES
 RESOURCE_DIRECTORY_ENTRY_BYTES = 8
 RESOURCE_DIRECTORY_BYTES = 256 * RESOURCE_DIRECTORY_ENTRY_BYTES
-RESOURCE_DIRECTORY_COUNT = 4
-RESOURCE_DIRECTORIES_BYTES = RESOURCE_DIRECTORY_COUNT * RESOURCE_DIRECTORY_BYTES
+# Four 256-entry directories exactly fill the 8 KiB ROML half; any further
+# kinds continue at the head of the ROMH half. Payload therefore starts after
+# the ROMH directories, not after the ROML ones.
+RESOURCE_DIRECTORIES_PER_HALF = 4
+RESOURCE_ROMH_DIRECTORY_BYTES = (
+    (len(RESOURCE_KIND_ORDER) - RESOURCE_DIRECTORIES_PER_HALF)
+    * RESOURCE_DIRECTORY_BYTES)
 OUTPUT_BANKS = RESOURCE_LAST_BANK + 1
 ROOM_CODE_HEADER_BYTES = 24
 ROOM_CODE_MAX_BYTES = 0x0400
@@ -249,28 +271,30 @@ def load_resource(asset_dir: Path, kind: int, resource_id: int) -> bytes | None:
 
 def pack_resources(image: bytearray, asset_dir: Path) -> None:
     """Pack sparse, variable-size resources into banks RESOURCE_FIRST_BANK-
-    RESOURCE_LAST_BANK behind three 256-entry directories (one per
-    RESOURCE_KIND_*, in that order) at the head of RESOURCE_DIRECTORY_BANK's
-    ROML half.
+    RESOURCE_LAST_BANK behind one 256-entry directory per RESOURCE_KIND_*, in
+    RESOURCE_KIND_ORDER, at the head of RESOURCE_DIRECTORY_BANK. The first
+    RESOURCE_DIRECTORIES_PER_HALF of them exactly fill its ROML half; any
+    beyond that continue at the head of its ROMH half.
 
     Each 8-byte directory entry is (bank, mode, offset lo/hi, length lo/hi,
     checksum lo/hi); mode 0 selects the bank's ROML half, mode 1 its ROMH
-    half. Within a kind, entries are packed first-fit in ID order; all three
-    kinds share one running packing cursor (script kind first, then
-    conversation, then room) so they pack into the same payload pool back to
-    back rather than each getting its own reserved space. A resource never
-    crosses an 8 KiB half, so it never spans an EasyFlash bank switch.
+    half. Within a kind, entries are packed first-fit in ID order; all kinds
+    share one running packing cursor, in RESOURCE_KIND_ORDER, so they pack into
+    the same payload pool back to back rather than each getting its own
+    reserved space. A resource never crosses an 8 KiB half, so it never spans
+    an EasyFlash bank switch.
     """
     directories = {
         kind: bytearray([0xFF]) * RESOURCE_DIRECTORY_BYTES
         for kind in RESOURCE_KIND_PREFIX
     }
+    # The ROML half is entirely directory, so payload starts in the ROMH half,
+    # after whatever directories spilled into it.
     bank = RESOURCE_DIRECTORY_BANK
-    mode = 0
-    offset = RESOURCE_DIRECTORIES_BYTES
+    mode = 1
+    offset = RESOURCE_ROMH_DIRECTORY_BYTES
 
-    for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
-                 RESOURCE_KIND_ROOM, RESOURCE_KIND_ENVIRONMENT):
+    for kind in RESOURCE_KIND_ORDER:
         directory = directories[kind]
         for resource_id in range(256):
             data = load_resource(asset_dir, kind, resource_id)
@@ -297,11 +321,16 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
             image[destination:destination + len(data)] = data
             offset += len(data)
 
-    start = RESOURCE_DIRECTORY_BANK * BANK_BYTES
-    for kind in (RESOURCE_KIND_SCRIPT, RESOURCE_KIND_CONVERSATION,
-                 RESOURCE_KIND_ROOM, RESOURCE_KIND_ENVIRONMENT):
+    # Kinds 0-3 fill the ROML half; kinds 4+ start again at the head of ROMH.
+    for index, kind in enumerate(RESOURCE_KIND_ORDER):
+        if index < RESOURCE_DIRECTORIES_PER_HALF:
+            start = (RESOURCE_DIRECTORY_BANK * BANK_BYTES +
+                     index * RESOURCE_DIRECTORY_BYTES)
+        else:
+            start = (RESOURCE_DIRECTORY_BANK * BANK_BYTES + ROML_BYTES +
+                     (index - RESOURCE_DIRECTORIES_PER_HALF) *
+                     RESOURCE_DIRECTORY_BYTES)
         image[start:start + RESOURCE_DIRECTORY_BYTES] = directories[kind]
-        start += RESOURCE_DIRECTORY_BYTES
 
 
 def load_overlay(path: Path, magic: bytes) -> bytes:

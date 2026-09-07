@@ -486,6 +486,26 @@ uint8_t platform_rain_is_active(void);
  * address since one is a linker-config constant and the other a plain
  * preprocessor one, with no single shared source to derive both from. */
 #define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
+/* Static assets that used to be linked into the program image: charsets, tile
+ * definitions + properties, sprite bitmaps. Fetched at boot by platform_init()
+ * straight to their fixed destinations, so they no longer occupy space in the
+ * contiguous PRG blob cart/ef_boot.s copies into RAM.
+ *
+ * Unlike kinds 0-3, this directory lives at the head of
+ * EF_RESOURCE_DIRECTORY_BANK's *ROMH* half: the four directories above are 256
+ * entries x 8 bytes each, which exactly fills the 8 KiB ROML half, leaving no
+ * room for a fifth. Kinds 4-7 therefore address the ROMH half instead - see
+ * resource_directory_lookup() in src/platform.c and pack_resources() in
+ * tools/pack_easyflash.py, which must agree on this split. */
+#define PLATFORM_RESOURCE_KIND_ASSET        4u
+/* Asset resource IDs. Destinations are fixed and known to platform_init();
+ * an asset's ID and its destination are a matched pair. ASSET_TILES carries
+ * the tile bitmaps and the tile property table as one blob precisely so the
+ * two can never drift out of step - a mismatch there means walls you can walk
+ * through, with nothing to catch it. */
+#define PLATFORM_ASSET_CHARSET_TILE 0u
+#define PLATFORM_ASSET_CHARSET_TEXT 1u
+#define PLATFORM_ASSET_TILES        2u
 #define ENVCODE_BASE ((uint8_t*)0x7E00u)
 #define ENVCODE_SIZE 0x0200u
 /* C-callable trampolines into the module currently loaded at ENVCODE_BASE

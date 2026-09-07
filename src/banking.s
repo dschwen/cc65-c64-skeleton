@@ -19,6 +19,9 @@
 .export _platform_boot_is_easyflash
 .export _platform_bank_call_enter
 .export _platform_bank_call_leave
+.export _platform_far_call
+.export far_call_bank_operand
+.export far_call_target_operand
 
 .import _raster_irq_resync
 .import platform_raster_irq_active
@@ -285,6 +288,100 @@ _platform_bank_call_leave:
     plp
     rts
 
+; Far call dispatcher: one shared, self-modifying trampoline.
+;
+; The FAR_CALL macro (src/platform.inc) writes the callee's bank into
+; far_call_bank_operand and its 16-bit address into far_call_target_operand,
+; then jsr's here. Those three bytes together are the "far address" - one
+; bank byte plus a 16-bit offset inside the banked window - so banked code is
+; addressed uniformly no matter which bank it lives in, and the whole 1 MiB
+; becomes reachable without a per-callee trampoline.
+;
+; Reentrant *despite* the self-modification, which is why this needs none of
+; the fixed-depth bank_stack array the enter/leave pair above uses: every
+; patched byte is consumed before the inner jsr runs, and nothing below that
+; jsr is patched. A banked routine may therefore re-patch this trampoline for
+; a nested far call of its own without disturbing an outer invocation still in
+; flight - the outer call's saved bank/mode/map lives on the CPU stack, which
+; nests as deep as the stack allows instead of a hardcoded two. Enter/leave
+; needed the array only because they are two separate jsr/rts pairs and so
+; cannot keep anything on the hardware stack across the call; this routine
+; brackets the call itself, so it can.
+;
+; The caller must guarantee no interrupt performs a far call between the
+; macro's patch and its jsr. That is already the codebase-wide contract -
+; see _platform_bank_call_enter above: interrupt code never bank-switches.
+;
+; Constraint on the callee: while it runs, $8000-$BFFF is cartridge ROM, so
+; it must not touch anything living there. That currently includes the cc65
+; software stack ($BA00-$BBFF), GameState ($84E9), platform_room ($8000) and
+; the resident BSS ($B500) - which means banked routines must be assembly
+; over zero page, low RAM or $C000+ until the software stack moves below
+; $8000. See MEMORY_MAP_TARGET.md.
+_platform_far_call:
+    ; Raster-safe point before disabling interrupts - identical reasoning to
+    ; _platform_bank_call_enter's wait above.
+    lda platform_raster_irq_active
+    beq @raster_wait_done
+@raster_wait_top:
+    lda VIC_CTRL1
+    bmi @raster_wait_top
+@raster_wait_done:
+
+    php
+    sei
+    lda ef_shadow_bank
+    pha
+    lda ef_shadow_control
+    pha
+    lda CPU_PORT
+    pha
+
+    and #$f8
+    ora #CPU_MAP_CART_16K
+    sta CPU_PORT
+
+    lda #$00                    ; operand patched by FAR_CALL
+far_call_bank_operand = * - 1
+    sta ef_shadow_bank
+    sta EASYFLASH_BANK
+    lda #EASYFLASH_16K
+    sta ef_shadow_control
+    sta EASYFLASH_CONTROL
+
+    jsr $0000                   ; operand patched by FAR_CALL
+far_call_target_operand = * - 2
+
+    ; Nothing below here is patched, so an inner FAR_CALL cannot disturb this
+    ; invocation's unwind - the whole basis of the reentrancy argument above.
+    pla
+    sta CPU_PORT
+    pla
+    sta ef_shadow_control
+    sta EASYFLASH_CONTROL
+    pla
+    sta ef_shadow_bank
+    sta EASYFLASH_BANK
+
+    ; Resync only when this unwind actually restored the plain gameplay map.
+    ; _raster_irq_resync lives in UPPERCODE ($8B48) and reads
+    ; platform_raster_irq_active ($B7EC) - both inside the $8000-$BFFF banking
+    ; window. At the outermost level the map is back to RAM and the call is
+    ; safe; unwinding a *nested* far call restores a still-cart-mapped state,
+    ; where that jsr would land in cartridge ROM instead of the routine. Found
+    ; the hard way: it hung boot solid the first time a nested far call ran.
+    ; Skipping it while nested is correct as well as necessary - the raster
+    ; phase only needs resynchronizing once, when interrupts are about to be
+    ; usable again, which is exactly the outermost unwind.
+    lda CPU_PORT
+    and #CPU_PORT_MASK
+    cmp #CPU_MAP_GAME
+    bne @skip_resync
+    jsr _raster_irq_resync
+@skip_resync:
+    plp
+    rts
+
 .segment "HIGHCODE"
 
 ; Copy ROML/ROMH into underlying RAM without touching C stack or BSS while the
@@ -411,4 +508,5 @@ _platform_object_types_clear:
     sta CPU_PORT
     plp
     rts
+
 

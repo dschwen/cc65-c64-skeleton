@@ -68,3 +68,31 @@ ENVCODE_DISABLE = ENVCODE_BASE + 9
     jsr routine
     jsr _platform_bank_call_leave
 .endmacro
+
+; Call a routine by *far address* - a bank byte plus a 16-bit offset inside
+; the banked window - rather than by a link-time-resolved symbol. Patches the
+; bank and target straight into the shared trampoline's own operands, so a
+; call costs no per-callee stub and the whole 1 MiB is reachable uniformly.
+; Requires ".import _platform_far_call, far_call_bank_operand,
+; far_call_target_operand" in the including file.
+;
+;   FAR_CALL 12, $8123      ; bank 12, offset $8123
+;
+; Reentrant: a banked routine may FAR_CALL again, because the trampoline
+; consumes both patched operands before its inner jsr and keeps the caller's
+; bank/mode/map on the CPU stack. See _platform_far_call in src/banking.s for
+; the full argument, and for the constraint that the callee must not touch
+; $8000-$BFFF while it runs.
+;
+; Not safe against an interrupt that itself far-calls between the patch and
+; the jsr below - the codebase contract is that interrupt code never
+; bank-switches at all.
+.macro FAR_CALL bank, target
+    lda #(bank)
+    sta far_call_bank_operand
+    lda #<(target)
+    sta far_call_target_operand
+    lda #>(target)
+    sta far_call_target_operand+1
+    jsr _platform_far_call
+.endmacro

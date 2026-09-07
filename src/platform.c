@@ -42,12 +42,13 @@
  * must lay bank 46/47 out exactly this way.
  */
 #define OBJECT_TYPE_RECORD_BYTES     35u
-#define OBJECT_TYPE_ZONE_A_COUNT     117u
+#define OBJECT_TYPE_ZONE_A_COUNT     109u
 #define OBJECT_TYPE_ZONE_B_COUNT     117u
 #define OBJECT_TYPE_ZONE_AB_COUNT    (OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT)
 #define OBJECT_TYPE_ZONE_C_COUNT     (PLATFORM_OBJECT_TYPE_COUNT - OBJECT_TYPE_ZONE_AB_COUNT)
 #define OBJECT_TYPE_COLD_BYTES       15u
-#define OBJECT_TYPE_COLD_BASE        (OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_RECORD_BYTES)
+/* Offset within EF_TYPE_BANK_0's ROMH half, which holds nothing else. */
+#define OBJECT_TYPE_COLD_BASE        0u
 
 #define PORTRAIT_FIRST_SPRITE   1u
 #define PORTRAIT_BG_SPRITE      5u
@@ -299,13 +300,20 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
 #pragma code-name (pop)
 
 #pragma code-name (push, "HIGHCODE")
+/* Cold records live alone in EF_TYPE_BANK_0's ROMH half, which nothing else
+ * uses. They used to sit in EF_TYPE_BANK_1's ROML half right after the Zone C
+ * hot table - but that half also hosts the room-helpers, script and
+ * look-helpers overlays at fixed offsets, and zone C + cold + those three
+ * need ~9.5 KiB in an 8 KiB half. The overlays are packed last and simply
+ * overwrote the cold table, so every type from offset ROOM_HELPERS_OFFSET
+ * onwards read back overlay code instead of its name and flags. */
 const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
-    platform_ef_copy_bank = EF_TYPE_BANK_1;
+    platform_ef_copy_bank = EF_TYPE_BANK_0;
     platform_ef_copy_offset = OBJECT_TYPE_COLD_BASE +
         (uint16_t)type_id * OBJECT_TYPE_COLD_BYTES;
     platform_ef_copy_destination = (uint16_t)&object_type_info_scratch;
     platform_ef_copy_size = OBJECT_TYPE_COLD_BYTES;
-    platform_easyflash_copy_roml();
+    platform_easyflash_copy_romh();
     return &object_type_info_scratch;
 }
 #pragma code-name (pop)

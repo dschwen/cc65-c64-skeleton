@@ -24,13 +24,14 @@ TYPE_BANK_1 = 47
 OBJECT_TYPE_FILE_BYTES = 64
 OBJECT_TYPE_HOT_BYTES = 35
 OBJECT_TYPE_COLD_BYTES = 15
-OBJECT_TYPE_ZONE_A_COUNT = 117
+OBJECT_TYPE_ZONE_A_COUNT = 109
 OBJECT_TYPE_ZONE_B_COUNT = 117
 OBJECT_TYPE_ZONE_AB_COUNT = OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT
 OBJECT_TYPE_ZONE_C_COUNT = 256 - OBJECT_TYPE_ZONE_AB_COUNT
 OBJECT_TYPE_ZONE_AB_BYTES = OBJECT_TYPE_ZONE_AB_COUNT * OBJECT_TYPE_HOT_BYTES
 OBJECT_TYPE_ZONE_C_BYTES = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_HOT_BYTES
-OBJECT_TYPE_COLD_BASE = OBJECT_TYPE_ZONE_C_BYTES
+# Offset within TYPE_BANK_0's ROMH half, which holds nothing else.
+OBJECT_TYPE_COLD_BASE = 0
 INVENTORY_BANK = 48
 # Save/load overlays don't fit as one; the browse/load overlay ("SL")
 # shares bank 48 with the inventory overlay (inventory occupies ROMH, this
@@ -47,7 +48,7 @@ SAVELOAD_SAVE_BANK = TYPE_BANK_1
 # with room for it to grow some; keep in sync with src/platform.c's
 # ROOM_HELPERS_EF_OFFSET.
 ROOM_HELPERS_BANK = TYPE_BANK_1
-ROOM_HELPERS_OFFSET = 1024
+ROOM_HELPERS_OFFSET = 1088
 # Script/conversation interpreter overlay ("SC": modules/script.c). Same
 # reasoning and same shared half as room-helpers above, at a further offset
 # past it (with margin for room-helpers to grow); keep in sync with
@@ -185,8 +186,8 @@ def build_object_type_banks(types: bytes) -> tuple[bytes, bytes]:
         hot_blob += hot
         cold_blob += cold
     bank46 = bytes(hot_blob[:OBJECT_TYPE_ZONE_AB_BYTES])
-    bank47 = bytes(hot_blob[OBJECT_TYPE_ZONE_AB_BYTES:]) + bytes(cold_blob)
-    return bank46, bank47
+    bank47 = bytes(hot_blob[OBJECT_TYPE_ZONE_AB_BYTES:])
+    return bank46, bank47, bytes(cold_blob)
 
 
 def load_room(asset_dir: Path, room_id: int) -> bytes:
@@ -371,9 +372,18 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         start = bank * BANK_BYTES + offset
         image[start : start + ROOM_BYTES] = load_room(asset_dir, room_id)
 
-    bank46, bank47 = build_object_type_banks(types)
+    bank46, bank47, cold_blob = build_object_type_banks(types)
     start = TYPE_BANK_0 * BANK_BYTES
     image[start : start + len(bank46)] = bank46
+    # Cold records get TYPE_BANK_0's otherwise-unused ROMH half to themselves.
+    # They used to trail the Zone C hot table in TYPE_BANK_1's ROML half, which
+    # the room-helpers/script/look-helpers overlays are packed into afterwards -
+    # so the overlays silently overwrote them (see OBJECT_TYPE_COLD_BASE in
+    # src/platform.c).
+    start = TYPE_BANK_0 * BANK_BYTES + ROML_BYTES
+    if len(cold_blob) > ROML_BYTES:
+        raise ValueError("object-type cold table exceeds its ROMH half")
+    image[start : start + len(cold_blob)] = cold_blob
     start = TYPE_BANK_1 * BANK_BYTES
     image[start : start + len(bank47)] = bank47
     pack_room_code(image, code_dir, asset_dir)

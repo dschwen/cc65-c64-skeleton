@@ -53,10 +53,17 @@ RAIN_X_MAX_LO   = 87       ; respawn once x_hi=1 and x_lo>=this: x >= 343, the m
 ; a screenshot showing streaks well below the map's drawn tiles.
 RAIN_Y_MAX      = 176
 
-.segment "BSS"
-_platform_frame_counter: .res 1
+; These two are read by _raster_irq_resync, which the EasyFlash bank-call
+; machinery calls on every unwind - including unwinds that happen while banked
+; code is running. BSS sits at $B500, inside the $8000-$BFFF banking window, so
+; reading them from that context would return cartridge ROM. LOWBSS keeps them
+; below $8000 where they stay visible under every map.
+.segment "LOWBSS"
 platform_text_screen_active: .res 1
 platform_raster_irq_active: .res 1
+
+.segment "BSS"
+_platform_frame_counter: .res 1
 platform_rain_active: .res 1
 rain_x_lo: .res RAIN_COUNT+1   ; index 0 unused; 1-7 map to sprites 1-7
 rain_x_hi: .res RAIN_COUNT+1   ; sprite X's 9th X-position bit (0 or 1)
@@ -140,7 +147,10 @@ _platform_text_screen_leave:
 ; an EasyFlash room bank. Choose the next event from the VIC's full 9-bit
 ; raster position so a pending interrupt cannot leave the text charset over
 ; the map for a frame.
-.segment "UPPERCODE"
+; HIGHCODE, not UPPERCODE: UPPERCODE is at $8B48, inside the banking window, so
+; a bank-call unwind from banked code would jsr into cartridge ROM instead of
+; this routine. See _platform_far_call in src/banking.s, which hit exactly that.
+.segment "HIGHCODE"
 _raster_irq_resync:
     php
     sei
@@ -212,6 +222,7 @@ _raster_irq_resync:
 ; a real, visible one-frame glitch. Pick the charset the same way
 ; _raster_irq_resync's map-phase branch already does, instead of assuming
 ; tile.
+.segment "UPPERCODE"
 _raster_irq_suspend:
     jsr _platform_text_area_clear_native
     php

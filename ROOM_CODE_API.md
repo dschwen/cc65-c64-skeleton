@@ -136,7 +136,7 @@ so the fragment's own edits trigger a rebuild.
 
 ## Global game state
 
-`game_state` is resident at `$84E9` and survives overlay replacement:
+`game_state` is resident at `$C100` and survives overlay replacement:
 
 ```c
 typedef struct GameState {

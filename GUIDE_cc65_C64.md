@@ -281,7 +281,7 @@ linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 | `$3A00-$3BFF` | eight runtime sprite bitmap slots; sprite 0 is the Look cursor |
 | `$3C00-$7FFF` | resident platform code and read-only tables |
 | `$8000-$84E8` | current 1,257-byte room |
-| `$84E9-$855C` | fixed resident `GameState` |
+| `$84E9-$855C` | reserve, formerly `GameState` (moved to `$C100`) |
 | `$855D-$85FF` | compact native resident helpers |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
@@ -291,9 +291,11 @@ linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 | `$A4E9-$B4FF` | rebuildable work RAM; inventory/story overlay while active |
 | `$B500-$B80C` | ordinary platform BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
-| `$BA00-$BBFF` | cc65 software stack |
+| `$BA00-$BBFF` | free (software stack moved to `$C000`) |
 | `$BC00-$BFFF` | sparse room-object delta journal |
-| `$C000-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
+| `$C000-$C0FF` | cc65 software stack |
+| `$C100-$C173` | fixed resident `GameState` |
+| `$C180-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
@@ -366,9 +368,11 @@ code is loaded at `$8600`; game/main and the shared room API occupy
 `$8B48-$98FF`. Independently linked room code has a 1 KiB window at
 `$9900-$9CFF`, and the current-room pristine object baseline occupies
 `$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
-Ordinary BSS and the C software stack live in RAM beneath BASIC ROM at
-`$B500-$B80C` and `$BA00-$BBFF`; independently loaded helpers and the
-bottom-text pager occupy `$B80D-$B9FF`. KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
+Ordinary BSS lives in RAM beneath BASIC ROM at `$B500-$B7F9`; independently
+loaded helpers and the bottom-text pager occupy `$B80D-$B9FF`. The C software
+stack and `GameState` sit at `$C000-$C0FF` and `$C100-$C173` instead - that
+region is the only RAM above `$8000` never covered by a cartridge bank, which
+is what lets banked code use them (see `PLATFORM_API.md`'s "Banked code"). KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
 visible while leaving BASIC hidden and these regions readable.
 
 `WORKBSS` currently uses `$A4E9-$ADF8` for base colors, tile brightness,

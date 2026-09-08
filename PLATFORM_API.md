@@ -53,9 +53,11 @@ room-transition logic even when a graphic extends in several directions.
 | `$A4E9-$B4FF` | rebuildable work RAM; inventory/story/save overlay while active |
 | `$B500-$B80C` | ordinary resident BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
-| `$BA00-$BBFF` | cc65 software stack |
+| `$BA00-$BBFF` | free (the software stack moved to `$C000`) |
 | `$BC00-$BFFF` | sparse room-object delta journal |
-| `$C000-$FFFF` | 256 resident object-type records |
+| `$C000-$C0FF` | cc65 software stack |
+| `$C100-$C173` | persistent `GameState` |
+| `$C180-$FFFF` | 256 resident object-type records |
 
 The platform preallocates:
 
@@ -217,15 +219,19 @@ Only the fields the render/collision path actually touches stay resident:
 `platform_object_type_get()` returns a 35-byte `PlatformObjectType`
 (dimensions, hotspot, chars, colors, light) for all 256 IDs, backed by three
 resident zones at a fixed 35-byte stride -- always-visible RAM for IDs
-0-116, RAM beneath I/O for 117-233 (copied to scratch with IRQs disabled),
-RAM beneath KERNAL for 234-255 (same). The returned pointer is only valid
+0-105, RAM beneath I/O for 106-222 (copied to scratch with IRQs disabled),
+RAM beneath KERNAL for 223-255 (same). Zone A starts at `$C180` rather than
+`$C000` because the software stack and `GameState` were moved into that region
+(see "Banked code" below). The returned pointer is only valid
 until the next call to either accessor below.
 
 Name and the actor-flag byte are not resident at all. Call
 `platform_object_type_info_get(type_id)` to fetch the 15-byte
 `PlatformObjectTypeInfo` (name, flags) directly from its fixed EasyFlash
 bank/offset -- a real cartridge bank-switch, heavier than
-`platform_object_type_get()`. Only call it from discrete, human-input-paced
+`platform_object_type_get()`. This accessor is itself the first routine that
+*runs from a bank in place* rather than resident (see "Banked code" below), so
+a call now costs a far call plus its own nested fetch. Only call it from discrete, human-input-paced
 code (Take/Use/Look text, actor-flag checks before adding/counting objects),
 never per frame or per rendered cell. `PLATFORM_OBJECT_FLAG_ACTOR` now tests
 `info->flags`, not a field on the hot record.
@@ -841,6 +847,7 @@ linked output, so it *is* the final resource content directly.
 #define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
 #define PLATFORM_RESOURCE_KIND_ROOM         2u
 #define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
+#define PLATFORM_RESOURCE_KIND_ASSET        4u
 uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
                                   uint8_t* destination, uint16_t capacity);
 uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
@@ -862,6 +869,22 @@ resources (unstructured bytes, no ABI, unlike room code) share
 `PLATFORM_RESOURCE_KIND_SCRIPT`'s directory with compiled cutscenes, since
 neither belongs to a room or conversation; both are placed by
 `tools/pack_easyflash.py`.
+
+`PLATFORM_RESOURCE_KIND_ASSET` carries the static assets that used to be
+`.incbin`'d into the program image - the tile charset, the text charset, and
+the tile definitions plus property table as one blob. `platform_init()` fetches
+them at boot straight to their reserved addresses, so they cost nothing in the
+contiguous image `cart/ef_boot.s` copies into RAM, and a different charset or
+tileset becomes a packing decision rather than a rebuild of the engine. Two
+consequences worth knowing: the fetches must complete before anything draws
+(they run before the raster IRQ is installed), and tile bitmaps and tile
+properties ship as a single resource on purpose, because a mismatch between
+them means collision silently disagreeing with what is drawn. IDs are
+`PLATFORM_ASSET_CHARSET_TILE`, `_CHARSET_TEXT` and `_TILES`.
+
+Note this directory lives at the head of the directory bank's *ROMH* half
+rather than its ROML half: four 256-entry directories exactly fill ROML, so
+kind 4 and anything added after it continue in ROMH.
 
 `platform_resource_fetch()` copies up to `capacity` bytes from the start of
 the resource into `destination` and returns the actual length on success.
@@ -905,8 +928,8 @@ interrupts.
 `src/irq.s` never touches `EASYFLASH_BANK`/`EASYFLASH_CONTROL`/`ef_shadow_*`
 and never will - the raster IRQ, keyboard polling, and rain/water advance all
 run fully resident. This is more than a style preference: most of
-`$8000-$BFFF` - `GameState`, resident `BSS`, the cc65 software stack, the
-active room-code overlay - physically sits inside the EasyFlash ROML/ROMH
+`$8000-$BFFF` - resident `BSS`, `platform_room`, the active room-code overlay -
+physically sits inside the EasyFlash ROML/ROMH
 banking window, so an interrupt that ran while that window was switched to
 cart ROM would read garbage there even if its own code never issued a bank
 switch itself. Interrupts are therefore kept off for a foreground bank
@@ -932,6 +955,50 @@ hardware stack for a *different* `jsr`'d "leave" to find, since `rts`
 always pops whatever is on top regardless of what pushed it), so nested
 banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
 `platform_easyflash_copy_roml`/`_romh`) is itself built on this pair.
+
+### Banked code
+
+Beyond copying *data* out of a bank, code can be linked into the ROML window
+and **executed straight from its bank**, never copied into RAM. Call one with
+the `FAR_CALL` macro (`src/platform.inc`):
+
+```asm
+    FAR_CALL 47, $9A00      ; bank byte + 16-bit offset = a "far address"
+```
+
+It patches the bank and target into a single shared trampoline
+(`_platform_far_call`, `src/banking.s`) and calls it. The trampoline is
+reentrant despite the self-modification - both patched operands are consumed
+before its inner `jsr`, and nothing below that `jsr` is patched - so a banked
+routine may `FAR_CALL` again. It keeps the caller's bank, mode and map on the
+CPU hardware stack, which is why it needs none of the fixed-depth array
+`_platform_bank_call_enter`/`_leave` rely on: it brackets the call itself
+rather than being two separate `jsr`/`rts` pairs.
+
+Register contract: **`A` and `X` are passed to the callee and its `A`/`X`
+return comes back**, which covers cc65's 8- and 16-bit argument and return
+passing, so a banked routine can be an ordinary `__fastcall__` C function.
+`Y` is the trampoline's scratch and is preserved in neither direction.
+
+**What a banked routine may touch.** While the call runs, `$8000-$BFFF` is
+cartridge ROM. Reads there return ROM, not the RAM listed in the table above;
+writes still reach the RAM underneath. So a banked routine may only use
+`$0000-$7FFF` and `$C000-$CFFF`, and may only call resident code living
+outside the window. This is why the software stack (`$C000`) and `GameState`
+(`$C100`) were moved - cc65 code touches its stack constantly - and why
+`LOWBSS` exists for state the bank machinery itself must read. `UPPERCODE`
+(`$8B48`) is inside the window and is therefore unreachable from a bank.
+
+**Granularity.** Both bank-switch paths wait for the raster to wrap before
+disabling interrupts: free when the raster is on lines 0-255, up to ~56 lines
+otherwise. Negligible for one coarse call wrapping a large piece of work,
+costly if the same work is split across many small banked calls. Bank whole
+operations, not inner-loop helpers.
+
+`platform_object_type_info_get()` is the first routine to run this way; see
+`modules/typeinfo.c`, `cfg/banked_typeinfo.cfg` and the resident stub in
+`src/banked_api.s` for the pattern, and `EASYFLASH_CARTRIDGE.md`'s "Modules
+executed in place" for the packing side.
 
 The gameplay handler is entered directly through RAM `$FFFE/$FFFF`, saves and
 restores A/X/Y, and ends in `RTI`. A second `$0314` entry supports KERNAL-mapped

@@ -453,21 +453,30 @@ Each of the three declaration kinds (script/conversation/room - see
 directory, so IDs don't need to be partitioned across kinds: a conversation
 and a standalone script can both use ID 5 without colliding, and rooms can
 use the full `0x00`-`0xFF` range. `PLATFORM_RESOURCE_KIND_SCRIPT` (0),
-`_CONVERSATION` (1), and `_ROOM` (2) in `src/platform.h` select which.
+`_CONVERSATION` (1), `_ROOM` (2), `_ENVIRONMENT` (3), and `_ASSET` (4) in
+`src/platform.h` select which. Kind 4 carries the static assets that used to
+be linked into the program image - the two charsets and the tile
+definitions+properties blob - fetched at boot straight to their reserved
+addresses.
 
 Banks 57-63 (the last 7 of the 64 available EasyFlash banks) are reserved
 for this pool; no banks remain free after it. `RESOURCE_DIRECTORY_BANK`
-(57) ROML holds the three 256-entry, 8-byte-per-entry directories (2048
-bytes each, 6144 bytes total, `$FF` for an unpopulated ID) back to back
-starting at offset zero, in `PLATFORM_RESOURCE_KIND_*` order (script,
-conversation, room). Each entry matches the room-code entry layout: bank,
+(57) holds one 256-entry, 8-byte-per-entry directory per kind (2048 bytes
+each, `$FF` for an unpopulated ID) back to back in
+`PLATFORM_RESOURCE_KIND_*` order. Four of them exactly fill the 8 KiB ROML
+half (script, conversation, room, environment), so the fifth kind - asset -
+continues at the head of the **ROMH** half, and any kind added later does
+the same. `resource_directory_lookup()` in `src/platform.c` and
+`pack_resources()` in `tools/pack_easyflash.py` split on exactly that
+boundary; the payload pool consequently starts after the ROMH directories,
+not after the ROML ones. Each entry matches the room-code entry layout: bank,
 mode, offset (little-endian), length (little-endian), and a 16-bit
 sum-of-bytes checksum (little-endian). Mode selects which 8 KiB half of
 that bank holds the payload -- `0` for ROML, `1` for ROMH -- so, unlike
 room code, a resource can land in either half of a bank.
-`tools/pack_easyflash.py` packs all three kinds' populated resources
-first-fit (script kind first, then conversation, then room; ID order
-within a kind) into one shared payload pool, starting right after the
+`tools/pack_easyflash.py` packs every kind's populated resources
+first-fit (in `RESOURCE_KIND_ORDER`; ID order within a kind) into one
+shared payload pool, starting right after the
 three directories and filling each 8 KiB half completely before moving to
 the next; a resource is capped at one 8 KiB half
 (`PLATFORM_RESOURCE_MAX_BYTES`, `$2000`) and therefore never crosses an
@@ -501,6 +510,34 @@ bank selection is always correct.
 A write to `$DE00` changes ROML and ROMH together. Code running from either
 window must not switch away the bank containing its next instruction. Both the
 bank-switch routine and its copy loop must therefore execute from stable RAM.
+
+### Modules executed in place
+
+Distinct from the loaded overlays above, a module can be linked at an address
+inside the ROML window and **executed straight out of its bank**, never copied
+into RAM. `modules/typeinfo.c` is the first of these.
+
+The rules such a module follows:
+
+- linked at its run address in `$8000-$9FFF`, which must equal `$8000` plus
+  its offset within the bank's ROML half - `cfg/banked_typeinfo.cfg` and
+  `tools/pack_easyflash.py`'s `TYPEINFO_OFFSET` have to agree, and the packer
+  guards against overlapping the overlay ahead of it
+- a `jmp` entry vector at the module's fixed first address, so call sites do
+  not have to track where the function itself lands after a relink
+- **no BSS and no writable data of its own** - it is ROM at run time; any
+  state it needs lives resident, outside the banking window
+- reached through a resident C-callable stub that forwards via the `FAR_CALL`
+  macro (`src/banked_api.s`), so callers need not know the routine moved
+
+Unlike an overlay it needs no header, magic, or checksum, because nothing
+copies or validates it - it is executed exactly where the packer put it. A
+banked routine may itself bank-switch: the pilot fetches from bank 46 while
+running from bank 47, because the bank-call primitives save and restore the
+caller's bank around the nested switch.
+
+What a banked routine may touch is constrained by the mapping, not by the
+cartridge - see `MEMORY_MAP.md`'s "Banked code and what it may touch".
 
 ### Object-type table placement
 
@@ -540,14 +577,18 @@ across the I/O or KERNAL boundary:
 
 | Type IDs | Address range | Access policy |
 |---:|---|---|
-| `0-116` | `$C000-$CFFE` | always-visible RAM (1 free byte at `$CFFF`) |
-| `117-233` | `$D000-$DFFE` | select all-RAM mapping briefly (1 free byte at `$DFFF`) |
-| `234-255` | `$E000-$E301` | KERNAL out, I/O still visible |
+| `0-105` | `$C180-$CFFD` | always-visible RAM |
+| `106-222` | `$D000-$DFFE` | select all-RAM mapping briefly (1 free byte at `$DFFF`) |
+| `223-255` | `$E000-$E482` | KERNAL out, I/O still visible |
 
-`$E302-$FFF9` is free RAM, reclaimed from the pre-split table.
+Zone A no longer starts at `$C000`: the cc65 software stack (`$C000-$C0FF`)
+and `GameState` (`$C100-$C173`) were moved into this region because it is the
+only RAM above `$8000` that stays visible while a cartridge bank is mapped -
+see `MEMORY_MAP.md`'s "Banked code". Zone A shrank to fit, and zone C grew to
+take up the difference. `$E483-$FFF9` is free RAM.
 
-A renderer can access types 0-116 directly, and types 234-255 while the
-gameplay mapping is `$35`. For types 117-233 it must disable interrupts,
+A renderer can access types 0-105 directly, and types 223-255 while the
+gameplay mapping is `$35`. For types 106-222 it must disable interrupts,
 select the `$34`-equivalent low bits, copy the one 35-byte record to an
 always-visible scratch record, restore `$35`, then render from scratch. It
 cannot draw directly while `$D000` RAM is selected because screen colors and
@@ -559,10 +600,18 @@ ROML to visible scratch RAM, then EasyFlash must be disabled before selecting
 all-RAM mode and copying the staged block to `$D000`.
 
 The cold name/flags table is never staged into RAM at all: it is read
-straight from EasyFlash bank 47 (right after that bank's 770 bytes of zone-C
-hot records) into a small scratch buffer with a plain ROML copy, the same
-primitive rooms and portraits use, whenever
+straight from EasyFlash into a small scratch buffer whenever
 `platform_object_type_info_get()` is called.
+
+It lives alone in **bank 46's ROMH half**, which nothing else uses, and is read
+with a ROMH copy. It previously trailed the zone-C hot records in bank 47's
+ROML half - but that half also hosts the room-helpers, script and look-helpers
+overlays at fixed offsets, and those are packed afterwards, so they silently
+overwrote it. Zone C + the cold table + those three overlays need roughly
+9.5 KiB in an 8 KiB half, so the overlap was unavoidable rather than a tuning
+mistake: every type from the room-helpers offset upward read overlay code
+instead of its name and flags. Giving the cold table its own half fixed it and
+freed bank 47's ROML layout to grow zone C.
 
 The final six bytes of type 255's reserved area are runtime-owned RAM vectors
 at `$FFFA-$FFFF`; type-table loaders restore them after writing the table.
@@ -709,7 +758,9 @@ space. This was the cause of the first black-screen cartridge build.
 
 ## Current limitations
 
-- Runtime room banks are fixed at 3-45; type pages are banks 46-47;
+- Runtime room banks are fixed at 3-45; type pages are banks 46-47 (46 ROML
+  holds zones A+B, 46 ROMH the cold name/flags table, 47 ROML zone C plus the
+  room-helpers/script/look-helpers overlays and the in-place banked module);
   portraits are banks 49-56; the generic resource directory reserves
   banks 57-63, the last banks the hardware supports -- no banks remain
   free after it.

@@ -11,9 +11,9 @@ The normal gameplay mapping uses `$01` low bits `%101` (normally `$35`):
 
 | CPU range | Gameplay CPU view | Underlying RAM owner |
 |---|---|---|
-| `$A000-$BFFF` | RAM; BASIC ROM is out | overlays, work buffers, BSS, stack, journal |
-| `$D000-$DFFF` | VIC/SID/CIA/Color RAM I/O | hot object-type records 117-233 underneath I/O |
-| `$E000-$FFFF` | RAM; KERNAL ROM is out | hot object-type records 234-255 and RAM vectors |
+| `$A000-$BFFF` | RAM; BASIC ROM is out | overlays, work buffers, BSS, journal |
+| `$D000-$DFFF` | VIC/SID/CIA/Color RAM I/O | hot object-type records for types 106-222 underneath I/O |
+| `$E000-$FFFF` | RAM; KERNAL ROM is out | hot object-type records for types 223-255 and RAM vectors |
 
 The engine already owns the RAM under both ROMs. `$36` temporarily maps the
 KERNAL in while leaving RAM at `$A000-$BFFF`; `$34` exposes RAM under I/O as
@@ -21,7 +21,7 @@ well. Code changes only bits 0-2 of `$01` and preserves the cassette-port bits.
 
 RAM under I/O is not generally usable while drawing: selecting it hides the
 VIC, SID, CIA, EasyFlash registers, and Color RAM. Accesses to hot object-type
-records 117-233 therefore run with interrupts disabled and copy the 35-byte
+records for types 106-222 therefore run with interrupts disabled and copy the 35-byte
 record to always-visible scratch before rendering it.
 
 ## Complete allocation
@@ -36,59 +36,57 @@ record to always-visible scratch before rendering it.
 | `$0400-$07E7` | 1000 | screen matrix |
 | `$07E8-$07F7` | 16 | unused screen-block tail; available only for tiny fixed state |
 | `$07F8-$07FF` | 8 | sprite pointers 0-7 |
-| `$0801-$1FFF` | 6143 | startup, low code, C runtime, and initialized data |
-| `$2000-$27FF` | 2048 | tile charset |
-| `$2800-$2FFF` | 2048 | text charset |
-| `$3000-$37FF` | 2048 | 256 tile definitions |
-| `$3800-$38FF` | 256 | tile properties |
+| `$0801-$1FFF` | 6143 | startup, low code, C runtime, initialized data, and `LOWBSS` (state banked code must be able to read - see below) |
+| `$2000-$27FF` | 2048 | tile charset - reserved only; fetched at boot as an asset resource, not linked in |
+| `$2800-$2FFF` | 2048 | text charset - reserved only; fetched at boot |
+| `$3000-$37FF` | 2048 | 256 tile definitions - reserved only; fetched at boot |
+| `$3800-$38FF` | 256 | tile properties - fetched with the tile definitions as one blob, so the two can never drift apart |
 | `$3900-$39FF` | 256 | compact lookup/native code |
 | `$3A00-$3B7F` | 384 | cursor and portrait sprite bitmap slots 0-5 |
 | `$3B80-$3BBF` | 64 | fixed rain streak bitmap shared by hardware sprites 1-7 |
 | `$3BC0-$3BFF` | 64 | compact rain-advance/water-animation code in sprite slot 7 storage |
 | `$3C00-$7FFF` | 17408 | resident platform code/RODATA |
 | `$8000-$84E8` | 1257 | current room |
-| `$84E9-$855C` | 116 | persistent `GameState` |
+| `$84E9-$855C` | 116 | reserve, formerly `GameState` (see `$C100`); still reserved because a hole here would break the contiguous load image |
 | `$855D-$85FF` | 163 | compact native helpers (no free tail remaining) |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$9887` | 3392 | resident game/main/shared room API |
-| `$9888-$98FF` | 120 | free resident tail |
+| `$8B48-$97F5` | 3246 | resident game/main/shared room API |
+| `$97F6-$98FF` | 266 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room or save-record/index staging (includes `script_resource_kind`, borrowing 1 byte of this region's own 256-byte slack - see `PLATFORM_API.md`) |
 | `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
 | `$ADF9-$B4FF` | 1799 | free work-RAM/overlay tail |
-| `$B500-$B80C` | 781 | resident BSS (no free tail remaining) |
+| `$B500-$B7F9` | 762 | resident BSS |
+| `$B7FA-$B80C` | 19 | free BSS tail (freed by moving two raster flags to `LOWBSS`) |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
 | `$B87E-$B87F` | 2 | reserved fill before fixed pager entry |
 | `$B880-$B9C9` | 330 | bottom-text pager |
 | `$B9CA-$B9FC` | 51 | inventory-overlay validator continuation |
 | `$B9FD-$B9FF` | 3 | free helper-module tail |
-| `$BA00-$BBFF` | 512 | cc65 software stack |
+| `$BA00-$BBFF` | 512 | free (the software stack moved to `$C000`) |
 | `$BC00-$BFE7` | 1000 | 200-record sparse room-object journal |
 | `$BFE8-$BFFF` | 24 | free journal-region tail |
-| `$C000-$CFFE` | 4095 | hot object-type records, types 0-116, normally visible |
-| `$CFFF` | 1 | free linker tail |
-| `$D000-$DFFE` | 4095 | hot object-type records, types 117-233, beneath I/O |
+| `$C000-$C0FF` | 256 | cc65 software stack |
+| `$C100-$C173` | 116 | persistent `GameState` |
+| `$C174-$C17F` | 12 | free |
+| `$C180-$CFFD` | 3710 | hot object-type records, types 0-105, normally visible |
+| `$CFFE-$CFFF` | 2 | free linker tail |
+| `$D000-$DFFE` | 4095 | hot object-type records, types 106-222, beneath I/O |
 | `$DFFF` | 1 | free linker tail |
-| `$E000-$E301` | 770 | hot object-type records, types 234-255, beneath KERNAL |
-| `$E302-$FFF9` | 7416 | free; reclaimed from the pre-split 64-byte object-type table |
+| `$E000-$E482` | 1155 | hot object-type records, types 223-255, beneath KERNAL |
+| `$E483-$FFF9` | 7031 | free; reclaimed from the pre-split 64-byte object-type table |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-`PROGRAM` has 97 bytes of margin and `HIGH` has 223 - both grew since this
-was last rechecked (recent code removal, e.g. the windowed script-resource
-reader dropping `platform_room_scratch_reload()` and its callers, plausibly
-accounts for some of it, though this margin wasn't tracked precisely enough
-before to attribute the exact delta); `RAINCODE` (1 byte, down from 8 - the
-7-dedicated-rain-sprites redesign used most of its slack) and `MIDCODE` (6
-bytes) are tight. The remaining nearby tails are 120 bytes in `UPPER` and 4
-bytes in `SAVECODE`; `STATEEXT` and `BSS` now have none. Larger additions
-need relocation or another fixed region - `BSS` in particular has no room
-for even one more resident global; place new ones in a slack pocket like
-`ROOMSTAGE`'s instead (see `script_resource_kind` above and
-`PLATFORM_API.md`). Recheck
-`build/game.map` after every change because cc65 can move code between
-segments.
+`PROGRAM` has 116 bytes of margin and `HIGH` has 105; `RAINCODE` (1 byte) and
+`MIDCODE` (6 bytes) are tight. The nearby tails are 266 bytes in `UPPER`, 19 in
+`BSS` (freed by moving two raster flags to `LOWBSS`), and 4 in `SAVECODE`;
+`STATEEXT` has none. Note that `HIGH`'s margin shrank as the far-call
+trampoline and the relocated `_raster_irq_resync` moved in, so it is now one of
+the tighter regions rather than a comfortable one. Larger additions need
+relocation or another fixed region. Recheck `build/game.map` after every change
+because cc65 can move code between segments.
 
 ## RAM beneath BASIC and KERNAL
 
@@ -100,13 +98,13 @@ state because the resident wrapper redraws the room after it returns. Full-tile
 lighting reduced active `WORKBSS` to `$A4E9-$ADF8`, leaving a contiguous
 1,799-byte tail for future work buffers or overlay growth. `$A000-$A4E8`
 stages either a destination room or a complete save record; those uses never
-overlap. `BSS` (`$B500-$B80C`) is now fully used, with no free tail. Other
+overlap. `BSS` (`$B500-$B7F9`) has a 19-byte tail, freed by moving two raster flags to `LOWBSS`. Other
 unallocated pieces are `$B9FD-$B9FF` (3 bytes) and `$BFE8-$BFFF` (24 bytes).
 
 ### KERNAL ROM: `$E000-$FFFF`
 
-Only `$E000-$E301` (770 bytes) backs object-type records now (types 234-255's
-hot fields); `$E302-$FFF9` is genuinely free. This RAM is visible in normal
+Only `$E000-$E482` (1,155 bytes) backs object-type records now (types
+223-255's hot fields); `$E483-$FFF9` is genuinely free. This RAM is visible in normal
 gameplay, and the raster IRQ already uses direct RAM vectors and saves its own
 A/X/Y registers. It disappears only while a KERNAL routine is mapped in. Data
 can safely live here if no code expects to access it during disk or keyboard
@@ -168,6 +166,42 @@ nothing ever points a sprite at slot 7. The eight pointer bytes at
 `$07F8-$07FF` are outside the 1000-byte screen clear, and the raster IRQ
 changes only the charset half of `$D018`. Portrait/rain pointers therefore
 remain valid across map/text charset switching.
+
+
+## Banked code and what it may touch
+
+Code can now run directly from an EasyFlash bank instead of being copied into
+RAM first (see `PLATFORM_API.md`'s "Banked code"). While such a call is in
+progress the cartridge is mapped over **`$8000-$BFFF`**, so for the duration of
+that call every byte in this table between `$8000` and `$BFFF` reads as
+cartridge ROM, not as the RAM listed above. Writes still reach the RAM
+underneath; only reads are affected.
+
+A banked routine may therefore touch only:
+
+| Region | Why it is safe |
+|---|---|
+| `$0000-$7FFF` | never covered by the cartridge |
+| `$C000-$CFFF` | the only RAM above `$8000` that no memory map ever covers |
+| `$D000-$DFFF`, `$E000-$FFFF` | reachable, but only under the usual I/O/KERNAL banking dance |
+
+This is why the software stack and `GameState` were moved to `$C000` and
+`$C100`: cc65-generated code touches its stack constantly, so no C function
+could have run banked while the stack sat at `$BA00`. `LOWBSS` (inside
+`PROGRAM`) exists for the same reason - it holds state that banked code, or the
+bank machinery it calls, has to be able to read. Two raster flags live there
+because `_raster_irq_resync` is called on every bank-call unwind.
+
+The same rule applies to *code*: a banked routine may only call resident code
+that lives outside the window. `UPPERCODE` (`$8B48`) is inside it, so anything
+there is unreachable from a bank - which is why `_raster_irq_resync` was moved
+out of it and into `HIGHCODE`.
+
+Cost: both bank-switch paths wait for the raster to wrap before disabling
+interrupts, which is free when the raster is on lines 0-255 and costs up to
+~56 lines otherwise. That is negligible for one coarse call around a large
+piece of work, and expensive if the same work is split into many small banked
+calls. Bank at coarse granularity.
 
 ## Checking the map
 

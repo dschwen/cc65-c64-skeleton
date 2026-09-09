@@ -43,10 +43,10 @@ extern uint8_t look_helpers_color;
 extern uint8_t look_helpers_type_id;
 extern uint8_t look_helpers_op;
 extern uint8_t look_helpers_result;
+extern uint8_t look_helpers_light;
 
 extern const PlatformRoom* rendered_room;
 extern uint16_t rendered_object_limit;
-extern uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
 extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 
 extern uint8_t platform_object_intersects_tile(const PlatformObject* object,
@@ -144,7 +144,12 @@ static uint8_t look_helpers_tile_check(void) {
         return PLATFORM_ERR_BLOCKED;
     }
 
-    light = platform_brightness[offset] & 0x03u;
+    /* Not a read of platform_brightness[offset] here: that array lives in
+     * WORKBSS, the same $A4E9 memory this overlay's own code occupies while
+     * running - platform_look_tile_check() (src/platform.c) already read it
+     * resident-side, before loading this overlay, into look_helpers_light.
+     * See that function's own comment. */
+    light = look_helpers_light & 0x03u;
 
     distance_x = (viewer->x >> 1) > tile_x
                      ? (uint8_t)((viewer->x >> 1) - tile_x)

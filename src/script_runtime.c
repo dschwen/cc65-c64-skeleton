@@ -21,12 +21,12 @@
 #define SCRIPT_MAGIC_0    0x53u /* 'S' */
 #define SCRIPT_MAGIC_1    0x43u /* 'C' */
 
-void raster_irq_suspend(void);
-void raster_irq_resume(void);
 void platform_overlay_run_native(void);
 uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
                                            uint16_t offset, uint8_t magic0,
                                            uint8_t magic1);
+void raster_irq_resume(void);
+extern volatile uint8_t platform_raster_irq_active;
 
 /* Set by the caller before triggering the overlay: which resource kind and
  * ID it should fetch and run (script_resource_kind selects which of the
@@ -55,14 +55,64 @@ uint8_t script_resource_kind;
 uint8_t script_resource_id;
 uint8_t script_entry_key;
 uint8_t script_entry_found;
+/* Set by modules/script.c's say() (the OP_TEXT handler) whenever it writes
+ * room/standalone-script text - not for a conversation's own topic text,
+ * which manages its own pacing (see run_loaded_overlay()'s comment below).
+ * Read once, right after platform_overlay_run_native() returns. */
+uint8_t script_text_shown;
 
 #pragma code-name (push, "LOWCODE")
 static void run_loaded_overlay(void) {
     uint8_t result;
 
     platform_look_cursor_hide();
+    script_text_shown = 0u;
+    /* Blank around the load, not the run: platform_overlay_load() is a real
+     * EasyFlash copy of this overlay's ~2.6 KB code - at roughly 50 cycles/
+     * byte for easyflash_copy_window's byte loop (src/banking.s), that's
+     * well over 100ms, several full video frames, spent entirely with
+     * interrupts off. The raster IRQ's charset split (src/irq.s) cannot run
+     * during that freeze, so the display stays on whatever single charset
+     * (almost always the tile charset - _platform_bank_call_enter
+     * deliberately starts its critical section at the top of a frame, which
+     * is map/tile phase) was selected the instant interrupts went off - for
+     * the whole freeze, not just a flicker. Any status text already on
+     * screen (this runs right after "Looking..."/"Taking..."/"Using..." was
+     * written) renders through the wrong charset as garbled tile glyphs for
+     * a clearly visible fraction of a second - reported live as exactly
+     * this symptom. A plain black screen reads as "loading", not as
+     * corruption. Matches game_inventory_show()'s existing blank-before-load
+     * (src/inventory_runtime.c) and the same fix applied to every
+     * LOOK_HELPERS call site in src/platform.c. */
+    platform_screen_blank();
     result = platform_overlay_load(SCRIPT_EF_BANK, 0u, SCRIPT_EF_OFFSET,
                                    SCRIPT_MAGIC_0, SCRIPT_MAGIC_1);
+    platform_screen_unblank();
+    /* If we got here with the raster IRQ still suspended, the caller is a
+     * room's enter_room()/enter_tile() hook, itself called from inside
+     * game_process_pending_transition()'s whole-switch suspend bracket
+     * (src/game.c) - the only way to reach a room's own code at all. From
+     * this point on, platform_overlay_run_native() may write real, readable
+     * text to the status rows (a room's arrival/tile-entry narration), and
+     * that needs the ordinary per-frame map/text charset split actually
+     * running to render as text instead of tile-charset garbage - suspend
+     * pins the display on one static charset (tile, in normal gameplay)
+     * for its whole duration, precisely because nothing was expected to
+     * need the split *during* a transition before this. Resuming here is
+     * safe despite still being mid-transition: platform_room_enter()'s own
+     * EasyFlash work, and the environment module's checksum-race-sensitive
+     * fetch (see game_enter_room()'s comment in src/game.c), are both
+     * already fully complete by the time any room-entry/tile-entry hook
+     * runs at all. Deliberately not re-suspending afterward: the pager's
+     * own between-pages wait and this function's own game_wait_fresh_key()
+     * below both need the split alive too, for exactly the same reason, for
+     * as long as text might still be on screen; game_process_pending_
+     * transition()'s own raster_irq_resume() call, later, simply becomes a
+     * harmless no-op once this has already run. Found live: room 01's
+     * arrival narration was unreadable (tile-charset garbage) the entire
+     * time it was shown, precisely because it runs from here while still
+     * suspended. */
+    if (!platform_raster_irq_active) raster_irq_resume();
     if (result == PLATFORM_OK) platform_overlay_run_native();
 
     /* The overlay borrowed the room-staging scratch buffer (see
@@ -70,11 +120,48 @@ static void run_loaded_overlay(void) {
      * between calls, so it's left as-is - and any portrait it showed;
      * put that back the way normal gameplay expects to find it. */
     platform_portrait_hide();
+    /* Give the player a chance to read room/standalone-script text before
+     * wiping it - previously this cleared and redrew unconditionally and
+     * immediately (no platform_wait_frame() in between), so a Look/Use
+     * description's last page was up for, at most, a handful of CPU cycles
+     * before being erased - visually "flashes and vanishes", reported live.
+     * Every earlier page already got this same pause for free (src/text.s's
+     * next_text_line() calls wait_for_fresh_key() between pages); only the
+     * final page - the one nothing else waits for - was being skipped.
+     * Gated on script_text_shown so this adds no new keypress where there
+     * is nothing to protect: a conversation manages its own pacing (each
+     * loop iteration's "Ask about..." prompt already overwrites the
+     * previous topic's answer only once the player has typed something, and
+     * exiting via RUN/STOP is itself the acknowledgment - an extra wait
+     * here would demand a second, redundant keypress after that exit), and
+     * a script that only ran effects/a transition (e.g. the lightning/
+     * room_transition_here mystery sequence) never sets the flag. Also
+     * skipped when a transition message is pending: that path already has
+     * its own, better wait in game_transition_reveal(), called once the
+     * queued transition actually runs - waiting twice would demand two
+     * keypresses for one message. */
+    if (script_text_shown && !game_transition_pending_message) {
+        game_wait_fresh_key();
+    }
     platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
     platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-    raster_irq_suspend();
-    platform_room_draw(&platform_room, platform_player);
-    raster_irq_resume();
+    /* Not platform_room_draw(): the map itself was never touched by this
+     * overlay (it only ever writes the two status rows, cleared above, plus
+     * - for a conversation - sprites, already handled by
+     * platform_portrait_hide()), so a full clear-and-redraw is pure visible
+     * cost for no visible benefit - the "before" black flash on entry has an
+     * honest reason (see this function's earlier comment); this one didn't.
+     * platform_lighting_repair() is not a no-op either, though:
+     * platform_base_colors/platform_brightness live in WORKBSS, the same
+     * $A4E9 memory this overlay's own code just occupied, so both arrays are
+     * now holding the overlay's leftover bytes, not real lighting/color data
+     * (the same hazard fixed for Take/Look's darkness check this session -
+     * see MEMORY_MAP_TARGET.md's "Color RAM corruption" section). Color RAM
+     * itself is still fine right now (a separate address range the overlay
+     * never touched), so this repairs both caches - silently, with no
+     * visible clear or flash, see its own comment in src/platform.c for why
+     * - before anything else reads them. */
+    platform_lighting_repair();
 }
 
 void game_script_play(uint8_t resource_id) {

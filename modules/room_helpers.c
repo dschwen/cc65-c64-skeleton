@@ -27,19 +27,17 @@
 
 extern PlatformRoom* room_helpers_room;
 extern uint8_t room_helpers_slot;
-extern const PlatformObject* room_helpers_player;
 extern uint8_t room_helpers_direction;
 extern uint8_t room_helpers_room_id;
 extern uint8_t room_helpers_op;
 extern uint8_t room_helpers_result;
+extern uint8_t room_helpers_emitted_light;
 
 extern const PlatformRoom* rendered_room;
-extern const PlatformObject* rendered_player;
 extern uint16_t rendered_object_limit;
 
 extern void dirty_clear(void);
 extern void mark_object_cells(const PlatformObject* object);
-extern void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
 
 static uint8_t room_helpers_neighbor(void) {
     const PlatformRoom* room;
@@ -74,19 +72,31 @@ static uint8_t room_helpers_neighbor(void) {
     return PLATFORM_OK;
 }
 
+/* Does only the object-array mutation and dirty-cell marking - both safe,
+ * since dirty_cells/dirty_x/dirty_y (src/platform.c) are plain resident BSS,
+ * not WORKBSS. Does NOT call redraw_dirty() or platform_lighting_rebuild()
+ * itself: both read and write platform_base_colors/platform_brightness,
+ * which live in WORKBSS - the same $A4E9 memory this overlay's own compiled
+ * code occupies right now, while this function is running from it. A read
+ * there would return this overlay's own bytes instead of real data; a write
+ * (redraw_dirty() makes one, to platform_base_colors) would overwrite this
+ * overlay's own not-yet-executed instructions - genuine undefined behavior,
+ * not just a wrong color, since the overlay is still executing through that
+ * same memory. Reports back through room_helpers_emitted_light instead, so
+ * platform_room_object_remove() (src/platform.c) can do both calls safely
+ * after this overlay has returned and $A4E9 is free again. Found live as
+ * colorful full-screen corruption after Take, whenever the removed object
+ * emitted light. */
 static uint8_t room_helpers_object_remove(void) {
     PlatformRoom* room;
     PlatformObject* object;
-    const PlatformObject* player;
     uint8_t slot;
-    uint8_t emitted_light;
 
     room = room_helpers_room;
     slot = room_helpers_slot;
-    player = room_helpers_player;
     object = &room->objects[slot];
     if (object->type == 0u) return PLATFORM_ERR_ARGUMENT;
-    emitted_light = PLATFORM_OBJECT_LIGHT(
+    room_helpers_emitted_light = PLATFORM_OBJECT_LIGHT(
         platform_object_type_get(object->type));
     dirty_clear();
     mark_object_cells(object);
@@ -98,11 +108,6 @@ static uint8_t room_helpers_object_remove(void) {
                room->objects[rendered_object_limit - 1u].type == 0u) {
             --rendered_object_limit;
         }
-    }
-    redraw_dirty(room, player);
-    if (emitted_light != 0u && room == rendered_room) {
-        rendered_player = player;
-        platform_lighting_rebuild(room, player);
     }
     return PLATFORM_OK;
 }

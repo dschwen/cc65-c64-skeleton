@@ -307,6 +307,15 @@ void platform_lighting_set_global(uint8_t level);
 void platform_lighting_rebuild(const PlatformRoom* room,
                                const PlatformObject* player);
 
+/* Repairs platform_base_colors/platform_brightness for the current room
+ * (platform_room/platform_player) after an $A4E9 overlay load has
+ * overwritten them with its own code - see run_loaded_overlay()
+ * (src/script_runtime.c) and this function's own comment in src/platform.c.
+ * Unlike platform_room_draw(), never clears or visibly redraws the screen:
+ * only call this when nothing about the room's actual appearance needs to
+ * change, just these two caches. */
+void platform_lighting_repair(void);
+
 /* Flash white, blank map colors, then restore the current lighting in assembly. */
 void platform_lightning(void);
 
@@ -322,6 +331,20 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
 /*
  * Move the global player one half-tile when the destination hotspot is inside
  * the room and its tile has PLATFORM_TILE_SOLID_LAND. Uses minimal redraw.
+ *
+ * Stepping off an edge into an enabled neighbor does NOT call
+ * platform_room_enter() synchronously (it did until the bug fixed in
+ * MEMORY_MAP_TARGET.md's "Interrupt/banking safety audit" - see that section
+ * for the full story). platform_room_enter()'s contract requires its caller
+ * to bracket it, plus the game_enter_room()/game_enter_tile() sync that must
+ * follow with no gap, inside one raster_irq_suspend()/platform_screen_blank()
+ * window - and this function has no business owning that bracket itself
+ * (game_enter_room() is a game.c concept). Instead this queues the same
+ * game_transition_request()/game_process_pending_transition() deferred path
+ * script-triggered transitions already use, applying the actual switch one
+ * frame later, fully bracketed. Callers see PLATFORM_OK the frame the edge
+ * step is accepted, exactly as before; only the room-switch side effects
+ * (new room's enter_room()/enter_tile(), the redraw) land one frame later.
  */
 uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
 

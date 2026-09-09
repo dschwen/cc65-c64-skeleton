@@ -77,6 +77,7 @@ extern uint8_t script_resource_kind;
 extern uint8_t script_resource_id;
 extern uint8_t script_entry_key;
 extern uint8_t script_entry_found;
+extern uint8_t script_text_shown;
 
 void __fastcall__ platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
@@ -248,6 +249,13 @@ static void say(uint16_t str_offset) {
     platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
     platform_text_output_color = 1u;
     platform_text_output_native((const char*)script_buf);
+    /* Tell run_loaded_overlay() (src/script_runtime.c) there is text on
+     * screen worth pausing for before its cleanup wipes it - except for a
+     * conversation's own topic answers, which that function's comment
+     * explains are already paced by the conversation loop itself. */
+    if (script_resource_kind != PLATFORM_RESOURCE_KIND_CONVERSATION) {
+        script_text_shown = 1u;
+    }
 }
 
 /* Runs [pos, end) - or until an END opcode, whichever comes first, so a

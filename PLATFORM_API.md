@@ -478,6 +478,21 @@ The bottom-of-map raster IRQ increments `platform_frame_counter` once per
 video frame. `platform_wait_frame()` waits for that byte to change, providing
 a 50 Hz PAL or 60 Hz NTSC game-loop cadence.
 
+`platform_frame_counter` cannot advance while `raster_irq_suspend()` holds the
+raster IRQ masked (every room transition does, for its whole duration - see
+`platform_room_enter()`'s contract above). `platform_wait_frame()` detects
+this and falls back to polling the VIC's raster position directly instead of
+hanging - real hardware timing, independent of whether an interrupt is
+allowed to fire. This matters for anything built on `platform_wait_frame()`:
+`game_wait_fresh_key()`, the bottom pager's between-pages wait, and the
+`wait_key` script opcode all now work correctly (they used to hang) when
+triggered from a room's `enter_room()`/`enter_tile()`, which always runs
+inside that suspended window during a transition - see
+`MEMORY_MAP_TARGET.md`'s "Transition hang" section for the full story and a
+remaining, lower-severity glitch (narration shown this way still renders
+through the wrong charset, readable but wrong, until the transition
+finishes).
+
 Because the custom raster IRQ exits through the KERNAL IRQ restore path rather
 than running the normal KERNAL handler, it does not scan the keyboard itself.
 `platform_input_poll()` is an assembly wrapper that calls KERNAL `SCNKEY` and
@@ -502,6 +517,18 @@ destination must have `PLATFORM_TILE_SOLID_LAND` (`$04`) set. Crossing an edge
 uses the corresponding enabled neighbor and enters at the opposite boundary
 while preserving the orthogonal coordinate. Only the hotspot is tested; the
 dimensions of the player graphic do not expand the collision footprint.
+
+An edge crossing is queued through the same deferred `game_transition_request()`/
+`game_process_pending_transition()` mechanism a room script's
+`room_transition` uses (see `ROOM_CODE_API.md`), not applied inside
+`platform_player_step()` itself - see "Screen transitions" below for why.
+The caller sees `PLATFORM_OK` the instant the step off the edge is accepted;
+the destination room's data, code, and environment module load, and its
+`enter_room()`/`enter_tile()` run, one frame later. This is not observable as
+input lag (it is the same one-frame latency scripted transitions already
+have), but it does mean `game_state.current_room` does not change until the
+following frame - do not assume it reflects an edge crossing immediately
+after `game_player_step()` returns.
 
 The demo becomes interactive immediately after drawing the first room. Cursor
 events normally move the player by one half-tile. While look mode is active,
@@ -558,6 +585,19 @@ The tile-cursor Look command keeps its frame inside the map; pushing outward
 at an edge displays a generic exit message without loading the neighboring
 room (`platform_look_exit()` - custom per-exit descriptions aren't wired up
 yet; see the room file format section above).
+
+Every caller of `platform_room_enter()` must bracket it - together with the
+`game_enter_room()`/`game_enter_tile()` sync that follows it, in one unbroken
+window - with `platform_screen_blank()`/`_unblank()` and
+`raster_irq_suspend()`/`_resume()` (see `platform_room_enter()`'s own comment
+in `src/platform.h`). There are exactly three such callers, all going through
+`game_process_pending_transition()`'s bracket shape: `src/main.c`'s startup
+sequence, `game_process_pending_transition()` itself (scripted transitions
+*and*, since the fix described in `MEMORY_MAP_TARGET.md`'s "Interrupt/banking
+safety audit", ordinary edge-of-room walking, both queued through
+`game_transition_request()`), and `saveload_apply_pending()`. Do not add a
+fourth call site that invokes `platform_room_enter()` directly outside that
+bracket - queue a transition through `game_transition_request()` instead.
 
 Trigger destinations remain game-defined. Game code resolves:
 
@@ -955,6 +995,31 @@ hardware stack for a *different* `jsr`'d "leave" to find, since `rts`
 always pops whatever is on top regardless of what pushed it), so nested
 banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
 `platform_easyflash_copy_roml`/`_romh`) is itself built on this pair.
+
+**Cost of the copy itself, not just the wait beforehand.**
+`_platform_bank_call_enter`/`_platform_far_call` waiting for the raster to
+wrap before disabling interrupts (documented above and in
+`MEMORY_MAP.md`/`MEMORY_MAP_TARGET.md`) is a small, bounded cost - up to
+~56 lines, ~3.5ms. The copy loop that runs *after* interrupts are off is a
+separate, much larger cost that scales with the amount of data moved:
+`easyflash_copy_window`'s byte loop (`src/banking.s`) is roughly 50 6502
+cycles per byte, so a multi-KB `platform_overlay_load()` (the copy-to-`$A4E9`
+overlays - room-helpers, look-helpers, script/conversation/room-text,
+inventory, save/load) can hold interrupts off for well over 100ms, several
+full video frames - long enough that the raster IRQ's charset split cannot
+run at all for that whole stretch, and the display freezes screen-wide on
+whichever single charset was selected the instant interrupts went off
+(almost always the tile charset, since the bank-call primitives deliberately
+start their critical section at the top of a frame). Any status text already
+on screen at that instant renders through the wrong charset as garbled tile
+glyphs for a visible fraction of a second, not a one-frame flicker - found
+live (`MEMORY_MAP_TARGET.md`'s "Overlay-load visual glitch" section) via
+Look/Take/Use, which always have status text ("Looking...", "Taking...",
+"Using...") already up when their overlay loads. Bracket a
+`platform_overlay_load()` call with `platform_screen_blank()`/`_unblank()`
+whenever status text might already be visible - see that section for the
+call sites already fixed this way and the ones deliberately left as a
+lower-priority follow-up.
 
 ### Banked code
 

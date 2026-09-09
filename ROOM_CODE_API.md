@@ -304,6 +304,16 @@ shared constant instead of a bare number on each side (`STORY_ROOM00_*`
 above). A script's own opcode set (branching on flags, giving an object,
 etc.) is documented in `tools/compile_script.py`'s module docstring.
 
+An entry's `text` output waits for a fresh keypress before the engine clears
+it and redraws the room, the same way the bottom pager already waits between
+pages of a message longer than two lines - so a room's own description text
+is always given a chance to be read, however long it is, with no `wait_key`
+needed just to keep it on screen. (This was a real bug, fixed in
+`MEMORY_MAP_TARGET.md`'s "Overlay-load visual glitch" section: the last page
+used to be cleared immediately, before the player could read it.) An entry
+that only runs effects or a transition, with no `text` at all, does not add
+this wait.
+
 The four exit-description bytes in the room file header (see
 `PLATFORM_API.md`) are currently unread/reserved - not wired onto this
 mechanism yet, so `platform_look_exit()` always shows a generic message

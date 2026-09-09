@@ -61,6 +61,11 @@ extern uint8_t game_entry_reason;
  * use (see game_transition_reveal()). */
 extern uint8_t game_transition_pending_message;
 
+/* Blocks until a keypress that wasn't already held when this was called -
+ * release, press, release. See src/game.c's definition for why this is
+ * exported rather than static. */
+void game_wait_fresh_key(void);
+
 /* Resident (unlike platform_text_output_native, not a banked overlay - the
  * script interpreter overlay calls this directly on its own windowed string
  * data, the same way it already calls game_transition_request()). Blanks,

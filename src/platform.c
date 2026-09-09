@@ -86,6 +86,7 @@ void raster_irq_install(void);
 void raster_irq_vectors_restore(void);
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
+extern volatile uint8_t platform_raster_irq_active;
 void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
@@ -509,6 +510,7 @@ uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
 #define ROOM_HELPERS_OP_REMOVE   1u
 
 void platform_overlay_run_native(void);
+void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
 
 /* Explicitly zero-initialized (not plain BSS): BSSRAM has no margin left,
  * while PROGRAM (where cc65 places initialized DATA) does. See banking.s's
@@ -523,8 +525,12 @@ uint8_t room_helpers_direction = 0;
 uint8_t room_helpers_room_id = 0;
 uint8_t room_helpers_op = 0;
 uint8_t room_helpers_result = 0;
+/* Set by room_helpers_object_remove() (modules/room_helpers.c), read here
+ * after the overlay returns - see platform_room_object_remove()'s own
+ * comment for why the redraw itself can no longer happen inside the
+ * overlay. */
+uint8_t room_helpers_emitted_light = 0;
 
-#pragma code-name (push, "HIGHCODE")
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id) {
     uint8_t status;
@@ -542,6 +548,29 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
     return room_helpers_result;
 }
 
+/* UPPERCODE, not HIGHCODE like this function's neighbor above: HIGH has no
+ * margin left as of this session's WORKBSS-aliasing fix growing it past
+ * capacity; UPPER still had a little room. Purely a segment-budget choice.
+ *
+ * room_helpers_object_remove() (modules/room_helpers.c) does only the
+ * object-array mutation and dirty-cell marking itself, then reports back
+ * through room_helpers_emitted_light - it must NOT call redraw_dirty() or
+ * platform_lighting_rebuild() while it's still running. Both read AND write
+ * platform_base_colors/platform_brightness, which live in WORKBSS - the
+ * exact same $A4E9 memory this overlay's own compiled code currently
+ * occupies while it's loaded and executing. A read there returns the
+ * overlay's own bytes instead of real color/brightness data; a write (which
+ * redraw_dirty() does, to platform_base_colors) overwrites the overlay's
+ * own not-yet-executed instructions with color values - genuinely
+ * undefined behavior, not just wrong colors, since the overlay is still
+ * running through that same memory. Found live: colorful full-screen
+ * corruption after Take, reproducible whenever the removed object emitted
+ * light (see the screenshot this was diagnosed from). Fixed by doing both
+ * calls here instead, after platform_overlay_run_native() has returned and
+ * $A4E9 is free again - the same "resident wrapper redraws after the
+ * overlay returns" pattern room-code activation and script/room-script
+ * text already use. */
+#pragma code-name (push, "UPPERCODE")
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player) {
     uint8_t status;
@@ -556,6 +585,13 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                    ROOM_HELPERS_MAGIC_0, ROOM_HELPERS_MAGIC_1);
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
+    if (room_helpers_result == PLATFORM_OK) {
+        redraw_dirty(room, player);
+        if (room_helpers_emitted_light != 0u && room == rendered_room) {
+            rendered_player = player;
+            platform_lighting_rebuild(room, player);
+        }
+    }
     return room_helpers_result;
 }
 #pragma code-name (pop)
@@ -589,6 +625,10 @@ uint8_t look_helpers_color = 0;
 uint8_t look_helpers_type_id = 0;
 uint8_t look_helpers_op = 0;
 uint8_t look_helpers_result = 0;
+/* Set here, before the overlay loads - see platform_look_tile_check()'s own
+ * comment for why look_helpers_tile_check() (modules/look_helpers.c) cannot
+ * read platform_brightness[] itself. */
+uint8_t look_helpers_light = 0;
 
 #pragma code-name (push, "HIGHCODE")
 uint8_t platform_look_tile_check(const PlatformRoom* room,
@@ -603,9 +643,38 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
+    /* Prefetch the tile's brightness here, resident-side, instead of letting
+     * look_helpers_tile_check() (modules/look_helpers.c) read
+     * platform_brightness[] itself while running: that array lives in
+     * WORKBSS, the same $A4E9 memory the LOOK_HELPERS overlay's own compiled
+     * code occupies once loaded, so a read from inside the overlay returns
+     * the overlay's own bytes instead of real brightness data - silently
+     * wrong "too dark"/"visible" judgments, found live as part of the same
+     * WORKBSS-aliasing bug that corrupted the screen after Take (see
+     * platform_room_object_remove()'s comment). Bounds-checked the same way
+     * the overlay itself checks before using tile_x/tile_y, since an
+     * out-of-range pair here would otherwise read a plausible-looking but
+     * wrong array element. */
+    look_helpers_light = (tile_x < PLATFORM_MAP_WIDTH && tile_y < PLATFORM_MAP_HEIGHT)
+                             ? platform_brightness[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x]
+                             : 0u;
+    /* Blank around the load, not the run: the load is the part that freezes
+     * the display (see this file's comment on the same pattern in
+     * src/script_runtime.c's run_loaded_overlay() for the full explanation -
+     * an EasyFlash copy of a KB-plus overlay runs several video frames with
+     * interrupts fully off, and whatever single charset the split was in at
+     * that instant stays selected screen-wide for the whole freeze, so any
+     * status text already up (this is called right after "Looking..."/
+     * "Taking..."/"Using..." is written) renders through the wrong charset
+     * as garbled tile glyphs for a visible fraction of a second). A plain
+     * black screen reads as "loading", not as corruption. Matches the
+     * pattern game_inventory_show() (src/inventory_runtime.c) already uses
+     * for its own overlay load. */
+    platform_screen_blank();
     status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
                                    LOOK_HELPERS_EF_OFFSET,
                                    LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    platform_screen_unblank();
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     return look_helpers_result;
@@ -620,31 +689,41 @@ uint8_t platform_look_tile(const PlatformRoom* room,
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
+    platform_screen_blank();
     status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
                                    LOOK_HELPERS_EF_OFFSET,
                                    LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    platform_screen_unblank();
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     return look_helpers_result;
 }
 
 void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
+    uint8_t status;
+
     look_helpers_op = LOOK_HELPERS_OP_TAKE_PROMPT;
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    if (platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
-                              LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1) !=
-        PLATFORM_OK) return;
+    platform_screen_blank();
+    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
+                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    platform_screen_unblank();
+    if (status != PLATFORM_OK) return;
     platform_overlay_run_native();
 }
 
 void platform_object_taken_message(uint8_t type_id, uint8_t color) {
+    uint8_t status;
+
     look_helpers_op = LOOK_HELPERS_OP_TAKEN_MSG;
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    if (platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
-                              LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1) !=
-        PLATFORM_OK) return;
+    platform_screen_blank();
+    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
+                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    platform_screen_unblank();
+    if (status != PLATFORM_OK) return;
     platform_overlay_run_native();
 }
 #pragma code-name (pop)
@@ -1289,9 +1368,18 @@ void platform_lighting_rebuild(const PlatformRoom* room,
     platform_lighting_apply();
 }
 
-void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
+/* platform_map_draw_native()/object_draw_base() write character codes to
+ * screen RAM (harmless to repeat - identical bytes, since neither the tiles
+ * nor the objects changed for platform_lighting_repair()'s only caller) and,
+ * as their real purpose here, base (pre-lighting) colors into
+ * platform_base_colors, NOT to Color RAM directly - see the destination
+ * setup in src/render.s's _platform_map_draw_native/_platform_object_draw_
+ * native. That's what makes platform_lighting_repair() below possible
+ * without a visible clear-and-redraw: this only ever touches the cache,
+ * never Color RAM, until platform_lighting_rebuild()'s final pass. */
+static void redraw_map_and_objects(const PlatformRoom* room,
+                                   const PlatformObject* player) {
     uint16_t i;
-    if (room == 0) return;
     rendered_room = room;
     rendered_player = player;
     rendered_object_limit = PLATFORM_ROOM_OBJECT_COUNT;
@@ -1299,15 +1387,45 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
            room->objects[rendered_object_limit - 1u].type == 0u) {
         --rendered_object_limit;
     }
-    platform_look_cursor_hide();
-    platform_text_area_clear_native();
-    platform_color_clear_native();
     platform_map_draw_native(room);
     for (i = 0; i < rendered_object_limit; ++i) {
         if (player == &room->objects[i]) continue;
         object_draw_base(&room->objects[i]);
     }
     object_draw_base(player);
+}
+
+/* Repairs platform_base_colors/platform_brightness (WORKBSS) after loading
+ * an $A4E9 overlay has silently overwritten them with the overlay's own
+ * code - see run_loaded_overlay() (src/script_runtime.c), the only caller.
+ * Deliberately not platform_room_draw(): nothing about the room's actual
+ * appearance needs to change here (the map, its objects, and visibility are
+ * all still exactly what they were before the overlay ran), only these two
+ * caches - so this skips platform_room_draw()'s screen/Color RAM clear (the
+ * visible "blank" a full redraw costs) and its view_rebuild() (platform_
+ * view_tiles is plain resident BSS, untouched by the overlay, so it's still
+ * correct). What's left - redraw_map_and_objects() plus
+ * platform_lighting_rebuild() - never touches Color RAM until the lighting
+ * rebuild's own final pass, so there is no intermediate wrong-color state
+ * for the VIC to ever scan out; the first and only paint is already
+ * correct. Earlier attempt at this got it wrong: calling
+ * platform_lighting_rebuild() alone (skipping redraw_map_and_objects())
+ * left platform_base_colors holding the overlay's leftover bytes -
+ * light_source_apply()/wall_cache_apply() only ever touch platform_
+ * brightness, never platform_base_colors, so the final lighting-apply pass
+ * combined fresh brightness with still-garbage base colors - reproduced
+ * live as scattered rainbow corruption across the whole map. */
+void platform_lighting_repair(void) {
+    redraw_map_and_objects(&platform_room, platform_player);
+    platform_lighting_rebuild(&platform_room, platform_player);
+}
+
+void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
+    if (room == 0) return;
+    platform_look_cursor_hide();
+    platform_text_area_clear_native();
+    platform_color_clear_native();
+    redraw_map_and_objects(room, player);
     view_rebuild(room, player);
     platform_lighting_rebuild(room, player);
 }
@@ -1372,7 +1490,6 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     uint8_t direction;
     uint8_t room_id;
     uint8_t tile;
-    uint8_t result;
 
     if (platform_player == 0 || platform_player->type == 0u) {
         return PLATFORM_ERR_ARGUMENT;
@@ -1404,15 +1521,59 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     if (platform_room_neighbor(&platform_room, direction, &room_id) != PLATFORM_OK) {
         return PLATFORM_ERR_BLOCKED;
     }
-    result = platform_room_enter(room_id, platform_player->type,
-                                 (uint8_t)new_x, (uint8_t)new_y);
-    platform_room_draw(&platform_room, platform_player);
-    return result;
+    /* Do not call platform_room_enter() here. Its own contract (see this
+     * file's declaration in platform.h) requires the caller to bracket it,
+     * plus the game_enter_room()/game_enter_tile() sync that must follow it
+     * with no gap, inside one raster_irq_suspend()/platform_screen_blank()
+     * window - this function has neither the layering (game_enter_room() is
+     * a game.c concept) nor, previously, any bracket at all. That made every
+     * ordinary edge-of-room step - by far the most common way a player
+     * changes rooms - reach platform_room_enter() completely unguarded,
+     * unlike the three other call sites (src/main.c startup,
+     * game_process_pending_transition(), saveload_apply_pending()), which
+     * all bracket it correctly. Queue it through the same deferred
+     * mechanism script-triggered transitions already use instead of adding
+     * a fourth, hand-rolled bracket: game_process_pending_transition()
+     * (src/game.c), called once per frame before input is polled, performs
+     * the actual switch fully bracketed one frame later. See
+     * MEMORY_MAP_TARGET.md's "Interrupt and banking safety" section. */
+    return game_transition_request(room_id, (uint8_t)new_x, (uint8_t)new_y);
 }
 
 #pragma code-name (push, "LOWCODE")
+/* platform_frame_counter only ever advances from the raster IRQ
+ * (src/irq.s), which raster_irq_suspend() masks off (VIC_IRQ_ENABLE = 0) for
+ * the entire duration of a room switch (see game_process_pending_transition(),
+ * saveload_apply_pending(), and main()'s startup bracket in src/game.c/
+ * src/saveload_runtime.c/src/main.c). Any "wait for a keypress" loop built on
+ * this function - src/text.s's wait_for_fresh_key() (the bottom pager's
+ * between-pages wait), game_wait_fresh_key() (src/game.c), modules/script.c's
+ * wait_fresh_key() (the OP_WAIT_KEY opcode) - would otherwise spin forever
+ * the moment it runs while suspended, because the byte it's polling can never
+ * change. Found live: room 01's enter_room() (rooms/asm/01_enter_room.s)
+ * shows its one-time, three-line arrival narration via
+ * game_room_script_entry() - and enter_room() always runs from inside
+ * exactly this suspended window - so its text pager's own between-pages wait
+ * hung the very first time a player triggered that transition, well before
+ * this session's work: showing 3+ lines of room-entry/tile-entry script text
+ * during any room transition was already latently broken. Fall back to
+ * polling the VIC's own raster position directly when suspended: wait for
+ * the 9-bit raster to reach the bottom of the frame, then wrap back to the
+ * top. That is real hardware timing independent of the IRQ - the VIC counts
+ * raster lines regardless of whether it is allowed to request an interrupt -
+ * and it's the same "one frame has passed" signal
+ * _platform_bank_call_enter (src/banking.s) already trusts to find a safe
+ * point to suspend interrupts, just used here as a duration instead of a
+ * rendezvous point. */
 void platform_wait_frame(void) {
     uint8_t frame;
+    if (!platform_raster_irq_active) {
+        while (!(P_VIC(0x11) & 0x80u)) {
+        }
+        while (P_VIC(0x11) & 0x80u) {
+        }
+        return;
+    }
     frame = platform_frame_counter;
     while (platform_frame_counter == frame) {
     }
@@ -1468,12 +1629,37 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
     return PLATFORM_ERR_FULL;
 }
 
+/* $D011 bit 7 means two different things depending on direction: on a READ
+ * it's the current raster line's bit 8 (is the raster past 255?); on a
+ * WRITE it's bit 8 of the raster-IRQ COMPARE value src/irq.s schedules
+ * through $D012. A plain read-modify-write (the previous `&= 0xef`) copies
+ * whatever bit 7 happened to read as straight back out as part of that
+ * compare value - harmless the ~82% of the time the real raster is below
+ * line 256 when this runs, but the other ~18% (whenever it's called while
+ * the raster happens to be in the 256-311 range) it latches compare-bit-8=1,
+ * silently changing every future "top of frame" trigger from raster==0 to
+ * raster==256. raster_irq_body (src/irq.s) never touches $D011 itself again
+ * once running - only $D012's low byte - so nothing ever un-latches it: the
+ * IRQ keeps firing every frame (so the frame counter still advances
+ * normally) but permanently takes the bmi/"switch to text" branch every
+ * time, since it only ever sees raster values at or above 256 from then on
+ * - the map charset is never selected again. Found live: room 00 to 01's
+ * transition (which calls this several times) intermittently locked the
+ * *destination* room's map into the text charset, permanently, right after
+ * the transition completed - matching this exact mechanism (an ~18% chance
+ * per call, so a several-call transition sequence has good odds of hitting
+ * it at least once, and this session added several new calls to these two
+ * functions around overlay loads, mechanically raising that chance further
+ * without changing the underlying, pre-existing bug). raster_irq_install()
+ * and _raster_irq_resync() (src/irq.s) already know to force bit 7 back to
+ * 0 on every $D011 write for exactly this reason - these two functions are
+ * the only $D011 writers in the codebase that didn't. */
 void platform_screen_blank(void) {
-    P_VIC(0x11) &= 0xefu;
+    P_VIC(0x11) &= 0x6fu;
 }
 
 void platform_screen_unblank(void) {
-    P_VIC(0x11) |= 0x10u;
+    P_VIC(0x11) = (P_VIC(0x11) & 0x7fu) | 0x10u;
 }
 
 void platform_sprites_hide_all(void) {

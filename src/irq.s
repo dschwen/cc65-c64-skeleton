@@ -6,6 +6,7 @@
 .export _raster_irq_suspend, _raster_irq_resume
 .export _platform_frame_counter
 .export platform_raster_irq_active
+.export _platform_raster_irq_active
 .export _platform_text_screen_enter, _platform_text_screen_leave
 .export _platform_rain_enable, _platform_rain_activate
 .export _platform_rain_disable, _platform_rain_is_active
@@ -60,6 +61,12 @@ RAIN_Y_MAX      = 176
 ; below $8000 where they stay visible under every map.
 .segment "LOWBSS"
 platform_text_screen_active: .res 1
+; Same byte under two names: the plain name is what src/irq.s and
+; src/banking.s already reference from assembly; the underscore-prefixed
+; alias is the one cc65's C calling convention requires to read it as an
+; ordinary `extern volatile uint8_t` from C (see platform_wait_frame() in
+; src/platform.c, the only current C reader).
+_platform_raster_irq_active:
 platform_raster_irq_active: .res 1
 
 .segment "BSS"

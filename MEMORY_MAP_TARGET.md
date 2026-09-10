@@ -22,6 +22,7 @@ happen in. Update it as steps land.
 | Generated fixed-module layout | `cfg/easyflash_layout.json` generates runtime/ca65 constants; the final image validator checks every payload and the in-place linked entry. |
 | Inventory -> in-place bank 48 ROMH | Removed its copy/validate cycle and 32-byte selected-slot cache. Five mutable bytes live at `$C174-$C178`; the 1,315-byte code/RODATA image runs at `$A000-$A522` and nests through bank 47/46 for cold type names. |
 | Mode-aware far calls | The generated descriptor now carries CPU map and EasyFlash control separately. Type Info runs as bank 47 ROML with `$01=$37`/`$DE02=$06`; Inventory remains bank 48 ROMH with `$37`/`$07`. The validator applies the effective visibility contract. |
+| `SV` reduced below one page | Save-name editing now reuses the selected `SINDEX` entry. Header + code + RODATA + BSS fell from 4,107 to 4,001 bytes, leaving 95 bytes in a 4 KiB page; the build enforces a 4,064-byte ceiling (32-byte minimum reserve). A named save/readback/load round-trip passed in VICE. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -645,7 +646,7 @@ call still pays fixed transition overhead, so **bank whole operations, not
 inner-loop helpers**; a long banked operation also still blocks foreground
 gameplay even though display timing continues.
 
-## Blocked, and why
+## Former layout blocker, now cleared
 
 The VIC bank move (screen and sprites to `$8000-$85FF`, charsets to
 `$A000-$AFFF`, freeing `$2000-$2FFF` and `$3A00-$3BBF` below `$8000`) does not
@@ -659,10 +660,16 @@ currently fit. Evacuating those two ranges means rehoming:
 | **total** | **6,912** |
 
 Available is ~1,792 left in the window after the VIC takes its share plus
-~4,851 below `$8000` (including what the move itself frees) = **6,643**. Short
-by roughly 270 bytes. Moving `WORLDDELTA` out would let the overlay window sit
-at `$B000-$BFFF` - 4,096 bytes against the 4,107 the save-detail overlay
-actually uses. Eleven bytes short. Not a margin worth building on.
+~4,851 below `$8000` (including what the move itself frees) = **6,643**. The
+original arrangement was short by roughly 270 bytes. Moving `WORLDDELTA` out
+lets the overlay window sit at `$B000-$BFFF`; that was initially blocked
+because the 4,107-byte save-detail overlay exceeded the page by 11 bytes.
+
+That immediate blocker is now cleared: `SV` occupies 4,001 bytes, leaving 95
+bytes in a 4 KiB page, and its build ceiling is 4,064 bytes. The relocation
+itself is still pending: `WORLDDELTA`, every overlay linker configuration,
+the resident loader constants, and all documented ownership boundaries must
+move together before the VIC layout changes.
 
 The answer is not to find 270 bytes: it is to **delete the overlay window**,
 which is 4,119 bytes of RAM whose only job is holding a copy of code that
@@ -685,13 +692,16 @@ already exists in a bank.
    normal `$35`/off state. The render buffer at `$A4E9` was unchanged. This
    closes the trampoline milestone but invalidates the old proposed `SC`/`SL`
    conversion order.
-3. **Break the layout cycle before converting another service.** The most
-   economical measured route is to shrink `SV` by at least 11 bytes (prefer a
-   32-byte margin): it is currently 4,107 bytes including header and BSS, just
-   over one 4 KiB page. Then move `WORLDDELTA` during the same link-layout
-   change and place the still-needed overlay window at `$B000-$BFFF`. That is
-   the bridge that makes the VIC-bank move fit without pretending ROML code
-   can read upper RAM.
+3. **The size half of the layout bridge is complete.** `SV` is now 4,001
+   bytes including header and BSS, 95 bytes below one 4 KiB page. Reusing its
+   selected index entry removed 106 bytes, and the finalizer enforces a 4,064
+   byte ceiling so at least 32 bytes remain. PAL VICE exercised F1 -> slot 0
+   -> name `TEST` -> Save, full record readback, `SINDEX` update, then F3 ->
+   slot 0 -> Load. The 146-byte files were present and the load restored a
+   deliberately changed health byte from 1 to 100; `$01`, EasyFlash bank and
+   control returned to `$35`/0/`$04`, the pending flag cleared, and the frame
+   counter advanced. The remaining half of this step is to move `WORLDDELTA`
+   and the common overlay window to `$B000-$BFFF` as one layout change.
 4. Perform the **VIC bank move**, freeing `$2000-$2FFF` and `$3A00-$3BBF`
    below `$8000`. Keep the copy-to-RAM overlays operational during this step;
    it is a layout migration, not yet an overlay deletion.

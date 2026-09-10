@@ -180,6 +180,15 @@ resident wrappers `game_save_show()`/`game_load_show()` (in
 validate the overlay, run it in the requested mode, then restore the split
 charset and redraw exactly like Inventory's resident wrapper.
 
+`SV` preserves the 146-byte browser index in its own BSS before record
+encoding reuses `$A000`. Name entry edits the selected 17-byte index entry
+in place, so no second 16-byte name buffer or copy-back loop is needed. Its
+measured header/code/RODATA/BSS footprint is 4,001 bytes. The build passes
+`SAVELOAD_SAVE_MAX_FOOTPRINT` (default `$0FE0`, 4,064 bytes) to the overlay
+finalizer, which counts BSS as well as file-backed bytes and fails the build
+if `SV` consumes the 32-byte relocation reserve in a future `$B000-$BFFF`
+window.
+
 Inside the overlays, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
 `CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with
 `platform_memory_kernal()`/`platform_memory_game()` (already resident,

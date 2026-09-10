@@ -132,6 +132,9 @@ SAVELOAD_SAVE_RESOLVER_OBJ := $(OUTDIR)/saveload-save-resolver.o
 SAVELOAD_SAVE_MODULE_CFG := cfg/saveload_save_overlay.cfg
 SAVELOAD_SAVE_MODULE_RAW := $(OUTDIR)/saveload-save.raw
 SAVELOAD_SAVE_MODULE := $(OUTDIR)/SV
+# Keep SV small enough to relocate into one 4 KiB page with useful growth
+# room. The finalizer includes BSS when enforcing this footprint.
+SAVELOAD_SAVE_MAX_FOOTPRINT ?= 0x0fe0
 ROOM_HELPERS_C_OBJ := $(OUTDIR)/room-helpers-module.o
 ROOM_HELPERS_HEADER_OBJ := $(OUTDIR)/room-helpers-header.o
 ROOM_HELPERS_RESOLVER_SRC := $(OUTDIR)/room-helpers-resolver.s
@@ -370,7 +373,8 @@ $(SAVELOAD_SAVE_MODULE_RAW): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_
 $(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_MODULE_RAW) \
 		tools/finalize_inventory_overlay.py
 	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/saveload-save.map --magic SV --output $@
+		--map $(OUTDIR)/saveload-save.map --magic SV \
+		--max-footprint $(SAVELOAD_SAVE_MAX_FOOTPRINT) --output $@
 
 $(ROOM_HELPERS_C_OBJ): modules/room_helpers.c src/platform.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<

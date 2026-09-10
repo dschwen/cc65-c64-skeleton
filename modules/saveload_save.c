@@ -55,10 +55,11 @@ void platform_disk_write_block(void);
 void platform_disk_index_write_block(void);
 
 /* The full 1,146-byte record uses room-stage RAM at $A000. Preserve the
- * browser's 146-byte index here before record encoding overwrites it. */
+ * browser's 146-byte index here before record encoding overwrites it. Name
+ * entry edits the selected index entry directly; keeping a second 16-byte
+ * name copy wastes scarce overlay RAM and would only need copying back. */
 #define record_buffer SAVE_RECORD_RAM
 static uint8_t index_buffer[SAVE_INDEX_BYTES];
-static uint8_t name_buffer[SAVE_NAME_BYTES];
 
 static uint16_t get16(const uint8_t* p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -245,9 +246,8 @@ static uint16_t encode_record(const uint8_t* name) {
     return (uint16_t)(SAVE_HEADER_BYTES + payload_len);
 }
 
-static uint8_t save_slot(uint8_t slot, const uint8_t* name) {
+static uint8_t save_slot(uint8_t slot) {
     uint16_t total;
-    uint8_t i;
     uint8_t ok;
     uint8_t status;
     uint8_t* entry;
@@ -255,7 +255,8 @@ static uint8_t save_slot(uint8_t slot, const uint8_t* name) {
     status = game_world_capture_current();
     if (status != PLATFORM_OK) return 0u;
     if (game_world_delta_count > SAVE_MAX_DELTAS) return 0u;
-    total = encode_record(name);
+    entry = index_entry(slot);
+    total = encode_record(entry + 1u);
 
     platform_memory_kernal();
     ok = disk_write_bytes(slot, total);
@@ -263,9 +264,7 @@ static uint8_t save_slot(uint8_t slot, const uint8_t* name) {
     platform_memory_game();
     if (!ok) return 0u;
 
-    entry = index_entry(slot);
     entry[0] = 1u;
-    for (i = 0u; i < SAVE_NAME_BYTES; ++i) entry[1u + i] = name[i];
     put16(index_buffer + 8, index_checksum(index_buffer));
     platform_memory_kernal();
     ok = disk_index_write();
@@ -325,7 +324,6 @@ static uint8_t enter_name(uint8_t* name) {
 void saveload_save_overlay_run(void) {
     uint8_t slot;
     uint8_t i;
-    uint8_t have_name;
     uint8_t* entry;
 
     slot = saveload_selected_slot;
@@ -336,19 +334,18 @@ void saveload_save_overlay_run(void) {
     index_buffer[0] = FILE_C;
     index_buffer[3] = FILE_I;
     entry = index_entry(slot);
-    have_name = entry[0];
-    for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
-        name_buffer[i] = have_name ? entry[1u + i] : 0u;
+    if (!entry[0]) {
+        for (i = 0u; i < SAVE_NAME_BYTES; ++i) entry[1u + i] = 0u;
     }
 
-    if (!enter_name(name_buffer)) {
+    if (!enter_name(entry + 1u)) {
         VIC_CTRL1 &= 0xefu;
         return;
     }
 
     clear_screen();
     raster_irq_suspend();
-    i = save_slot(slot, name_buffer);
+    i = save_slot(slot);
     raster_irq_resume();
 
     clear_screen();

@@ -29,19 +29,27 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--magic", default=DEFAULT_MAGIC,
                         help=f"2-character overlay magic (default {DEFAULT_MAGIC!r})")
+    parser.add_argument(
+        "--max-footprint", type=lambda value: int(value, 0), default=MAX_BYTES,
+        help="maximum code/RODATA/DATA/BSS footprint (default: full overlay window)",
+    )
     args = parser.parse_args()
     if len(args.magic) != 2:
         raise SystemExit("--magic must be exactly 2 characters")
+    if not HEADER_BYTES <= args.max_footprint <= MAX_BYTES:
+        raise SystemExit(
+            f"--max-footprint must be in {HEADER_BYTES}..{MAX_BYTES}"
+        )
     magic = args.magic.encode("ascii")
 
     raw = bytearray(args.input.read_bytes())
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOAD_ADDRESS:
         raise SystemExit("overlay has an invalid PRG load address")
     data = raw[2:]
-    if len(data) < HEADER_BYTES or len(data) > MAX_BYTES:
+    if len(data) < HEADER_BYTES or len(data) > args.max_footprint:
         raise SystemExit(
             f"overlay size {len(data)} is outside "
-            f"{HEADER_BYTES}..{MAX_BYTES}"
+            f"{HEADER_BYTES}..{args.max_footprint}"
         )
     if (data[0] != 0x4C or data[3:6] != magic + bytes((ABI_VERSION,))):
         raise SystemExit("invalid overlay header")
@@ -55,8 +63,8 @@ def main() -> None:
             bss_size = int(match.group(4), 16)
             break
     if (bss_start < LOAD_ADDRESS + len(data) or
-            bss_start + bss_size > LOAD_ADDRESS + MAX_BYTES):
-        raise SystemExit("overlay BSS lies outside its overlay window")
+            bss_start + bss_size > LOAD_ADDRESS + args.max_footprint):
+        raise SystemExit("overlay BSS lies outside its allowed footprint")
 
     struct.pack_into("<HHH", data, 6, len(data),
                      bss_start - LOAD_ADDRESS, bss_size)

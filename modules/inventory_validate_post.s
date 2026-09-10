@@ -12,7 +12,7 @@ OVERLAY_ENTRY = $a4e9
 .segment "TEXTPOST"
 
 ; Continuation of the resident, generic loaded-overlay validator shared by
-; every $A4E9 overlay (inventory/story, save/load). This small routine lives
+; every remaining $A4E9 overlay (save/load and helpers). This small routine lives
 ; in the always-loaded pre-text module because the main PRG's high regions
 ; are full. The state and checksum continuations remain resident entry
 ; points (src/inventory_api.s).

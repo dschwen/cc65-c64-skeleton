@@ -48,29 +48,31 @@ record to always-visible scratch before rendering it.
 | `$3C00-$7FFF` | 17408 | resident platform code/RODATA |
 | `$8000-$84E8` | 1257 | current room |
 | `$84E9-$855C` | 116 | reserve, formerly `GameState` (see `$C100`); still reserved because a hole here would break the contiguous load image |
-| `$855D-$85FF` | 163 | compact native helpers (no free tail remaining) |
+| `$855D-$85EE` | 146 | compact native helpers |
+| `$85EF-$85FF` | 17 | free `STATEEXT` tail |
 | `$8600-$8B43` | 1348 | resident save/world code |
 | `$8B44-$8B47` | 4 | free linker tail |
-| `$8B48-$97F5` | 3246 | resident game/main/shared room API |
-| `$97F6-$98FF` | 266 | free resident tail |
+| `$8B48-$988F` | 3400 | resident game/main/shared room API |
+| `$9890-$98FF` | 112 | free resident tail |
 | `$9900-$9CFF` | 1024 | active room-code overlay |
 | `$9D00-$9FFF` | 768 | pristine current-room object baseline |
 | `$A000-$A4E8` | 1257 | destination-room or save-record/index staging (includes `script_resource_kind`, borrowing 1 byte of this region's own 256-byte slack - see `PLATFORM_API.md`) |
-| `$A4E9-$ADF8` | 2320 | render work RAM or inventory/story overlay |
-| `$ADF9-$B4FF` | 1799 | free work-RAM/overlay tail |
-| `$B500-$B7F9` | 762 | resident BSS |
-| `$B7FA-$B80C` | 19 | free BSS tail (freed by moving two raster flags to `LOWBSS`) |
+| `$A4E9-$ACA7` | 1983 | render work RAM or a remaining loaded overlay |
+| `$ACA8-$B4FF` | 2136 | free work-RAM/overlay tail |
+| `$B500-$B7DD` | 734 | resident BSS |
+| `$B7DE-$B80C` | 47 | free BSS tail after moving raster state to `LOWBSS` |
 | `$B80D-$B87D` | 113 | independently loaded native/SID helpers |
 | `$B87E-$B87F` | 2 | reserved fill before fixed pager entry |
 | `$B880-$B9C9` | 330 | bottom-text pager |
-| `$B9CA-$B9FC` | 51 | inventory-overlay validator continuation |
+| `$B9CA-$B9FC` | 51 | generic loaded-overlay validator continuation |
 | `$B9FD-$B9FF` | 3 | free helper-module tail |
 | `$BA00-$BBFF` | 512 | free (the software stack moved to `$C000`) |
 | `$BC00-$BFE7` | 1000 | 200-record sparse room-object journal |
 | `$BFE8-$BFFF` | 24 | free journal-region tail |
 | `$C000-$C0FF` | 256 | cc65 software stack |
 | `$C100-$C173` | 116 | persistent `GameState` |
-| `$C174-$C17F` | 12 | free |
+| `$C174-$C178` | 5 | mutable state for the in-place Inventory service |
+| `$C179-$C17F` | 7 | free always-visible RAM |
 | `$C180-$CFFD` | 3710 | hot object-type records, types 0-105, normally visible |
 | `$CFFE-$CFFF` | 2 | free linker tail |
 | `$D000-$DFFE` | 4095 | hot object-type records, types 106-222, beneath I/O |
@@ -79,12 +81,13 @@ record to always-visible scratch before rendering it.
 | `$E483-$FFF9` | 7031 | free; reclaimed from the pre-split 64-byte object-type table |
 | `$FFFA-$FFFF` | 6 | direct NMI/reset/IRQ RAM vectors |
 
-`PROGRAM` has 116 bytes of margin and `HIGH` has 105; `RAINCODE` (1 byte) and
-`MIDCODE` (6 bytes) are tight. The nearby tails are 266 bytes in `UPPER`, 19 in
-`BSS` (freed by moving two raster flags to `LOWBSS`), and 4 in `SAVECODE`;
-`STATEEXT` has none. Note that `HIGH`'s margin shrank as the far-call
-trampoline and the relocated `_raster_irq_resync` moved in, so it is now one of
-the tighter regions rather than a comfortable one. Larger additions need
+`PROGRAM` has 53 bytes of margin and `HIGH` has 33; `RAINCODE` (1 byte) and
+`MIDCODE` (6 bytes) are tight. The nearby tails are 112 bytes in `UPPER`, 47 in
+`BSS`, 17 in `STATEEXT`, and 4 in `SAVECODE`. `PROGRAM` became the tightest
+ordinary region when the raster IRQ's frame/rain state moved into `LOWBSS` so
+it remains visible during cartridge execution; moving the generated far-call
+stubs to `HIGHCODE` recovered low space but made `HIGH` the tighter of those
+two resident regions. Larger additions need
 relocation or another fixed region. Recheck `build/game.map` after every change
 because cc65 can move code between segments.
 
@@ -92,13 +95,15 @@ because cc65 can move code between segments.
 
 ### BASIC ROM: `$A000-$BFFF`
 
-All 8 KiB are already exposed as RAM. The render buffers and inventory/story
-overlay deliberately share `$A4E9-$B4FF`: the overlay may overwrite render
-state because the resident wrapper redraws the room after it returns. Full-tile
-lighting reduced active `WORKBSS` to `$A4E9-$ADF8`, leaving a contiguous
-1,799-byte tail for future work buffers or overlay growth. `$A000-$A4E8`
+All 8 KiB are already exposed as RAM. The render buffers and remaining loaded
+overlays deliberately share `$A4E9-$B4FF`: an overlay may overwrite render
+state because its resident wrapper redraws the room after it returns. Inventory
+now executes directly from bank 48 ROMH and no longer consumes this window. Active
+`WORKBSS` currently ends at `$ACA7`, leaving a contiguous 2,136-byte tail for
+future work buffers or overlay growth. `$A000-$A4E8`
 stages either a destination room or a complete save record; those uses never
-overlap. `BSS` (`$B500-$B7F9`) has a 19-byte tail, freed by moving two raster flags to `LOWBSS`. Other
+overlap. `BSS` (`$B500-$B7DD`) has a 47-byte tail after moving the complete
+raster frame/rain state to `LOWBSS`. Other
 unallocated pieces are `$B9FD-$B9FF` (3 bytes) and `$BFE8-$BFFF` (24 bytes).
 
 ### KERNAL ROM: `$E000-$FFFF`
@@ -114,7 +119,8 @@ executing.
 Object-type storage was split (see `PLATFORM_API.md` and
 `EASYFLASH_CARTRIDGE.md`) into a 35-byte hot record (dimensions, hotspot,
 chars, colors, light) kept resident for all 256 IDs at a fixed 35-byte
-stride across `$C000-$E301`, and a 15-byte cold record (name, flags) that
+stride across three zones starting at `$C180`, `$D000`, and `$E000`, and a
+15-byte cold record (name, flags) that
 stays on EasyFlash bank 47 and is fetched on demand via
 `platform_object_type_info_get()`. This reclaimed 7,416 bytes versus the
 previous 64-byte-per-record resident table without dropping any of the 256
@@ -171,11 +177,11 @@ remain valid across map/text charset switching.
 ## Banked code and what it may touch
 
 Code can now run directly from an EasyFlash bank instead of being copied into
-RAM first (see `PLATFORM_API.md`'s "Banked code"). While such a call is in
-progress the cartridge is mapped over **`$8000-$BFFF`**, so for the duration of
-that call every byte in this table between `$8000` and `$BFFF` reads as
-cartridge ROM, not as the RAM listed above. Writes still reach the RAM
-underneath; only reads are affected.
+RAM first (see `PLATFORM_API.md`'s "Banked code"). ROML always occupies
+`$8000-$9FFF`. In 16 KiB mode ROMH occupies `$A000-$BFFF`; in 8 KiB mode the
+required `$01=$37` CPU map puts BASIC ROM there instead. Thus every byte in
+this table between `$8000` and `$BFFF` is unreadable as underlying RAM during
+either kind of in-place call. Writes still reach the RAM underneath.
 
 A banked routine may therefore touch only:
 
@@ -185,23 +191,34 @@ A banked routine may therefore touch only:
 | `$C000-$CFFF` | the only RAM above `$8000` that no memory map ever covers |
 | `$D000-$DFFF`, `$E000-$FFFF` | reachable, but only under the usual I/O/KERNAL banking dance |
 
+EasyFlash control and CPU mapping are independent. `$DE02=$06` means 8 KiB
+cartridge mode, but the corresponding CPU port is `$37`, not `$36`; `$36`
+disables ROML along with BASIC. The generated far-call descriptor carries both
+values to prevent that easy-to-miss substitution.
+
 This is why the software stack and `GameState` were moved to `$C000` and
 `$C100`: cc65-generated code touches its stack constantly, so no C function
 could have run banked while the stack sat at `$BA00`. `LOWBSS` (inside
 `PROGRAM`) exists for the same reason - it holds state that banked code, or the
-bank machinery it calls, has to be able to read. Two raster flags live there
-because `_raster_irq_resync` is called on every bank-call unwind.
+bank machinery it calls, has to be able to read. The complete raster IRQ's
+mutable frame/rain state also lives there so it remains usable with ROML/ROMH
+selected.
 
 The same rule applies to *code*: a banked routine may only call resident code
 that lives outside the window. `UPPERCODE` (`$8B48`) is inside it, so anything
 there is unreachable from a bank - which is why `_raster_irq_resync` was moved
 out of it and into `HIGHCODE`.
 
-Cost: both bank-switch paths wait for the raster to wrap before disabling
-interrupts, which is free when the raster is on lines 0-255 and costs up to
-~56 lines otherwise. That is negligible for one coarse call around a large
-piece of work, and expensive if the same work is split into many small banked
-calls. Bank at coarse granularity.
+It also may not modify its own instructions. Cartridge-window writes update
+the underlying RAM, not ROM, so a later fetch still sees the original opcode
+or operand. This is different from ordinary copied overlays, which are writable
+RAM code. Inventory's former self-patched draw address was converted to a
+zero-page indirect pointer before moving it in place.
+
+Cost: each banked call pays a fixed map/register transition. Interrupts are
+masked only for that transition and restored while the banked operation runs,
+so long calls no longer freeze the raster split. Bank at operation rather than
+inner-loop granularity to avoid repeated transition overhead.
 
 ## Checking the map
 

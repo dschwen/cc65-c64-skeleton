@@ -1,13 +1,14 @@
 #include <stdint.h>
 
+#include "easyflash_layout.h"
 #include "game.h"
 #include "script_format.h"
 
 /* Resident trigger for the script/conversation/room interpreter overlay
  * (modules/script.c). Every bank through 48 is already spoken for, so like
  * room-helpers this shares TYPE_BANK_1's ROML half (with the object-type
- * Zone C table and the room-helpers overlay) at a fixed offset past both -
- * see tools/pack_easyflash.py's SCRIPT_EF_OFFSET.
+ * Zone C table and the room-helpers overlay) at a fixed offset past both.
+ * The packer and runtime both consume cfg/easyflash_layout.json.
  *
  * Script/conversation/room *content* (the compiled bytecode - see
  * tools/compile_script.py) is separate from this overlay's own code: it's
@@ -16,11 +17,6 @@
  * PLATFORM_RESOURCE_KIND_* in platform.h), not a single space split by
  * range. See modules/script.c.
  */
-#define SCRIPT_EF_BANK    47u
-#define SCRIPT_EF_OFFSET  2048u
-#define SCRIPT_MAGIC_0    0x53u /* 'S' */
-#define SCRIPT_MAGIC_1    0x43u /* 'C' */
-
 void platform_overlay_run_native(void);
 uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
                                            uint16_t offset, uint8_t magic0,
@@ -67,26 +63,16 @@ static void run_loaded_overlay(void) {
 
     platform_look_cursor_hide();
     script_text_shown = 0u;
-    /* Blank around the load, not the run: platform_overlay_load() is a real
-     * EasyFlash copy of this overlay's ~2.6 KB code - at roughly 50 cycles/
-     * byte for easyflash_copy_window's byte loop (src/banking.s), that's
-     * well over 100ms, several full video frames, spent entirely with
-     * interrupts off. The raster IRQ's charset split (src/irq.s) cannot run
-     * during that freeze, so the display stays on whatever single charset
-     * (almost always the tile charset - _platform_bank_call_enter
-     * deliberately starts its critical section at the top of a frame, which
-     * is map/tile phase) was selected the instant interrupts went off - for
-     * the whole freeze, not just a flicker. Any status text already on
-     * screen (this runs right after "Looking..."/"Taking..."/"Using..." was
-     * written) renders through the wrong charset as garbled tile glyphs for
-     * a clearly visible fraction of a second - reported live as exactly
-     * this symptom. A plain black screen reads as "loading", not as
-     * corruption. Matches game_inventory_show()'s existing blank-before-load
-     * (src/inventory_runtime.c) and the same fix applied to every
-     * LOOK_HELPERS call site in src/platform.c. */
+    /* Keep the existing load presentation conservative. The bank wrapper now
+     * restores the caller's interrupt state while copying, so the raster split
+     * continues across this multi-frame load; blanking still avoids exposing
+     * an intermediate UI state and can be reevaluated visually later. */
     platform_screen_blank();
-    result = platform_overlay_load(SCRIPT_EF_BANK, 0u, SCRIPT_EF_OFFSET,
-                                   SCRIPT_MAGIC_0, SCRIPT_MAGIC_1);
+    result = platform_overlay_load(EF_LAYOUT_SCRIPT_BANK,
+                                   EF_LAYOUT_SCRIPT_USE_ROMH,
+                                   EF_LAYOUT_SCRIPT_OFFSET,
+                                   EF_LAYOUT_SCRIPT_MAGIC_0,
+                                   EF_LAYOUT_SCRIPT_MAGIC_1);
     platform_screen_unblank();
     /* If we got here with the raster IRQ still suspended, the caller is a
      * room's enter_room()/enter_tile() hook, itself called from inside

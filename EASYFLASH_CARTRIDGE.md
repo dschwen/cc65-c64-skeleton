@@ -324,8 +324,8 @@ The CRT first copies the common PRG to RAM and disables EasyFlash. During
 gameplay the storage backend temporarily selects 8 KiB mode to copy rooms and
 object types from runtime ROML asset banks.
 
-All game-asset reads (rooms, object types, portraits, the inventory/story
-overlay, room code) are EasyFlash-only:
+All game-asset reads (rooms, object types, portraits, the in-place Inventory
+service, room code) are EasyFlash-only:
 
 ```c
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
@@ -422,12 +422,16 @@ freed `$A4E9`. (`platform_room_clear()`/`object_transfer()`/
 they're undecided, not confirmed-unsafe - don't assume "might be called from
 room code" alone rules them out.)
 
-The inventory UI and global story-specific item-use code form another
-independently linked overlay. `tools/pack_easyflash.py` puts its loadable bytes
-at bank 48 ROMH offset zero. Pressing `I` copies and validates that overlay at
-`$A4E9`; its execution temporarily replaces rebuildable render/lighting work
-RAM. On return, resident code restores the charset split and redraws the room.
-See `STORY_CODE_API.md` for the callable contract and restrictions.
+The inventory UI and global story-specific item-use code form an independently
+linked, execute-in-place service. `tools/pack_easyflash.py` puts its raw linked
+bytes at bank 48 ROMH offset zero (`$A000` at run time). Pressing `I` enters it
+through the resident far-call stub; no code is copied to `$A4E9`, so the
+render/lighting work buffers survive the UI unchanged. Five mutable UI bytes
+live at `$C174-$C178`, immediately after `GameState`. Item names use a nested
+far call to the bank-47 type-info service, which fetches its cold record from
+bank 46 and then unwinds to bank 48. On return, resident code restores the
+charset split and redraws the room. See `STORY_CODE_API.md` for the callable
+contract and restrictions.
 
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
@@ -513,28 +517,46 @@ bank-switch routine and its copy loop must therefore execute from stable RAM.
 
 ### Modules executed in place
 
-Distinct from the loaded overlays above, a module can be linked at an address
-inside the ROML window and **executed straight out of its bank**, never copied
-into RAM. `modules/typeinfo.c` is the first of these.
+Distinct from the loaded overlays above, a module can be linked inside ROML or
+ROMH and **executed straight out of its bank**, never copied into RAM.
+`modules/typeinfo.c` and `modules/inventory.c` use this model.
 
 The rules such a module follows:
 
-- linked at its run address in `$8000-$9FFF`, which must equal `$8000` plus
-  its offset within the bank's ROML half - `cfg/banked_typeinfo.cfg` and
-  `tools/pack_easyflash.py`'s `TYPEINFO_OFFSET` have to agree, and the packer
-  guards against overlapping the overlay ahead of it
+- linked at its run address in `$8000-$9FFF` (ROML) or `$A000-$BFFF` (ROMH),
+  equal to the selected window base plus its offset. Fixed coordinates live in
+  `cfg/easyflash_layout.json`; the build generates the C and ca65 constants,
+  and `tools/validate_easyflash_layout.py` verifies the linked entry and final
+  packed bytes. The packer also guards against overlaps.
 - a `jmp` entry vector at the module's fixed first address, so call sites do
   not have to track where the function itself lands after a relink
 - **no BSS and no writable data of its own** - it is ROM at run time; any
   state it needs lives resident, outside the banking window
+- **no self-modifying code** - writes beneath cartridge ROM reach underlying
+  RAM, but subsequent instruction fetches still read the unchanged ROM. The
+  old Inventory drawer's patched `STA` operand had to become a RAM-held
+  indirect pointer for this reason
 - reached through a resident C-callable stub that forwards via the `FAR_CALL`
   macro (`src/banked_api.s`), so callers need not know the routine moved
 
-Unlike an overlay it needs no header, magic, or checksum, because nothing
-copies or validates it - it is executed exactly where the packer put it. A
-banked routine may itself bank-switch: the pilot fetches from bank 46 while
-running from bank 47, because the bank-call primitives save and restore the
-caller's bank around the nested switch.
+The far address includes two mapping fields, not one overloaded "mode":
+
+| Service half | `$01` CPU map | `$DE02` control | `$A000-$BFFF` reads |
+|---|---:|---:|---|
+| ROML | `$37` | `$06` | BASIC ROM |
+| ROMH | `$37` | `$07` | EasyFlash ROMH |
+
+ROML is not asserted with `$01=$36`; that map exposes underlying RAM at
+`$8000` and would make a ROML entry execute unrelated RAM. Therefore 8 KiB
+execution prevents accidental ROMH selection but does not grant direct access
+to upper RAM.
+
+Unlike an overlay it needs no header, magic, or run-time checksum, because
+nothing copies it. Build-time validators check its read-only segments, imported
+addresses, linked entry point, packed bytes, and overlap bounds. A banked
+routine may itself bank-switch: Inventory enters bank 47 for type-info while
+running from bank 48, and type-info fetches from bank 46; each nested switch
+restores the caller's bank before execution resumes.
 
 What a banked routine may touch is constrained by the mapping, not by the
 cartridge - see `MEMORY_MAP.md`'s "Banked code and what it may touch".
@@ -630,16 +652,15 @@ separate loading-state design: blank or simplify the display and suspend the
 custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
 `$0314` entry with the correct, different register-save/exit conventions.
 
-Short EasyFlash copies should still run under `SEI`. This avoids an IRQ seeing
-ROML/ROMH unexpectedly or trying to use EasyFlash I/O while the copy routine is
-changing its mode. The complete room transaction clears the status area,
-disables the VIC raster source, and forces `$D018=$18` before loading either
-the room record or its code overlay. A room or room-code copy can therefore
-cross either split-screen deadline without selecting the text charset over the
-map. While suspended, the copy primitive acknowledges pending raster requests
-but preserves tile mode. After the new room is fully drawn, the transition
-resynchronizes `$D018` and the next compare from the VIC's current 9-bit raster
-position, then reenables the raster source.
+EasyFlash wrappers use `SEI` only for the short map/register transition. The
+raster IRQ's complete per-frame code and state are below `$8000`, never touch
+EasyFlash registers, and may run while ROML/ROMH are selected. The complete
+room transaction still disables the VIC raster source because it replaces the
+IRQ-executed environment module as part of the transaction. It blanks the
+screen and pins `$D018` before loading the room record or code. After the new
+room is fully drawn, the transition resynchronizes `$D018` and the next compare,
+then restores the previous VIC interrupt-enable state. Suspend/resume is
+depth-counted.
 
 The IRQ itself also treats late entry on lines 1-225 as a missed top event and
 lines 227-311 as a bottom event, rather than waiting almost a complete frame.

@@ -5,12 +5,13 @@
 .import _game_inventory_draw_index
 .import _game_inventory_draw_type
 .import _game_inventory_draw_quantity
-.import _platform_object_type_get
+.import _platform_object_type_info_get
 .importzp ptr1
+.importzp ptr2
+.importzp regsave
 
 SCREEN_LEFT  = $0400 + 2 * 40 + 1
 SCREEN_RIGHT = $0400 + 2 * 40 + 21
-TYPE_NAME    = 2
 TYPE_NAME_LENGTH = 14
 
 .segment "CODE"
@@ -24,26 +25,26 @@ _game_inventory_draw_item_native:
     sbc #16
     tax
     lda #<SCREEN_RIGHT
-    sta inventory_put+1
+    sta ptr2
     lda #>SCREEN_RIGHT
     bne @set_high
 @left_column:
     tax
     lda #<SCREEN_LEFT
-    sta inventory_put+1
+    sta ptr2
     lda #>SCREEN_LEFT
 @set_high:
-    sta inventory_put+2
+    sta ptr2+1
 
     txa
     beq @write_quantity
 @advance_row:
     clc
-    lda inventory_put+1
+    lda ptr2
     adc #40
-    sta inventory_put+1
+    sta ptr2
     bcc :+
-    inc inventory_put+2
+    inc ptr2+1
 :
     dex
     bne @advance_row
@@ -92,15 +93,21 @@ _game_inventory_draw_item_native:
     lda #' '
     jsr put_char
 
+    ; The type-info getter is itself a nested far call (bank 48 -> bank 47,
+    ; with its data fetched from bank 46), and cc65's shared ZP scratch is
+    ; caller-clobbered. Preserve our screen destination around it.
+    lda ptr2
+    pha
+    lda ptr2+1
+    pha
     lda _game_inventory_draw_type
-    jsr _platform_object_type_get
-    clc
-    adc #TYPE_NAME
-    bcc :+
-    inx
-:
+    jsr _platform_object_type_info_get
     sta ptr1
     stx ptr1+1
+    pla
+    sta ptr2+1
+    pla
+    sta ptr2
     ldy #0
 @name:
     lda (ptr1),y
@@ -128,10 +135,18 @@ _game_inventory_draw_item_native:
     rts
 
 put_char:
-inventory_put:
-    sta $ffff
-    inc inventory_put+1
+    ; In-place cartridge code is read-only: the overlay version patched the
+    ; operand of an absolute STA here, but writes under ROM cannot change the
+    ; bytes subsequently fetched from ROM. Use an indirect RAM pointer and
+    ; preserve Y, which is the object-name source index in the caller.
+    sta regsave
+    sty regsave+1
+    ldy #0
+    lda regsave
+    sta (ptr2),y
+    inc ptr2
     bne :+
-    inc inventory_put+2
+    inc ptr2+1
 :
+    ldy regsave+1
     rts

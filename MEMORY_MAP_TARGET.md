@@ -16,9 +16,12 @@ happen in. Update it as steps land.
 | `FAR_CALL` + trampoline | Banked routines callable by far address (bank + 16-bit offset), reentrant, with a cc65 `A`/`X` argument and return convention. |
 | Software stack -> `$C000` | 256 bytes against a measured peak of 37. Prerequisite for banked C: cc65 code touches its stack constantly, and `$BA00` was inside the banking window. |
 | `GameState` -> `$C100` | Banked code can read game state directly. |
-| `_raster_irq_resync` -> `HIGHCODE`, its flags -> `LOWBSS` | The bank machinery calls resync on every unwind; it and its flags were inside the window, so banked code could not use the bank machinery at all. |
+| Raster IRQ closure -> below `$8000` | Frame/rain state and every per-frame callee are bank-visible; bank wrappers now mask only the map/register transition and leave the IRQ running during copies/far calls. |
 | Cold object-type table -> bank 46 ROMH | Fixed a real pre-existing bug: the overlays were overwriting it, so every type above the room-helpers offset returned overlay code instead of its name and flags. |
 | First in-place banked module | `platform_object_type_info_get()` runs from bank 47, and itself fetches from bank 46 while doing so. |
+| Generated fixed-module layout | `cfg/easyflash_layout.json` generates runtime/ca65 constants; the final image validator checks every payload and the in-place linked entry. |
+| Inventory -> in-place bank 48 ROMH | Removed its copy/validate cycle and 32-byte selected-slot cache. Five mutable bytes live at `$C174-$C178`; the 1,315-byte code/RODATA image runs at `$A000-$A522` and nests through bank 47/46 for cold type names. |
+| Mode-aware far calls | The generated descriptor now carries CPU map and EasyFlash control separately. Type Info runs as bank 47 ROML with `$01=$37`/`$DE02=$06`; Inventory remains bank 48 ROMH with `$37`/`$07`. The validator applies the effective visibility contract. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -93,37 +96,34 @@ loaders for that combination:
 | `game_enter_room()`, `platform_resource_fetch(..._ENVIRONMENT...)` | `ENVCODE_BASE` (`$7E00-$7FFF`) | Yes - `weather_animate` jumps into `ENVCODE_TICK` every frame | The one real hazard - now always called from inside a bracket (see above) |
 | `platform_init()`'s three boot `platform_resource_fetch(..._ASSET...)` calls (charsets, tiles) | `charset_tile`/`charset_text`/`tile_data` | N/A | Run before `raster_irq_install()` - no IRQ exists yet to race |
 | `modules/script.c`'s `platform_resource_fetch_range()` (windowed script reader) | private resident script buffer | No | Not IRQ-touched; also has no checksum step at all (documented: range fetches don't verify checksums) |
-| `platform_overlay_load()` (inventory, room-helpers, look-helpers, script, saveload, saveload-save overlays) | `$A4E9` staging / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
+| `platform_overlay_load()` (room-helpers, look-helpers, script, saveload, saveload-save overlays) | `$A4E9` staging / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
 | Room/object-type EasyFlash loaders (`platform_room_load`, `platform_object_types_load`, `room_code_prepare_easyflash`) | `platform_room`, object-type tables, `$A4E9` room-code staging | No | Same - not IRQ-touched |
-| `platform_object_type_info_get()` (the one true in-place `FAR_CALL` module) | `platform_object_type_info_scratch` (`LOWBSS`) | No | Not IRQ-touched; also human-input-paced only per its own doc comment |
+| `platform_object_type_info_get()` (in-place `FAR_CALL`) | `platform_object_type_info_scratch` (`LOWBSS`) | No | Not IRQ-touched; also human-input-paced only per its own doc comment |
+| Inventory UI (in-place `FAR_CALL`) | screen/color RAM and `$C174-$C178`; reads `GameState` | No | IRQ stays active; no dependency on `$8000-$BFFF` RAM |
 
 Conclusion: `ENVCODE_BASE` was the only instance of this hazard class, and it
 is now closed for every path that reaches it. No other latent instance found.
 This does not mean no other bug exists - see the two items below, which are
 real but different in kind (not this checksum race).
 
-### Standing risks recorded, not yet fixed
+### Remaining banked-code risks
 
-Not bugs with a known trigger today, but the two most concrete
+Not bugs with a known trigger today, but the most concrete
 architecture-level risks this audit surfaced, worth fixing before they bite
 rather than after:
 
-1. **No enforcement of the banked-code memory contract.** A banked routine
-   (today, just `platform_object_type_info_get()`) may only dereference
-   `$0000-$7FFF` or `$C000-$CFFF` while its bank is mapped; everything else in
-   `$8000-$BFFF` reads as cartridge ROM for the call's duration. Nothing
-   catches a future banked routine that takes a pointer into `GameState`,
-   resident BSS, or another room's code and dereferences it - it would
-   silently read garbage instead of failing loudly. As more overlays move to
-   the in-place `FAR_CALL` pattern (see "Order of remaining work" below),
-   this risk grows with them. **Recommended fix**: a cheap resident debug
-   check - a byte set by `raster_irq_suspend()`/cleared by `_resume()`, and
-   separately one bracketing `_platform_bank_call_enter`/`_leave` and
-   `_platform_far_call` - checked by a debug build of `raster_irq_body`
-   (`src/irq.s`) to catch the IRQ ever firing while `CPU_PORT`/
-   `EASYFLASH_CONTROL` show cartridge ROM mapped over `$8000-$BFFF`, e.g. by
-   hanging or flashing the border. Converts silent corruption into an
-   immediate, reproducible failure.
+1. **The linked half of the banked-memory contract is now enforced; raw
+   pointers still require discipline.** `tools/validate_banked_module.py`
+   rejects writable/private segments and resident imports outside
+   `$0000-$7FFF` or `$C000-$CFFF`. That catches a future banked C module which
+   accidentally imports `platform_room`, room code, WORKBSS, or resident BSS.
+   It cannot prove the run-time provenance of an arbitrary pointer argument:
+   a resident caller could still hand banked code a pointer into
+   `$8000-$BFFF`, which would silently read cartridge bytes. Keep banked APIs
+   value-oriented or copy their inputs to always-visible resident storage;
+   add pointer-range assertions in a debug build when an API must accept a
+   pointer. IRQ execution while the cartridge is mapped is intentional now,
+   not itself an error: the complete IRQ closure is below `$8000`.
 2. **`platform_object_type_get()`'s shared scratch buffer is a two-pointers-
    at-once trap.** For type IDs 106-255 it returns a pointer into one shared
    `platform_object_type_scratch` record (types 0-105 return a direct pointer
@@ -136,6 +136,14 @@ rather than after:
    **Recommended fix**: either a second scratch slot, or a debug assertion
    that traps a second fetch while a live pointer from the first is still
    plausibly in scope, before any code needs to compare two objects' types.
+3. **The validator cannot infer self-modifying code.** It enforces segment and
+   import placement, but a local absolute store can still target an instruction
+   in the same ROM module without appearing in the resolver. Inventory had
+   exactly this: its drawer patched the operand of `STA $FFFF`. Writes beneath
+   cartridge ROM update RAM, so the patched operand was never fetched. It now
+   uses a zero-page indirect destination, and “no self-modifying code” is an
+   explicit banked-module ABI rule. Assembly review (or a future relocation/
+   disassembly lint) remains necessary for this class.
 
 ## Overlay-load visual glitch (2026-09-07, same session)
 
@@ -148,66 +156,21 @@ real, and distinct from the interrupt-bracket bug above - this one is a
 **previously undocumented cost of the copy-to-RAM overlay design itself**,
 plus one straightforward pacing bug layered on top of it.
 
-### Root cause 1: an overlay's EasyFlash copy is a multi-frame, fully-interrupts-off freeze
+### Root cause 1, fixed: overlay copies masked the raster IRQ for multiple frames
 
-`MEMORY_MAP.md`'s cost model only ever measured the *wait before* disabling
-interrupts (up to ~56 raster lines, ~3.5ms, so a bank switch lands on a safe
-raster line first). It never measured the cost of the copy loop itself once
-interrupts are off. `easyflash_copy_window`'s per-byte loop
-(`src/banking.s`) is roughly 50 6502 cycles/byte (indirect-indexed load,
-indirect-indexed store, two 16-bit pointer increments, a 16-bit counter
-decrement-and-test). For the script/conversation/room-text overlay ("SC",
-2,636 bytes), that is roughly 130,000 cycles - **on the order of 130ms, or
-6-8 full PAL video frames - spent entirely with interrupts disabled**. The
-other overlays (`build/RH` 597B, `build/LH` 1,580B, `build/IV` 1,168B,
-`build/SL` 2,902B, `build/SV` 3,929B) pay the same rate proportional to size.
+`easyflash_copy_window` is roughly 50 cycles per byte, so the larger overlays
+take several video frames to copy. The original bank wrapper held `SEI` for
+that complete interval. The split, frame counter, rain, and environment tick
+all stopped, leaving status text rendered through whichever charset happened
+to be selected.
 
-While an overlay's load holds interrupts off for that long, the raster IRQ's
-charset split (`src/irq.s`) cannot run at all, so the display is stuck on
-whichever single charset was selected the instant interrupts went off - and
-`_platform_bank_call_enter`/`_platform_far_call` (`src/banking.s`)
-deliberately begin their critical section at the top of a frame (waiting for
-the 9-bit raster to wrap first), which is exactly when the split has just
-picked the *tile* charset for the map. Any status text already on screen at
-that instant (this is always called right after "Looking..."/"Taking..."/
-"Using..." was written) renders through the tile charset instead for the
-whole freeze - a clearly visible garbled-glyphs flash, not a one-frame
-flicker.
-
-This is systemic to every `platform_overlay_load()` call site, not unique to
-Look. It is usually invisible in ordinary movement (`platform_room_neighbor()`
-loading the room-helpers overlay on every edge check) only because the status
-rows are normally blank then - blank space renders as blank space under
-either charset. It becomes visible exactly when status text is already up,
-which is precisely the Look/Take/Use case.
-
-**Fix applied**: bracket the `platform_overlay_load()` call itself (not the
-overlay's subsequent `platform_overlay_run_native()`, which can legitimately
-run for a long, player-paced time - a conversation's input loop, for
-instance) with `platform_screen_blank()`/`_unblank()`, at every call site
-where status text can plausibly already be on screen: all four
-`LOOK_HELPERS` entry points (`platform_look_tile_check()`, `platform_look_tile()`,
-`platform_object_take_prompt()`, `platform_object_taken_message()` in
-`src/platform.c`) and the script/conversation/room-text overlay
-(`run_loaded_overlay()` in `src/script_runtime.c`). This turns the freeze
-into a plain black flash - reads as "loading," not as corruption - matching
-the pattern `game_inventory_show()` (`src/inventory_runtime.c`) already used
-for its own overlay load (this bug was apparently found and fixed once
-before, for inventory specifically, but never generalized to the other five
-overlays).
-
-**Not fixed, deliberately deferred**: the two `ROOM_HELPERS` call sites
-(`platform_room_neighbor()`, `platform_room_object_remove()` in
-`src/platform.c`) - these run on ordinary movement, far more often, and are
-usually invisible per the reasoning above. Blanking them too would be free
-of behavioral risk but adds a screen flash to the single hottest overlay-load
-path in the game for a benefit that is mostly theoretical (status text is
-rarely up during plain walking); worth doing opportunistically, not urgent.
-**Not fixed at all**: the underlying ~50-cycles/byte copy cost itself. A
-faster copy loop (unrolled, or restructured to avoid the two 16-bit pointer
-increments per byte) would shrink the freeze proportionally and is the right
-long-term fix if any overlay grows enough to make even the blanked flash
-noticeable as a stutter; not attempted this session.
+The raster IRQ's complete per-frame code and state now live below `$8000`.
+Bank wrappers mask interrupts only while changing `$01` and the EasyFlash
+registers, then restore the caller's interrupt state for the copy or far call.
+VICE verification showed the frame counter advance during a 507-byte RH copy
+while CPU port `$01` was `$37` and ROML/ROMH were selected. The existing blank
+brackets around large overlay loads remain as conservative loading presentation,
+but are no longer required to hide a frozen charset split.
 
 ### Root cause 2: the final page of room-script text was wiped before it could be read
 
@@ -654,23 +617,33 @@ corruption. Verified via clean `make`/`make d64`/`make cartridge` throughout.
 
 ## The rule everything is constrained by
 
-While a far call runs, `$8000-$BFFF` is cartridge ROM. A banked routine may
-read only `$0000-$7FFF` and `$C000-$CFFF`, and may only call resident code
-living outside that window. Writes still reach the RAM underneath; only reads
+While a far call runs, `$8000-$9FFF` is cartridge ROML. For a 16 KiB call,
+`$A000-$BFFF` is cartridge ROMH; for an 8 KiB call it is BASIC ROM instead.
+Either mapping hides the underlying upper RAM, so a banked routine may read
+only `$0000-$7FFF` and `$C000-$CFFF`, and may only call resident code living
+outside the hidden areas. Writes still reach the RAM underneath; only reads
 are affected.
+
+This distinction is easy to get wrong because the EasyFlash control value and
+the 6510 CPU-port value use similar numbers. `$DE02=$06` selects 8 KiB
+EasyFlash mode, but ROML is visible only with LORAM and HIRAM asserted, i.e.
+`$01=$37`. `$01=$36` removes BASIC *and ROML*, exposing underlying RAM at both
+`$8000-$9FFF` and `$A000-$BFFF`; execution at a ROML address then immediately
+runs RAM garbage. Consequently CPU map and cartridge control are separate
+fields in the far-call descriptor and generated layout.
 
 `$C000-$CFFF` is the only RAM above `$8000` that no memory map ever covers,
 which is why the stack and `GameState` went there and why it is now nearly
-full (stack 256 + `GameState` 116 + object-type zone A 3,710 of 4,096).
+full (stack 256 + `GameState` 116 + Inventory state 5 + object-type zone A
+3,710 of 4,096, leaving 9 bytes split across two tails).
 
 ## Cost model
 
-Both bank-switch paths wait for the raster to wrap before disabling
-interrupts: free on raster lines 0-255, up to ~56 lines otherwise. One coarse
-call around a large piece of work pays ~1%; the same work split into many
-small banked calls pays proportionally more. **Bank whole operations, not
-inner-loop helpers.** This does not rule out banking the renderer - a single
-call around a ~300 ms draw is noise - it rules out per-object far calls.
+Both bank-switch paths mask interrupts only for the short map/register
+transition. The raster IRQ remains active during the banked operation. Each
+call still pays fixed transition overhead, so **bank whole operations, not
+inner-loop helpers**; a long banked operation also still blocks foreground
+gameplay even though display timing continues.
 
 ## Blocked, and why
 
@@ -697,24 +670,47 @@ already exists in a bank.
 
 ## Order of remaining work
 
-1. **Bank the overlays** (`RH`, `SC`, `LH`, `IV`, `SL`, `SV`) using the
-   in-place pattern. The blocker found earlier - they call `UPPERCODE` at
-   `$8B48`, which a mapped bank hides - dissolves if their callees are banked
-   too and reached by far call, since the trampoline is reentrant. Start with
-   room-helpers (579 bytes, smallest).
-2. That frees the 4,119-byte overlay window, which unblocks the VIC move.
-3. **VIC bank move**, freeing `$2000-$2FFF` and `$3A00-$3BBF` below `$8000`.
-4. **Move the renderer's hot data** there. Measured need: `platform_room`
+1. **Inventory is the completed pilot service island.** `RH` was audited first
+   as planned, but cannot run under the present 16 KiB far-call map: it follows
+   `room_helpers_room` into `platform_room` at `$8000` and reads
+   `rendered_room`/`rendered_object_limit` at `$B7xx`, all hidden by ROM. A
+   direct resident rewrite was also measured and rejected: it overflowed
+   `UPPER` by 60 bytes. Keeping the current overlay is safer than disguising
+   those dependencies behind copies or numerous fine-grained far calls.
+2. **Mode-aware far calls are complete, with an important negative result.**
+   Type Info now runs in 8 KiB ROML mode and nested bank restoration is proven,
+   but `$A000-$BFFF` is BASIC ROM, not RAM. PAL and NTSC VICE traces forced an
+   IRQ while bank 47/control `$06` was active, observed the nested bank
+   46/control `$07` copy, then the exact unwind through bank 47, bank 48, and
+   normal `$35`/off state. The render buffer at `$A4E9` was unchanged. This
+   closes the trampoline milestone but invalidates the old proposed `SC`/`SL`
+   conversion order.
+3. **Break the layout cycle before converting another service.** The most
+   economical measured route is to shrink `SV` by at least 11 bytes (prefer a
+   32-byte margin): it is currently 4,107 bytes including header and BSS, just
+   over one 4 KiB page. Then move `WORLDDELTA` during the same link-layout
+   change and place the still-needed overlay window at `$B000-$BFFF`. That is
+   the bridge that makes the VIC-bank move fit without pretending ROML code
+   can read upper RAM.
+4. Perform the **VIC bank move**, freeing `$2000-$2FFF` and `$3A00-$3BBF`
+   below `$8000`. Keep the copy-to-RAM overlays operational during this step;
+   it is a layout migration, not yet an overlay deletion.
+5. **Move the renderer's hot data** into the newly freed always-visible area.
+   Measured need: `platform_room`
    1,373 + `platform_base_colors` 880 + `platform_brightness` 220 +
    `platform_light_visibility` 220 + `platform_view_tiles` 220 + scratch and
    `rendered_*`/`native_*` ~60 = **~4,350**, against ~4,850 available. Note
    `base_colors` and `brightness` currently live in `WORKBSS`, i.e. inside the
    overlay window, so they are already rebuilt rather than persistent.
-5. **Bank the renderer** as a single coarse call.
+6. **Convert `SC`, then `SL`/`SV`, `LH`/`RH`, and finally the renderer** as
+   coarse service calls only after each service's complete mutable-data closure
+   is below `$8000` or in `$C000-$CFFF`. Keep APIs value-oriented and pass each
+   module through the validator plus PAL/NTSC emulator regressions.
 
-Only after (1) does the previously circular dependency break: the VIC move
-needed the overlay window gone, which needed overlays banked, which needed
-space the VIC move would have provided.
+Only after every user of `$A4E9-$B4FF` has been converted can the overlay
+window be removed and the previously circular dependency break. Keep the
+copy-to-RAM path until then as the compatibility path; mixing the two models
+module-by-module is safer than one large migration.
 
 ## Dead ends, recorded so they are not retried
 

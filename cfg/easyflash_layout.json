@@ -1,0 +1,51 @@
+{
+  "modules": {
+    "inventory": {
+      "bank": 48,
+      "half": "romh",
+      "offset": 0,
+      "kind": "in_place"
+    },
+    "saveload": {
+      "bank": 48,
+      "half": "roml",
+      "offset": 0,
+      "kind": "overlay",
+      "magic": "SL"
+    },
+    "saveload_save": {
+      "bank": 47,
+      "half": "romh",
+      "offset": 0,
+      "kind": "overlay",
+      "magic": "SV"
+    },
+    "room_helpers": {
+      "bank": 47,
+      "half": "roml",
+      "offset": 1216,
+      "kind": "overlay",
+      "magic": "RH"
+    },
+    "script": {
+      "bank": 47,
+      "half": "roml",
+      "offset": 2048,
+      "kind": "overlay",
+      "magic": "SC"
+    },
+    "look_helpers": {
+      "bank": 47,
+      "half": "roml",
+      "offset": 4864,
+      "kind": "overlay",
+      "magic": "LH"
+    },
+    "typeinfo": {
+      "bank": 47,
+      "half": "roml",
+      "offset": 6656,
+      "kind": "in_place"
+    }
+  }
+}

@@ -2,6 +2,10 @@
 # Override CC65_HOME if you need to point at a custom install.
 # Example: make CC65_HOME=/opt/cc65
 
+# Included compiler dependency files contain ordinary targets. Pin the public
+# default so an existing build/*.d cannot silently replace documented `make`.
+.DEFAULT_GOAL := all
+
 CC65_HOME ?=
 CL65 := $(if $(CC65_HOME),$(CC65_HOME)/bin/cl65,cl65)
 LD65 := $(if $(CC65_HOME),$(CC65_HOME)/bin/ld65,ld65)
@@ -68,13 +72,15 @@ C64_STATIC_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RA,00 01 02)
 C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS) \
 	$(C64_ENV_ASSETS) $(C64_STATIC_ASSETS)
 ROOM_CFG := cfg/room_overlay.cfg
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES) $(INVENTORY_MODULE)
+DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES)
 DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
 
-CFLAGS := -t $(TARGET) -Oirs --cpu 6502
+CFLAGS := -t $(TARGET) -Oirs --cpu 6502 -Isrc -I$(OUTDIR) \
+	--asm-include-dir src --asm-include-dir $(OUTDIR)
 LDFLAGS := -C $(CFG)
+CL65_COMPILE = $(CL65) $(CFLAGS) --create-full-dep $(@:.o=.d)
 
 SOURCES_C := $(filter-out src/sid.c,$(wildcard src/*.c))
 SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
@@ -90,6 +96,9 @@ OUT_D64 := $(OUTDIR)/game.d64
 OUT_EF_BIN := $(OUTDIR)/game-ef.bin
 OUT_EF_BASE := $(OUTDIR)/game-ef-base.bin
 OUT_CRT := $(OUTDIR)/game.crt
+EF_LAYOUT := cfg/easyflash_layout.json
+EF_LAYOUT_HEADER := $(OUTDIR)/easyflash_layout.h
+EF_LAYOUT_INCLUDE := $(OUTDIR)/easyflash_layout.inc
 EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
 EF_CFG := cfg/easyflash.cfg
 TEXT_MODULE_OBJ := $(OUTDIR)/text-module.o
@@ -106,8 +115,7 @@ INVENTORY_STORY_OBJ := $(OUTDIR)/inventory-story.o
 INVENTORY_HEADER_OBJ := $(OUTDIR)/inventory-header.o
 INVENTORY_RESOLVER_SRC := $(OUTDIR)/inventory-resolver.s
 INVENTORY_RESOLVER_OBJ := $(OUTDIR)/inventory-resolver.o
-INVENTORY_MODULE_CFG := cfg/inventory_overlay.cfg
-INVENTORY_MODULE_RAW := $(OUTDIR)/inventory.raw
+INVENTORY_MODULE_CFG := cfg/banked_inventory.cfg
 INVENTORY_MODULE := $(OUTDIR)/IV
 SAVELOAD_MODULE_C_OBJ := $(OUTDIR)/saveload-module.o
 SAVELOAD_DISK_OBJ := $(OUTDIR)/saveload-disk.o
@@ -131,8 +139,9 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
 ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
-# Banked module executed in place from its EasyFlash bank (never copied into
-# RAM, unlike the RH/SC/LH/IV/SL/SV overlays) - see cfg/banked_typeinfo.cfg.
+# Banked type-info module executed in place from its EasyFlash bank (never
+# copied into RAM, like inventory and unlike the RH/SC/LH/SL/SV overlays) -
+# see the banked module linker configurations.
 TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
 TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
 TYPEINFO_RESOLVER_SRC := $(OUTDIR)/typeinfo-resolver.s
@@ -159,6 +168,11 @@ DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
 
 .PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
 
+# Dependency files are emitted by every cc65 compilation. Wildcards are
+# intentional: a clean build has none to include, while every subsequent
+# invocation learns the full transitive C-header and ca65-include graph.
+-include $(wildcard $(OUTDIR)/*.d $(ROOM_OUTDIR)/*.d $(ENV_OUTDIR)/*.d)
+
 all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE) \
 	$(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE)
 
@@ -173,6 +187,15 @@ $(ENV_OUTDIR):
 
 $(C64_ASSET_OUTDIR):
 	mkdir -p $(C64_ASSET_OUTDIR)
+
+$(EF_LAYOUT_HEADER) $(EF_LAYOUT_INCLUDE) &: $(EF_LAYOUT) \
+		tools/easyflash_layout.py tools/generate_easyflash_layout.py | $(OUTDIR)
+	python3 tools/generate_easyflash_layout.py --layout $(EF_LAYOUT) \
+		--header $(EF_LAYOUT_HEADER) --include $(EF_LAYOUT_INCLUDE)
+
+$(OUTDIR)/platform.o $(OUTDIR)/script_runtime.o \
+		$(OUTDIR)/saveload_runtime.o: $(EF_LAYOUT_HEADER)
+$(OUTDIR)/banked_api.o: $(EF_LAYOUT_INCLUDE)
 
 $(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
 	python3 tools/prepare_c64_assets.py objects $< $@
@@ -222,10 +245,10 @@ $(C64_ASSET_OUTDIR)/RR%: assets/scripts/%.script tools/compile_script.py src/sto
 	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind room
 
 $(OUTDIR)/%.o: src/%.c | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(OUTDIR)/%.o: src/%.s $(wildcard src/*.inc) | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(OUTDIR)/assets.o: $(ASSETS)
 
@@ -234,16 +257,16 @@ $(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
 	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
 
 $(TEXT_MODULE_OBJ): src/text.s src/platform.inc | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_SID_OBJ): src/sid.c src/sid.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_VALIDATOR_OBJ): modules/inventory_validate_post.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_HEADER_OBJ): modules/text_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
 		$(TEXT_VALIDATOR_OBJ) \
@@ -252,7 +275,7 @@ $(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
 		$(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) $(TEXT_VALIDATOR_OBJ)
 
 $(TEXT_RESOLVER_OBJ): $(TEXT_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
 		$(TEXT_VALIDATOR_OBJ) \
@@ -263,16 +286,16 @@ $(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
 
 $(INVENTORY_MODULE_C_OBJ): modules/inventory.c src/game.h src/platform.h \
 		src/story.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(INVENTORY_MODULE_ASM_OBJ): modules/inventory_draw.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(INVENTORY_STORY_OBJ): story/story.c src/game.h src/platform.h src/story.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(INVENTORY_HEADER_OBJ): modules/inventory_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(INVENTORY_RESOLVER_SRC): $(OUT_PRG) $(INVENTORY_MODULE_C_OBJ) \
 		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
@@ -282,29 +305,28 @@ $(INVENTORY_RESOLVER_SRC): $(OUT_PRG) $(INVENTORY_MODULE_C_OBJ) \
 		$(INVENTORY_STORY_OBJ) $(INVENTORY_HEADER_OBJ)
 
 $(INVENTORY_RESOLVER_OBJ): $(INVENTORY_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
-$(INVENTORY_MODULE_RAW): $(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
+$(INVENTORY_MODULE): $(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
 		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
-		$(INVENTORY_RESOLVER_OBJ) $(INVENTORY_MODULE_CFG)
+		$(INVENTORY_RESOLVER_OBJ) $(INVENTORY_MODULE_CFG) $(EF_LAYOUT) \
+		tools/easyflash_layout.py tools/validate_banked_module.py
 	$(LD65) -C $(INVENTORY_MODULE_CFG) -m $(OUTDIR)/inventory.map -o $@ \
 		$(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
 		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
 		$(INVENTORY_RESOLVER_OBJ)
-
-$(INVENTORY_MODULE): $(INVENTORY_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/inventory.map --output $@
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module inventory --map $(OUTDIR)/inventory.map \
+		--resolver $(INVENTORY_RESOLVER_SRC)
 
 $(SAVELOAD_MODULE_C_OBJ): modules/saveload.c src/game.h src/platform.h src/world.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SAVELOAD_DISK_OBJ): modules/disk_io.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SAVELOAD_HEADER_OBJ): modules/saveload_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
 		$(SAVELOAD_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
@@ -312,7 +334,7 @@ $(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OB
 		$(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_HEADER_OBJ)
 
 $(SAVELOAD_RESOLVER_OBJ): $(SAVELOAD_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SAVELOAD_MODULE_RAW): $(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
 		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_RESOLVER_OBJ) $(SAVELOAD_MODULE_CFG)
@@ -326,10 +348,10 @@ $(SAVELOAD_MODULE): $(SAVELOAD_MODULE_RAW) \
 		--map $(OUTDIR)/saveload.map --magic SL --output $@
 
 $(SAVELOAD_SAVE_MODULE_C_OBJ): modules/saveload_save.c src/game.h src/platform.h src/world.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SAVELOAD_SAVE_HEADER_OBJ): modules/saveload_save_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
 		$(SAVELOAD_SAVE_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
@@ -337,7 +359,7 @@ $(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELO
 		$(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_HEADER_OBJ)
 
 $(SAVELOAD_SAVE_RESOLVER_OBJ): $(SAVELOAD_SAVE_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SAVELOAD_SAVE_MODULE_RAW): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
 		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_RESOLVER_OBJ) $(SAVELOAD_SAVE_MODULE_CFG)
@@ -351,10 +373,10 @@ $(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_MODULE_RAW) \
 		--map $(OUTDIR)/saveload-save.map --magic SV --output $@
 
 $(ROOM_HELPERS_C_OBJ): modules/room_helpers.c src/platform.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(ROOM_HELPERS_HEADER_OBJ): modules/room_helpers_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(ROOM_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(ROOM_HELPERS_C_OBJ) \
 		$(ROOM_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
@@ -362,7 +384,7 @@ $(ROOM_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(ROOM_HELPERS_C_OBJ) \
 		$(ROOM_HELPERS_C_OBJ) $(ROOM_HELPERS_HEADER_OBJ)
 
 $(ROOM_HELPERS_RESOLVER_OBJ): $(ROOM_HELPERS_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(ROOM_HELPERS_MODULE_RAW): $(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
 		$(ROOM_HELPERS_RESOLVER_OBJ) $(ROOM_HELPERS_MODULE_CFG)
@@ -376,10 +398,10 @@ $(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
 		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
 
 $(TYPEINFO_C_OBJ): modules/typeinfo.c src/platform.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(TYPEINFO_ENTRY_OBJ): modules/typeinfo_entry.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(TYPEINFO_RESOLVER_SRC): $(OUT_PRG) $(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ) \
 		tools/generate_room_resolver.py | $(OUTDIR)
@@ -387,20 +409,24 @@ $(TYPEINFO_RESOLVER_SRC): $(OUT_PRG) $(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ) \
 		$(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ)
 
 $(TYPEINFO_RESOLVER_OBJ): $(TYPEINFO_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 # No finalize step: nothing copies or validates this at run time, so the linked
 # binary is the module - it is executed exactly where the packer puts it.
 $(TYPEINFO_MODULE): $(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) \
-		$(TYPEINFO_RESOLVER_OBJ) $(TYPEINFO_CFG)
+		$(TYPEINFO_RESOLVER_OBJ) $(TYPEINFO_CFG) $(EF_LAYOUT) \
+		tools/easyflash_layout.py tools/validate_banked_module.py
 	$(LD65) -C $(TYPEINFO_CFG) -m $(OUTDIR)/typeinfo.map -o $@ \
 		$(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) $(TYPEINFO_RESOLVER_OBJ)
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module typeinfo --map $(OUTDIR)/typeinfo.map \
+		--resolver $(TYPEINFO_RESOLVER_SRC)
 
 $(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(LOOK_HELPERS_HEADER_OBJ): modules/look_helpers_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(LOOK_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(LOOK_HELPERS_C_OBJ) \
 		$(LOOK_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
@@ -408,7 +434,7 @@ $(LOOK_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(LOOK_HELPERS_C_OBJ) \
 		$(LOOK_HELPERS_C_OBJ) $(LOOK_HELPERS_HEADER_OBJ)
 
 $(LOOK_HELPERS_RESOLVER_OBJ): $(LOOK_HELPERS_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(LOOK_HELPERS_MODULE_RAW): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
 		$(LOOK_HELPERS_RESOLVER_OBJ) $(LOOK_HELPERS_MODULE_CFG)
@@ -422,10 +448,10 @@ $(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_MODULE_RAW) \
 		--map $(OUTDIR)/look-helpers.map --magic LH --output $@
 
 $(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h | $(OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SCRIPT_HEADER_OBJ): modules/script_header.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SCRIPT_RESOLVER_SRC): $(OUT_PRG) $(SCRIPT_C_OBJ) \
 		$(SCRIPT_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
@@ -433,7 +459,7 @@ $(SCRIPT_RESOLVER_SRC): $(OUT_PRG) $(SCRIPT_C_OBJ) \
 		$(SCRIPT_C_OBJ) $(SCRIPT_HEADER_OBJ)
 
 $(SCRIPT_RESOLVER_OBJ): $(SCRIPT_RESOLVER_SRC)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(SCRIPT_MODULE_RAW): $(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
 		$(SCRIPT_RESOLVER_OBJ) $(SCRIPT_MODULE_CFG)
@@ -447,13 +473,13 @@ $(SCRIPT_MODULE): $(SCRIPT_MODULE_RAW) \
 		--map $(OUTDIR)/script.map --magic SC --output $@
 
 $(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(DISK_BOOT_PRG): $(DISK_BOOT_OBJ) $(DISK_BOOT_CFG)
 	$(LD65) -C $(DISK_BOOT_CFG) -m $(OUTDIR)/disk-boot.map -o $@ $<
 
 $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROOM_OUTDIR)
-	$(CL65) $(CFLAGS) -Isrc -c -o $@ $<
+	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 # Alternative room-code source: a small DSL (tools/compile_room.py) covering
 # the mechanical patterns most room code turns out to need (empty handler,
@@ -467,10 +493,10 @@ $(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py
 	python3 tools/compile_room.py --input $< --output $@
 
 $(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(ROOM_OUTDIR)/header-%.o: rooms/room_header.s | $(ROOM_OUTDIR)
-	$(CL65) $(CFLAGS) --asm-define ROOM_ID=0x$* -c -o $@ $<
+	$(CL65_COMPILE) --asm-define ROOM_ID=0x$* -c -o $@ $<
 
 $(ROOM_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ROOM_OUTDIR)/room-%.o \
 		$(ROOM_OUTDIR)/header-%.o \
@@ -479,7 +505,7 @@ $(ROOM_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ROOM_OUTDIR)/room-%.o \
 		$(ROOM_OUTDIR)/room-$*.o $(ROOM_OUTDIR)/header-$*.o
 
 $(ROOM_OUTDIR)/resolver-%.o: $(ROOM_OUTDIR)/resolver-%.s
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(ROOM_OUTDIR)/room-%.raw: $(ROOM_OUTDIR)/header-%.o $(ROOM_OUTDIR)/room-%.o \
 		$(ROOM_OUTDIR)/resolver-%.o $(ROOM_CFG)
@@ -501,7 +527,7 @@ $(ROOM_OUTDIR)/C%: $(ROOM_OUTDIR)/room-%.raw tools/finalize_room_code.py
 # directory already checksums and size-validates the linked output, so it
 # *is* the final "RE" resource content directly.
 $(ENV_OUTDIR)/env-%.o: rooms/env/%.s | $(ENV_OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(ENV_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ENV_OUTDIR)/env-%.o \
 		tools/generate_room_resolver.py | $(ENV_OUTDIR)
@@ -509,7 +535,7 @@ $(ENV_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ENV_OUTDIR)/env-%.o \
 		$(ENV_OUTDIR)/env-$*.o
 
 $(ENV_OUTDIR)/resolver-%.o: $(ENV_OUTDIR)/resolver-%.s
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(C64_ASSET_OUTDIR)/RE%: $(ENV_OUTDIR)/env-%.o $(ENV_OUTDIR)/resolver-%.o \
 		$(ENV_MODULE_CFG) | $(C64_ASSET_OUTDIR)
@@ -517,7 +543,7 @@ $(C64_ASSET_OUTDIR)/RE%: $(ENV_OUTDIR)/env-%.o $(ENV_OUTDIR)/resolver-%.o \
 		$(ENV_OUTDIR)/env-$*.o $(ENV_OUTDIR)/resolver-$*.o
 
 $(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
-	$(CL65) $(CFLAGS) -c -o $@ $<
+	$(CL65_COMPILE) -c -o $@ $<
 
 $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
@@ -525,9 +551,12 @@ $(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
 $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
 		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE) \
 		$(TYPEINFO_MODULE) \
-		tools/pack_easyflash.py \
+		tools/pack_easyflash.py tools/easyflash_layout.py tools/validate_easyflash_layout.py \
+		tools/test_validate_banked_module.py \
+		$(EF_LAYOUT) \
 		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
 		$(ROOM_CODES)
+	python3 tools/test_validate_banked_module.py
 	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
 		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
 		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
@@ -535,7 +564,14 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--typeinfo $(TYPEINFO_MODULE) \
 		--look-helpers $(LOOK_HELPERS_MODULE) \
 		--script $(SCRIPT_MODULE) \
+		--layout $(EF_LAYOUT) \
 		--output $@
+	python3 tools/validate_easyflash_layout.py --layout $(EF_LAYOUT) --image $@ \
+		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
+		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
+		--script $(SCRIPT_MODULE) --look-helpers $(LOOK_HELPERS_MODULE) \
+		--typeinfo $(TYPEINFO_MODULE) --inventory-map $(OUTDIR)/inventory.map \
+		--typeinfo-map $(OUTDIR)/typeinfo.map
 
 $(OUT_CRT): $(OUT_EF_BIN)
 	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"
@@ -544,7 +580,7 @@ cartridge: $(OUT_CRT)
 
 d64: $(OUT_D64)
 
-$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(DISK_BOOT_PRG) \
+$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(DISK_BOOT_PRG) \
 		$(DISK_EXTRA_DEPS) | $(OUTDIR)
 	rm -f $@
 	$(C1541) -format "$(DISK_NAME),00" d64 $@

@@ -7,24 +7,36 @@
 ; convention for these signatures.
 .setcpu "6502"
 
+.include "easyflash_layout.inc"
 .include "platform.inc"
 
 .import _platform_far_call
 .import far_call_bank_operand
 .import far_call_target_operand
+.import far_call_cpu_map_operand
+.import far_call_control_operand
 
 .export _platform_object_type_info_get
+.export _platform_inventory_run_banked
 
-; Bank and entry address must match tools/pack_easyflash.py's
-; TYPEINFO_BANK/TYPEINFO_OFFSET and cfg/banked_typeinfo.cfg's BANKED start:
-; CPU address = $8000 + offset within the bank's ROML half.
-TYPEINFO_BANK  = 47
-TYPEINFO_ENTRY = $9A00
+; Bank and CPU entry come from the same generated layout consumed by the
+; packer. tools/validate_easyflash_layout.py additionally checks the linked
+; ENTRY segment and final packed bytes.
 
-.segment "LOWCODE"
+; HIGHCODE is equally visible to both execution modes and has more margin than
+; PROGRAM. Keeping these generated-mode stubs out of LOWCODE avoids spending
+; the final bytes below $2000 merely to patch a far-call descriptor.
+.segment "HIGHCODE"
 
 ; const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id)
 ; fastcall: type_id in A, returns the scratch record's address in A/X.
 _platform_object_type_info_get:
-    FAR_CALL TYPEINFO_BANK, TYPEINFO_ENTRY
+    FAR_CALL EF_LAYOUT_TYPEINFO_BANK, EF_LAYOUT_TYPEINFO_ENTRY, EF_LAYOUT_TYPEINFO_CPU_MAP, EF_LAYOUT_TYPEINFO_CONTROL
+    rts
+
+; void platform_inventory_run_banked(void)
+; Inventory is a complete bank-local service: it retains control until the
+; user closes the screen, while the resident raster IRQ continues to run.
+_platform_inventory_run_banked:
+    FAR_CALL EF_LAYOUT_INVENTORY_BANK, EF_LAYOUT_INVENTORY_ENTRY, EF_LAYOUT_INVENTORY_CPU_MAP, EF_LAYOUT_INVENTORY_CONTROL
     rts

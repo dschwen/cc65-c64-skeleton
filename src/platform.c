@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "easyflash_layout.h"
 #include "platform.h"
 #include "game.h"
 
@@ -34,12 +35,10 @@
 
 /*
  * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
- * stride across the same three resident zones the old 64-byte records used:
- * zone A (types 0-116) always visible at $C000, zone B (117-233) beneath
- * I/O at $D000, zone C (234-255) beneath KERNAL at $E000. Cold records
- * (PlatformObjectTypeInfo, 15 bytes) are never resident; they stay on
- * EasyFlash bank 47 right after zone C's hot bytes. tools/pack_easyflash.py
- * must lay bank 46/47 out exactly this way.
+ * stride across three resident zones: zone A (types 0-105) always visible at
+ * $C180, zone B (106-222) beneath I/O at $D000, and zone C (223-255) beneath
+ * KERNAL at $E000. Cold records (PlatformObjectTypeInfo, 15 bytes) are never
+ * resident; they stay in EasyFlash bank 46 ROMH.
  */
 #define OBJECT_TYPE_RECORD_BYTES     35u
 #define OBJECT_TYPE_ZONE_A_COUNT     106u
@@ -449,8 +448,8 @@ uint16_t platform_resource_last_size(void) {
 #pragma code-name (pop)
 
 /*
- * Generic loaded-overlay fetch, shared by every $A4E9-$B4FF overlay (the
- * inventory/story overlay and the save/load overlay): copy the fixed
+ * Generic loaded-overlay fetch, shared by the remaining $A4E9-$B4FF overlays
+ * (room/look/script and save/load): copy the fixed
  * 16-byte header from the given EasyFlash bank/half, read its declared
  * size, copy the complete payload, then hand off to the native validator
  * (src/inventory_api.s) with the requested magic bytes. Resident code
@@ -500,12 +499,8 @@ uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
  * one shares TYPE_BANK_1's ROML half with the object-type Zone C table
  * (src/platform.c's OBJECT_TYPE_ZONE_C_COUNT, 770 bytes) at a fixed offset
  * comfortably past it, instead of getting a bank of its own - see
- * tools/pack_easyflash.py's ROOM_HELPERS_EF_OFFSET.
+ * cfg/easyflash_layout.json.
  */
-#define ROOM_HELPERS_EF_BANK    47u
-#define ROOM_HELPERS_EF_OFFSET  1024u
-#define ROOM_HELPERS_MAGIC_0    0x52u /* 'R' */
-#define ROOM_HELPERS_MAGIC_1    0x48u /* 'H' */
 #define ROOM_HELPERS_OP_NEIGHBOR 0u
 #define ROOM_HELPERS_OP_REMOVE   1u
 
@@ -539,18 +534,22 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
     room_helpers_op = ROOM_HELPERS_OP_NEIGHBOR;
     room_helpers_room = (PlatformRoom*)room;
     room_helpers_direction = direction;
-    status = platform_overlay_load(ROOM_HELPERS_EF_BANK, 0u,
-                                   ROOM_HELPERS_EF_OFFSET,
-                                   ROOM_HELPERS_MAGIC_0, ROOM_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_ROOM_HELPERS_BANK,
+                                   EF_LAYOUT_ROOM_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_ROOM_HELPERS_OFFSET,
+                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_1);
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     if (room_helpers_result == PLATFORM_OK) *room_id = room_helpers_room_id;
     return room_helpers_result;
 }
 
-/* UPPERCODE, not HIGHCODE like this function's neighbor above: HIGH has no
- * margin left as of this session's WORKBSS-aliasing fix growing it past
- * capacity; UPPER still had a little room. Purely a segment-budget choice.
+/* UPPERCODE, not HIGHCODE like this function's neighbor above: this was moved
+ * when HIGH overflowed during the WORKBSS-aliasing fix. HIGH has a small tail
+ * again after later refactors, but moving this back buys nothing; callers must
+ * still invoke it only with cartridge ROM disabled. Purely a segment-budget
+ * choice.
  *
  * room_helpers_object_remove() (modules/room_helpers.c) does only the
  * object-array mutation and dirty-cell marking itself, then reports back
@@ -580,9 +579,11 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     room_helpers_room = room;
     room_helpers_slot = slot;
     room_helpers_player = player;
-    status = platform_overlay_load(ROOM_HELPERS_EF_BANK, 0u,
-                                   ROOM_HELPERS_EF_OFFSET,
-                                   ROOM_HELPERS_MAGIC_0, ROOM_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_ROOM_HELPERS_BANK,
+                                   EF_LAYOUT_ROOM_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_ROOM_HELPERS_OFFSET,
+                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_1);
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
     if (room_helpers_result == PLATFORM_OK) {
@@ -600,16 +601,12 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
  * Look-helpers overlay ("LH"): platform_look_tile/_check/object_take_prompt/
  * object_taken_message's actual bodies (modules/look_helpers.c). Same
  * shared TYPE_BANK_1 ROML half as room-helpers/script above, at a further
- * offset past both - see tools/pack_easyflash.py's LOOK_HELPERS_EF_OFFSET.
+ * offset past both - see cfg/easyflash_layout.json.
  * platform_look_exit() stays here (not moved): it calls
  * platform_room_neighbor() above, itself an overlay in this same window,
  * so it must stay resident to call that sequentially without overwriting
  * its own still-executing code if it were overlay content too.
  */
-#define LOOK_HELPERS_EF_BANK    47u
-#define LOOK_HELPERS_EF_OFFSET  4864u
-#define LOOK_HELPERS_MAGIC_0    0x4Cu /* 'L' */
-#define LOOK_HELPERS_MAGIC_1    0x48u /* 'H' */
 #define LOOK_HELPERS_OP_TILE         0u
 #define LOOK_HELPERS_OP_TILE_CHECK   1u
 #define LOOK_HELPERS_OP_TAKE_PROMPT  2u
@@ -658,22 +655,16 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
     look_helpers_light = (tile_x < PLATFORM_MAP_WIDTH && tile_y < PLATFORM_MAP_HEIGHT)
                              ? platform_brightness[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x]
                              : 0u;
-    /* Blank around the load, not the run: the load is the part that freezes
-     * the display (see this file's comment on the same pattern in
-     * src/script_runtime.c's run_loaded_overlay() for the full explanation -
-     * an EasyFlash copy of a KB-plus overlay runs several video frames with
-     * interrupts fully off, and whatever single charset the split was in at
-     * that instant stays selected screen-wide for the whole freeze, so any
-     * status text already up (this is called right after "Looking..."/
-     * "Taking..."/"Using..." is written) renders through the wrong charset
-     * as garbled tile glyphs for a visible fraction of a second). A plain
-     * black screen reads as "loading", not as corruption. Matches the
-     * pattern game_inventory_show() (src/inventory_runtime.c) already uses
-     * for its own overlay load. */
+    /* Keep the existing load presentation conservative. Bank copies now
+     * restore the caller's interrupt state while copying, so the raster split
+     * continues to run; blanking still avoids showing an intermediate UI state
+     * around a multi-frame load and can be reevaluated visually later. */
     platform_screen_blank();
-    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
-                                   LOOK_HELPERS_EF_OFFSET,
-                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
+                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
     platform_screen_unblank();
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
@@ -690,9 +681,11 @@ uint8_t platform_look_tile(const PlatformRoom* room,
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
     platform_screen_blank();
-    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u,
-                                   LOOK_HELPERS_EF_OFFSET,
-                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
+                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
     platform_screen_unblank();
     if (status != PLATFORM_OK) return status;
     platform_overlay_run_native();
@@ -706,8 +699,11 @@ void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
     look_helpers_type_id = type_id;
     look_helpers_color = color;
     platform_screen_blank();
-    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
-                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
+                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
     platform_screen_unblank();
     if (status != PLATFORM_OK) return;
     platform_overlay_run_native();
@@ -720,8 +716,11 @@ void platform_object_taken_message(uint8_t type_id, uint8_t color) {
     look_helpers_type_id = type_id;
     look_helpers_color = color;
     platform_screen_blank();
-    status = platform_overlay_load(LOOK_HELPERS_EF_BANK, 0u, LOOK_HELPERS_EF_OFFSET,
-                                   LOOK_HELPERS_MAGIC_0, LOOK_HELPERS_MAGIC_1);
+    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
+                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
+                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
+                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
     platform_screen_unblank();
     if (status != PLATFORM_OK) return;
     platform_overlay_run_native();
@@ -1024,14 +1023,14 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
 uint8_t platform_object_types_load(void) {
     uint8_t irq_status;
 
-    /* Zone A: types 0-116, bank 46 offset 0, direct to $C000 (never shadowed). */
+    /* Zone A: types 0-105, bank 46 offset 0, direct to $C180. */
     platform_ef_copy_bank = EF_TYPE_BANK_0;
     platform_ef_copy_offset = 0u;
     platform_ef_copy_destination = (uint16_t)object_types_a;
     platform_ef_copy_size = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
 
-    /* Zone B: types 117-233, bank 46 offset 4095, staged via $A4E9 then to $D000. */
+    /* Zone B: types 106-222, bank 46 offset 3710, staged via $A4E9 then to $D000. */
     platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
     platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES;
@@ -1043,7 +1042,7 @@ uint8_t platform_object_types_load(void) {
     platform_memory_game();
     platform_irq_restore(irq_status);
 
-    /* Zone C: types 234-255, bank 47 offset 0, direct to $E000 (KERNAL hidden). */
+    /* Zone C: types 223-255, bank 47 offset 0, direct to $E000 (KERNAL hidden). */
     platform_ef_copy_bank = EF_TYPE_BANK_1;
     platform_ef_copy_offset = 0u;
     platform_ef_copy_destination = (uint16_t)object_types_c;
@@ -1542,7 +1541,7 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
 
 #pragma code-name (push, "LOWCODE")
 /* platform_frame_counter only ever advances from the raster IRQ
- * (src/irq.s), which raster_irq_suspend() masks off (VIC_IRQ_ENABLE = 0) for
+ * (src/irq.s), which raster_irq_suspend() masks off (VIC_IRQ_ENABLE bit 0) for
  * the entire duration of a room switch (see game_process_pending_transition(),
  * saveload_apply_pending(), and main()'s startup bracket in src/game.c/
  * src/saveload_runtime.c/src/main.c). Any "wait for a keypress" loop built on
@@ -1561,10 +1560,8 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
  * the 9-bit raster to reach the bottom of the frame, then wrap back to the
  * top. That is real hardware timing independent of the IRQ - the VIC counts
  * raster lines regardless of whether it is allowed to request an interrupt -
- * and it's the same "one frame has passed" signal
- * _platform_bank_call_enter (src/banking.s) already trusts to find a safe
- * point to suspend interrupts, just used here as a duration instead of a
- * rendezvous point. */
+ * and provides the same "one frame has passed" duration without depending on
+ * the suspended handler. */
 void platform_wait_frame(void) {
     uint8_t frame;
     if (!platform_raster_irq_active) {

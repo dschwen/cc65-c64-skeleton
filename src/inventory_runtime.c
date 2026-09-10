@@ -3,30 +3,33 @@
 
 #include "game.h"
 
-#define INVENTORY_EF_BANK       48u
-#define INVENTORY_MAGIC_0       0x49u /* 'I' */
-#define INVENTORY_MAGIC_1       0x55u /* 'U' */
 #define INVENTORY_SCREEN        ((uint8_t*)0x0400)
 #define INVENTORY_COLOR         ((uint8_t*)0xd800)
 #define INVENTORY_VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
-void platform_overlay_run_native(void);
-uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                                           uint16_t offset, uint8_t magic0,
-                                           uint8_t magic1);
+void platform_inventory_run_banked(void);
+
+/* Mutable state used while inventory code executes from cartridge ROM. Keep
+ * it in the explicitly reserved always-visible tail after GameState, not in
+ * the module's own BSS (which would be ROM at run time). The 32-byte selected-
+ * slot cache was removed; the banked module derives a selected slot on demand.
+ */
+#pragma bss-name (push, "GAMESTATE")
+uint8_t game_inventory_draw_index;
+uint8_t game_inventory_draw_type;
+uint8_t game_inventory_draw_quantity;
+uint8_t game_inventory_menu_count;
+uint8_t game_inventory_menu_selected;
+#pragma bss-name (pop)
 
 #pragma code-name (push, "UPPERCODE")
 
 void game_inventory_show(void) {
-    uint8_t result;
-
     platform_look_cursor_hide();
     INVENTORY_VIC_CTRL1 &= 0xefu;
-    result = platform_overlay_load(INVENTORY_EF_BANK, 1u, 0u,
-                                   INVENTORY_MAGIC_0, INVENTORY_MAGIC_1);
-    if (result == PLATFORM_OK) platform_overlay_run_native();
+    platform_inventory_run_banked();
 
     INVENTORY_VIC_CTRL1 &= 0xefu;
     raster_irq_suspend();
@@ -36,9 +39,6 @@ void game_inventory_show(void) {
     platform_room_draw(&platform_room, platform_player);
     raster_irq_resume();
     INVENTORY_VIC_CTRL1 |= 0x10u;
-    if (result != PLATFORM_OK) {
-        game_text_write(PLATFORM_TEXT_LINE_TOP, "Inventory error.", 1u);
-    }
 }
 
 #pragma code-name (pop)

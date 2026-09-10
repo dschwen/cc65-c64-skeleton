@@ -6,7 +6,9 @@ CPU_PORT            = $01
 CPU_PORT_MASK       = $07
 CPU_MAP_ALL_RAM     = $04
 CPU_MAP_GAME        = $05
-CPU_MAP_CART_8K     = $06
+; Cartridge ROML is asserted only with LORAM+HIRAM set. This is $07 for both
+; EasyFlash 8 KiB and 16 KiB control modes; $06 exposes RAM at $8000 instead.
+CPU_MAP_CART_8K     = $07
 CPU_MAP_CART_16K    = $07
 ; KERNAL and I/O visible, BASIC hidden so $A000-$BFFF remains usable RAM.
 CPU_MAP_KERNAL      = $06
@@ -74,15 +76,16 @@ ENVCODE_DISABLE = ENVCODE_BASE + 9
 ; bank and target straight into the shared trampoline's own operands, so a
 ; call costs no per-callee stub and the whole 1 MiB is reachable uniformly.
 ; Requires ".import _platform_far_call, far_call_bank_operand,
-; far_call_target_operand" in the including file.
+; far_call_target_operand, far_call_cpu_map_operand,
+; far_call_control_operand" in the including file.
 ;
-;   FAR_CALL 12, $8123      ; bank 12, offset $8123
+;   FAR_CALL 12, $8123, CPU_MAP_CART_8K, EASYFLASH_8K
 ;
 ; Reentrant: a banked routine may FAR_CALL again, because the trampoline
-; consumes both patched operands before its inner jsr and keeps the caller's
+; consumes all patched operands before its inner jsr and keeps the caller's
 ; bank/mode/map on the CPU stack. See _platform_far_call in src/banking.s for
-; the full argument, and for the constraint that the callee must not touch
-; $8000-$BFFF while it runs.
+; the full argument. An 8 KiB ROML call exposes ROML and BASIC ROM; a 16 KiB
+; ROMH call exposes both cartridge halves. Neither can read upper RAM.
 ;
 ; Not safe against an interrupt that itself far-calls between the patch and
 ; the jsr below - the codebase contract is that interrupt code never
@@ -91,7 +94,14 @@ ENVCODE_DISABLE = ENVCODE_BASE + 9
 ; itself needs A, so without this the callee would receive the target's high
 ; byte instead of its argument. Y is the trampoline's scratch either way and
 ; is not preserved in either direction; A and X are.
-.macro FAR_CALL bank, target
+.macro FAR_CALL bank, target, cpu_map, control
+    .assert (cpu_map) = CPU_MAP_CART_8K, error, "FAR_CALL CPU map must assert cartridge ROML"
+    .assert ((control) = EASYFLASH_8K) .or ((control) = EASYFLASH_16K), error, "FAR_CALL control must select EasyFlash 8K or 16K mode"
+    .if (control) = EASYFLASH_8K
+        .assert (target) >= $8000 .and (target) < $A000, error, "8 KiB FAR_CALL target must be in ROML"
+    .else
+        .assert (target) >= $A000 .and (target) < $C000, error, "16 KiB FAR_CALL target must be in ROMH"
+    .endif
     tay
     lda #(bank)
     sta far_call_bank_operand
@@ -99,6 +109,10 @@ ENVCODE_DISABLE = ENVCODE_BASE + 9
     sta far_call_target_operand
     lda #>(target)
     sta far_call_target_operand+1
+    lda #(cpu_map)
+    sta far_call_cpu_map_operand
+    lda #(control)
+    sta far_call_control_operand
     tya
     jsr _platform_far_call
 .endmacro

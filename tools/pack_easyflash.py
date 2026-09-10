@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from easyflash_layout import ModulePlacement, load_layout
+
 BANK_BYTES = 0x4000
 ROML_BYTES = 0x2000
 # Room text is a separate same-ID resource (see load_resource/pack_resources
@@ -32,42 +34,10 @@ OBJECT_TYPE_ZONE_AB_BYTES = OBJECT_TYPE_ZONE_AB_COUNT * OBJECT_TYPE_HOT_BYTES
 OBJECT_TYPE_ZONE_C_BYTES = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_HOT_BYTES
 # Offset within TYPE_BANK_0's ROMH half, which holds nothing else.
 OBJECT_TYPE_COLD_BASE = 0
-INVENTORY_BANK = 48
-# Save/load overlays don't fit as one; the browse/load overlay ("SL")
-# shares bank 48 with the inventory overlay (inventory occupies ROMH, this
-# occupies ROML), and the save-detail overlay ("SV": name entry + encode +
-# write) uses bank 47 ROMH, otherwise unused (bank 47 ROML holds the
-# object-type cold table). Neither costs an extra bank.
-SAVELOAD_BANK = 48
-SAVELOAD_SAVE_BANK = TYPE_BANK_1
-# Room-helpers overlay ("RH": platform_room_object_remove/platform_room_
-# neighbor, see modules/room_helpers.c): every bank through 48 already has
-# both halves spoken for, so this shares TYPE_BANK_1's ROML half with the
-# object-type Zone C table instead of costing a bank of its own. Offset is
-# comfortably past OBJECT_TYPE_ZONE_C_BYTES (770 at the current zone split)
-# with room for it to grow some; keep in sync with src/platform.c's
-# ROOM_HELPERS_EF_OFFSET.
-ROOM_HELPERS_BANK = TYPE_BANK_1
-ROOM_HELPERS_OFFSET = 1216
-# Script/conversation interpreter overlay ("SC": modules/script.c). Same
-# reasoning and same shared half as room-helpers above, at a further offset
-# past it (with margin for room-helpers to grow); keep in sync with
-# src/script_runtime.c's SCRIPT_EF_OFFSET.
-SCRIPT_BANK = TYPE_BANK_1
-SCRIPT_OFFSET = 2048
-# Look-helpers overlay ("LH": platform_look_tile/_check/object_take_prompt/
-# object_taken_message, see modules/look_helpers.c). Same shared half, at a
-# further offset past script (measured script size today is ~2.5 KiB, so
-# this leaves it room to grow); keep in sync with src/platform.c's
-# LOOK_HELPERS_EF_OFFSET.
-LOOK_HELPERS_BANK = TYPE_BANK_1
-LOOK_HELPERS_OFFSET = 4864
-# Banked module executed in place from this same half - NOT copied into RAM
-# like the overlays above, so its offset here fixes its run address:
-# CPU $8000 + offset. Must match cfg/banked_typeinfo.cfg's BANKED start and
-# TYPEINFO_ENTRY in src/banked_api.s.
-TYPEINFO_BANK = TYPE_BANK_1
-TYPEINFO_OFFSET = 6656
+# Fixed overlay and in-place module coordinates come from
+# cfg/easyflash_layout.json. The same file generates the C/ca65 constants
+# consumed by the runtime, and the final image is checked independently by
+# tools/validate_easyflash_layout.py.
 # Compiled script/conversation/room bytecode (tools/compile_script.py) is
 # data, not code, and goes through the generic resource directory below like
 # any other resource - NOT through SCRIPT_BANK/OFFSET, which is only this
@@ -360,10 +330,20 @@ def load_overlay(path: Path, magic: bytes) -> bytes:
     return data
 
 
+def load_fixed_module(path: Path, placement: ModulePlacement) -> bytes:
+    """Read a module in the representation declared by the shared layout."""
+    if placement.kind == "in_place":
+        return path.read_bytes()
+    if placement.magic is None:
+        raise ValueError(f"{placement.name}: overlay has no magic")
+    return load_overlay(path, placement.magic)
+
+
 def build_image(base: bytes, asset_dir: Path, object_types: Path,
                 code_dir: Path, inventory: Path, saveload: Path,
                 saveload_save: Path, room_helpers: Path, look_helpers: Path,
-                script: Path, typeinfo: Path) -> bytes:
+                script: Path, typeinfo: Path,
+                layout: dict[str, ModulePlacement]) -> bytes:
     if len(base) != 3 * BANK_BYTES:
         raise ValueError(f"bootstrap image must be 49152 bytes, got {len(base)}")
     types = object_types.read_bytes()
@@ -393,43 +373,60 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     start = TYPE_BANK_1 * BANK_BYTES
     image[start : start + len(bank47)] = bank47
     pack_room_code(image, code_dir, asset_dir)
-    inventory_data = load_overlay(inventory, b"IU")
-    start = INVENTORY_BANK * BANK_BYTES + ROML_BYTES
+    inventory_place = layout["inventory"]
+    inventory_data = load_fixed_module(inventory, inventory_place)
+    if inventory_place.offset + len(inventory_data) > ROML_BYTES:
+        raise ValueError("inventory module exceeds its declared cartridge half")
+    start = inventory_place.image_offset
     image[start:start + len(inventory_data)] = inventory_data
-    saveload_data = load_overlay(saveload, b"SL")
-    start = SAVELOAD_BANK * BANK_BYTES
+    saveload_place = layout["saveload"]
+    saveload_data = load_fixed_module(saveload, saveload_place)
+    start = saveload_place.image_offset
     image[start:start + len(saveload_data)] = saveload_data
-    saveload_save_data = load_overlay(saveload_save, b"SV")
-    start = SAVELOAD_SAVE_BANK * BANK_BYTES + ROML_BYTES
+    saveload_save_place = layout["saveload_save"]
+    saveload_save_data = load_fixed_module(saveload_save, saveload_save_place)
+    start = saveload_save_place.image_offset
     image[start:start + len(saveload_save_data)] = saveload_save_data
-    room_helpers_data = load_overlay(room_helpers, b"RH")
-    if ROOM_HELPERS_OFFSET < OBJECT_TYPE_ZONE_C_BYTES:
+    room_helpers_place = layout["room_helpers"]
+    room_helpers_data = load_fixed_module(room_helpers, room_helpers_place)
+    if (room_helpers_place.bank == TYPE_BANK_1 and
+            room_helpers_place.half == "roml" and
+            room_helpers_place.offset < OBJECT_TYPE_ZONE_C_BYTES):
         raise ValueError(
-            "ROOM_HELPERS_OFFSET overlaps the object-type Zone C table")
-    if ROOM_HELPERS_OFFSET + len(room_helpers_data) > ROML_BYTES:
+            "room_helpers overlaps the object-type Zone C table")
+    if room_helpers_place.offset + len(room_helpers_data) > ROML_BYTES:
         raise ValueError("room-helpers overlay exceeds its ROML half")
-    start = ROOM_HELPERS_BANK * BANK_BYTES + ROOM_HELPERS_OFFSET
+    start = room_helpers_place.image_offset
     image[start:start + len(room_helpers_data)] = room_helpers_data
-    script_data = load_overlay(script, b"SC")
-    if SCRIPT_OFFSET < ROOM_HELPERS_OFFSET + len(room_helpers_data):
+    script_place = layout["script"]
+    script_data = load_fixed_module(script, script_place)
+    if (script_place.bank == room_helpers_place.bank and
+            script_place.half == room_helpers_place.half and
+            script_place.offset < room_helpers_place.offset + len(room_helpers_data)):
         raise ValueError("SCRIPT_OFFSET overlaps the room-helpers overlay")
-    if SCRIPT_OFFSET + len(script_data) > ROML_BYTES:
+    if script_place.offset + len(script_data) > ROML_BYTES:
         raise ValueError("script overlay exceeds its ROML half")
-    start = SCRIPT_BANK * BANK_BYTES + SCRIPT_OFFSET
+    start = script_place.image_offset
     image[start:start + len(script_data)] = script_data
-    look_helpers_data = load_overlay(look_helpers, b"LH")
-    if LOOK_HELPERS_OFFSET < SCRIPT_OFFSET + len(script_data):
+    look_helpers_place = layout["look_helpers"]
+    look_helpers_data = load_fixed_module(look_helpers, look_helpers_place)
+    if (look_helpers_place.bank == script_place.bank and
+            look_helpers_place.half == script_place.half and
+            look_helpers_place.offset < script_place.offset + len(script_data)):
         raise ValueError("LOOK_HELPERS_OFFSET overlaps the script overlay")
-    if LOOK_HELPERS_OFFSET + len(look_helpers_data) > ROML_BYTES:
+    if look_helpers_place.offset + len(look_helpers_data) > ROML_BYTES:
         raise ValueError("look-helpers overlay exceeds its ROML half")
-    start = LOOK_HELPERS_BANK * BANK_BYTES + LOOK_HELPERS_OFFSET
+    start = look_helpers_place.image_offset
     image[start:start + len(look_helpers_data)] = look_helpers_data
-    typeinfo_data = typeinfo.read_bytes()
-    if TYPEINFO_OFFSET < LOOK_HELPERS_OFFSET + len(look_helpers_data):
+    typeinfo_place = layout["typeinfo"]
+    typeinfo_data = load_fixed_module(typeinfo, typeinfo_place)
+    if (typeinfo_place.bank == look_helpers_place.bank and
+            typeinfo_place.half == look_helpers_place.half and
+            typeinfo_place.offset < look_helpers_place.offset + len(look_helpers_data)):
         raise ValueError("TYPEINFO_OFFSET overlaps the look-helpers overlay")
-    if TYPEINFO_OFFSET + len(typeinfo_data) > ROML_BYTES:
+    if typeinfo_place.offset + len(typeinfo_data) > ROML_BYTES:
         raise ValueError("banked typeinfo module exceeds its ROML half")
-    start = TYPEINFO_BANK * BANK_BYTES + TYPEINFO_OFFSET
+    start = typeinfo_place.image_offset
     image[start:start + len(typeinfo_data)] = typeinfo_data
     for portrait_id in range(256):
         bank = FIRST_PORTRAIT_BANK + portrait_id // PORTRAITS_PER_BANK
@@ -453,13 +450,14 @@ def main() -> None:
     parser.add_argument("--look-helpers", type=Path, required=True)
     parser.add_argument("--script", type=Path, required=True)
     parser.add_argument("--typeinfo", type=Path, required=True)
+    parser.add_argument("--layout", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.write_bytes(
         build_image(args.base.read_bytes(), args.assets, args.objects,
                     args.room_code, args.inventory, args.saveload,
                     args.saveload_save, args.room_helpers, args.look_helpers,
-                    args.script, args.typeinfo)
+                    args.script, args.typeinfo, load_layout(args.layout))
     )
 
 

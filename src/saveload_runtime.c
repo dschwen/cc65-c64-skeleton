@@ -1,19 +1,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "easyflash_layout.h"
 #include "game.h"
 #include "world.h"
 
-#define SAVELOAD_EF_BANK      48u
-#define SAVELOAD_MAGIC_0      0x53u /* 'S' */
-#define SAVELOAD_MAGIC_1      0x4cu /* 'L' */
 /* Save-detail overlay ("SV": name entry + encode + disk write), separate
  * from the browse/load overlay above because both together would not fit
  * the shared 4119-byte $A4E9 window. Stored in bank 47 ROMH, otherwise
  * unused (bank 47 ROML holds the object-type cold table). */
-#define SAVELOAD_SAVE_EF_BANK 47u
-#define SAVELOAD_SAVE_MAGIC_0 0x53u /* 'S' */
-#define SAVELOAD_SAVE_MAGIC_1 0x56u /* 'V' */
 #define SAVELOAD_SCREEN     ((uint8_t*)0x0400)
 #define SAVELOAD_COLOR      ((uint8_t*)0xd800)
 #define SAVELOAD_VIC_CTRL1  (*(volatile uint8_t*)0xd011)
@@ -131,8 +126,11 @@ void game_load_show(void) {
     SAVELOAD_VIC_CTRL1 &= 0xefu;
     saveload_overlay_mode = SAVELOAD_MODE_LOAD;
     saveload_load_pending = 0u;
-    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u, 0u,
-                                   SAVELOAD_MAGIC_0, SAVELOAD_MAGIC_1);
+    result = platform_overlay_load(EF_LAYOUT_SAVELOAD_BANK,
+                                   EF_LAYOUT_SAVELOAD_USE_ROMH,
+                                   EF_LAYOUT_SAVELOAD_OFFSET,
+                                   EF_LAYOUT_SAVELOAD_MAGIC_0,
+                                   EF_LAYOUT_SAVELOAD_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
     if (result == PLATFORM_OK && saveload_load_pending) {
         result = saveload_apply_pending();
@@ -147,14 +145,19 @@ void game_save_show(void) {
     SAVELOAD_VIC_CTRL1 &= 0xefu;
     saveload_overlay_mode = SAVELOAD_MODE_SAVE;
     saveload_selected_slot = SAVELOAD_SLOT_NONE;
-    result = platform_overlay_load(SAVELOAD_EF_BANK, 0u, 0u,
-                                   SAVELOAD_MAGIC_0, SAVELOAD_MAGIC_1);
+    result = platform_overlay_load(EF_LAYOUT_SAVELOAD_BANK,
+                                   EF_LAYOUT_SAVELOAD_USE_ROMH,
+                                   EF_LAYOUT_SAVELOAD_OFFSET,
+                                   EF_LAYOUT_SAVELOAD_MAGIC_0,
+                                   EF_LAYOUT_SAVELOAD_MAGIC_1);
     if (result == PLATFORM_OK) platform_overlay_run_native();
 
     if (result == PLATFORM_OK && saveload_selected_slot != SAVELOAD_SLOT_NONE) {
-        result = platform_overlay_load(SAVELOAD_SAVE_EF_BANK, 1u, 0u,
-                                       SAVELOAD_SAVE_MAGIC_0,
-                                       SAVELOAD_SAVE_MAGIC_1);
+        result = platform_overlay_load(EF_LAYOUT_SAVELOAD_SAVE_BANK,
+                                       EF_LAYOUT_SAVELOAD_SAVE_USE_ROMH,
+                                       EF_LAYOUT_SAVELOAD_SAVE_OFFSET,
+                                       EF_LAYOUT_SAVELOAD_SAVE_MAGIC_0,
+                                       EF_LAYOUT_SAVELOAD_SAVE_MAGIC_1);
         if (result == PLATFORM_OK) platform_overlay_run_native();
     }
     saveload_cleanup(result);

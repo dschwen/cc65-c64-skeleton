@@ -2,7 +2,7 @@
 .macpack longbranch
 
 ; Generic loaded-overlay entry/validator, shared by every overlay that uses
-; the 16-byte header/ABI convention at $A4E9 (inventory/story, save/load):
+; the 16-byte header/ABI convention at $A4E9 (save/load and helper overlays):
 ; JMP vector, 2-byte magic, ABI byte, size/BSS-offset/BSS-size/checksum
 ; words. platform_overlay_magic0/1 (src/platform.c) select which overlay's
 ; magic is expected; each caller sets them before loading.

@@ -245,8 +245,8 @@ failure restores both the object and inventory before returning an error.
 `game_take_tile()` finds non-actor objects by their rendered intersection with
 the selected tile rather than by hotspot alone. With multiple matches it runs
 the resident object selector before delegating to `game_take_object()`.
-`game_inventory_show()` loads the inventory/story overlay, blanks the VIC while
-preparing a 40x25 text screen, and lists all 32 inventory slots in two columns.
+`game_inventory_show()` far-calls the bank-48 Inventory service in place. It
+prepares a 40x25 text screen and lists all 32 inventory slots in two columns.
 Cursor keys move the selection marker, `U` dispatches the selected slot to
 `story_use_inventory()`, and `I` closes the screen. The resident wrapper then
 restores the charset split and redraws the current room.

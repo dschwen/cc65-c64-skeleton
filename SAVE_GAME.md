@@ -142,7 +142,7 @@ device 8. Launching `game.crt` by another method also requires a writable disk
 image in drive 8; the EasyFlash image itself is not writable save storage.
 
 The slot browser draws its screen once. Cursor movement changes only the old
-and new caret cells. The inventory overlay uses the same incremental-caret
+and new caret cells. The in-place Inventory service uses the same incremental-caret
 approach; it redraws the list only after `use` because story code may have
 changed inventory contents.
 
@@ -165,20 +165,20 @@ combined UI and disk code does not fit the shared 4,119-byte window:
 - `modules/saveload_save.c` (`SV`) provides name entry, encoding, Save,
   readback verification, and index update.
 
-They temporarily own `$A4E9-$B4FF`, the same rebuildable render/lighting RAM
-used by the inventory overlay, and never run together. `SL` is stored in
+They temporarily own `$A4E9-$B4FF`, the rebuildable render/lighting RAM that
+used to host Inventory too, and never run together. `SL` is stored in
 EasyFlash bank 48 ROML. `SV` is stored in bank 47 ROMH. Each has a 16-byte
-header (ABI 1) validated by the generic resident overlay loader also used by
-`game_inventory_show()` (`platform_overlay_load()`,
+header (ABI 1) validated by the generic resident overlay loader
+(`platform_overlay_load()`,
 `platform_overlay_validate_native()` in `src/platform.c`/`src/inventory_api.s`,
 parameterized by bank, ROML/ROMH half, and expected magic bytes -- resident
 code budget is too tight to duplicate that validator per overlay).
 
 `src/main.c` maps `PLATFORM_KEY_SAVE` (F1) and `PLATFORM_KEY_LOAD` (F3) to
 resident wrappers `game_save_show()`/`game_load_show()` (in
-`src/saveload_runtime.c`, mirroring `game_inventory_show()`): load and
+`src/saveload_runtime.c`): load and
 validate the overlay, run it in the requested mode, then restore the split
-charset and redraw exactly like the inventory overlay's wrapper.
+charset and redraw exactly like Inventory's resident wrapper.
 
 Inside the overlays, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
 `CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with

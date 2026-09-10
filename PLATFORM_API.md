@@ -42,29 +42,33 @@ room-transition logic even when a graphic extends in several directions.
 | `$3900-$39FF` | compact read-only lookup tables |
 | `$3A00-$3BFF` | eight 64-byte sprite bitmap slots; look cursor uses slot 0 |
 | `$3C00-$7FFF` | platform code and read-only tables |
-| `$8000-$84E8` | current room RAM (1,001-byte `PlatformRoom`; the linker region is still sized 1,257 bytes from before the room-text-pool removal, so 256 bytes here are currently unclaimed slack) |
-| `$84E9-$855C` | fixed `GameState` |
+| `$8000-$84E8` | current-room region (1,001-byte `PlatformRoom` plus 256 bytes of reserved load-image slack) |
+| `$84E9-$855C` | reserved load-image space formerly used by `GameState` |
 | `$855D-$85FF` | compact native resident helpers |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room staging (1,001-byte `PlatformRoom`; like `$8000-$84E8`, the linker region is still sized 1,257 bytes, so `script_resource_kind` - src/script_runtime.c - borrows one of the 256 otherwise-unclaimed slack bytes rather than costing BSSRAM, which has none free) |
-| `$A4E9-$B4FF` | rebuildable work RAM; inventory/story/save overlay while active |
-| `$B500-$B80C` | ordinary resident BSS |
+| `$A4E9-$B4FF` | rebuildable work RAM; remaining loaded overlays while active |
+| `$B500-$B7DD` | ordinary resident BSS; `$B7DE-$B80C` is the free region tail |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | free (the software stack moved to `$C000`) |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | persistent `GameState` |
-| `$C180-$FFFF` | 256 resident object-type records |
+| `$C174-$C178` | in-place Inventory service state |
+| `$C180-$CFFD` | hot object-type records 0-105 |
+| `$D000-$DFFE` | hot object-type records 106-222 beneath I/O |
+| `$E000-$E482` | hot object-type records 223-255 beneath KERNAL |
 
 The platform preallocates:
 
 - one 1,001-byte `PlatformRoom` (in a 1,257-byte linker region - see the memory map above);
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
-- 256 object-type records, 16 KiB total;
+- 256 resident 35-byte hot object-type records (8,960 bytes), with names and
+  flags retained as cold cartridge data;
 - a 110-byte dirty-cell bitmap.
 
 No API allocates heap memory.
@@ -229,7 +233,7 @@ Name and the actor-flag byte are not resident at all. Call
 `platform_object_type_info_get(type_id)` to fetch the 15-byte
 `PlatformObjectTypeInfo` (name, flags) directly from its fixed EasyFlash
 bank/offset -- a real cartridge bank-switch, heavier than
-`platform_object_type_get()`. This accessor is itself the first routine that
+`platform_object_type_get()`. This accessor is itself an in-place routine that
 *runs from a bank in place* rather than resident (see "Banked code" below), so
 a call now costs a far call plus its own nested fetch. Only call it from discrete, human-input-paced
 code (Take/Use/Look text, actor-flag checks before adding/counting objects),
@@ -246,7 +250,7 @@ layout `tools/pack_easyflash.py` produces.
 The platform loads rooms throughout gameplay rather than preloading all 256
 rooms. Rooms are immutable base records copied from banked EasyFlash ROM into
 the single resident `platform_room`. All game-asset reads (rooms, object
-types, portraits, the inventory/story overlay, room code) are EasyFlash-only;
+types, portraits, the in-place Inventory service, room code) are EasyFlash-only;
 disk KERNAL I/O is reserved for save games (see `SAVE_GAME.md`), which is
 specified but not yet implemented.
 
@@ -958,23 +962,19 @@ The complete raster interrupt implementation is assembly in `src/irq.s`. It
 switches from tile charset bank 0 to text charset bank 1 immediately below the
 map, restores bank 0 at raster line 0, advances rain once per frame at the
 map/text split (an ordinary per-sprite position update, not a multiplexing
-event), and acknowledges every VIC interrupt.
-Because EasyFlash copies run with interrupts disabled, the handler accepts late
-entry and derives the correct phase from `$D011` bit 7 plus `$D012`; the copy
-routine explicitly resynchronizes `$D018` and the next compare before restoring
-interrupts.
+event), and acknowledges every VIC interrupt. It acknowledges at handler entry,
+so a later compare that occurs during rain/environment work remains pending.
+The handler also accepts late entry and derives the correct phase from `$D011`
+bit 7 plus `$D012`.
 
 **Contract: interrupt code never bank-switches, and stays on resident data.**
 `src/irq.s` never touches `EASYFLASH_BANK`/`EASYFLASH_CONTROL`/`ef_shadow_*`
-and never will - the raster IRQ, keyboard polling, and rain/water advance all
-run fully resident. This is more than a style preference: most of
-`$8000-$BFFF` - resident `BSS`, `platform_room`, the active room-code overlay -
-physically sits inside the EasyFlash ROML/ROMH
-banking window, so an interrupt that ran while that window was switched to
-cart ROM would read garbage there even if its own code never issued a bank
-switch itself. Interrupts are therefore kept off for a foreground bank
-switch's *entire* switched-in duration, not just around the bank register
-writes.
+and never will. The full per-frame closure - handler code, frame/rain state,
+water character data, and the loaded environment tick - lives below `$8000`.
+Most other engine state in `$8000-$BFFF` is hidden by ROML/ROMH and remains
+forbidden to interrupt code. Foreground bank wrappers therefore mask interrupts
+only across the short `$01`/`$DE00`/`$DE02` transition and restore the caller's
+interrupt state while the copy or banked routine runs.
 
 Every foreground (non-interrupt) banked call goes through the general "thin
 call wrapper" pair in `src/banking.s`: `_platform_bank_call_enter`/
@@ -996,30 +996,10 @@ always pops whatever is on top regardless of what pushed it), so nested
 banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
 `platform_easyflash_copy_roml`/`_romh`) is itself built on this pair.
 
-**Cost of the copy itself, not just the wait beforehand.**
-`_platform_bank_call_enter`/`_platform_far_call` waiting for the raster to
-wrap before disabling interrupts (documented above and in
-`MEMORY_MAP.md`/`MEMORY_MAP_TARGET.md`) is a small, bounded cost - up to
-~56 lines, ~3.5ms. The copy loop that runs *after* interrupts are off is a
-separate, much larger cost that scales with the amount of data moved:
-`easyflash_copy_window`'s byte loop (`src/banking.s`) is roughly 50 6502
-cycles per byte, so a multi-KB `platform_overlay_load()` (the copy-to-`$A4E9`
-overlays - room-helpers, look-helpers, script/conversation/room-text,
-inventory, save/load) can hold interrupts off for well over 100ms, several
-full video frames - long enough that the raster IRQ's charset split cannot
-run at all for that whole stretch, and the display freezes screen-wide on
-whichever single charset was selected the instant interrupts went off
-(almost always the tile charset, since the bank-call primitives deliberately
-start their critical section at the top of a frame). Any status text already
-on screen at that instant renders through the wrong charset as garbled tile
-glyphs for a visible fraction of a second, not a one-frame flicker - found
-live (`MEMORY_MAP_TARGET.md`'s "Overlay-load visual glitch" section) via
-Look/Take/Use, which always have status text ("Looking...", "Taking...",
-"Using...") already up when their overlay loads. Bracket a
-`platform_overlay_load()` call with `platform_screen_blank()`/`_unblank()`
-whenever status text might already be visible - see that section for the
-call sites already fixed this way and the ones deliberately left as a
-lower-priority follow-up.
+The byte copy is still expensive - roughly 50 cycles per byte - but it no
+longer freezes the raster split, frame counter, rain, or environment tick.
+Existing screen-blank brackets around the largest overlay loads remain as
+conservative loading presentation and can be reevaluated after visual testing.
 
 ### Banked code
 
@@ -1028,12 +1008,13 @@ and **executed straight from its bank**, never copied into RAM. Call one with
 the `FAR_CALL` macro (`src/platform.inc`):
 
 ```asm
-    FAR_CALL 47, $9A00      ; bank byte + 16-bit offset = a "far address"
+    FAR_CALL 47, $9A00, CPU_MAP_CART_8K, EASYFLASH_8K
 ```
 
-It patches the bank and target into a single shared trampoline
+It patches the bank, target, CPU map, and EasyFlash control into a single
+shared trampoline
 (`_platform_far_call`, `src/banking.s`) and calls it. The trampoline is
-reentrant despite the self-modification - both patched operands are consumed
+reentrant despite the self-modification - all patched operands are consumed
 before its inner `jsr`, and nothing below that `jsr` is patched - so a banked
 routine may `FAR_CALL` again. It keeps the caller's bank, mode and map on the
 CPU hardware stack, which is why it needs none of the fixed-depth array
@@ -1045,30 +1026,41 @@ return comes back**, which covers cc65's 8- and 16-bit argument and return
 passing, so a banked routine can be an ordinary `__fastcall__` C function.
 `Y` is the trampoline's scratch and is preserved in neither direction.
 
-**What a banked routine may touch.** While the call runs, `$8000-$BFFF` is
-cartridge ROM. Reads there return ROM, not the RAM listed in the table above;
-writes still reach the RAM underneath. So a banked routine may only use
+**What a banked routine may touch.** ROML calls require CPU map `$37`. In 16
+KiB EasyFlash mode `$A000-$BFFF` is ROMH; in 8 KiB mode it is BASIC ROM. Thus
+the effective readable-RAM rule is the same: reads from `$8000-$BFFF` do not
+return underlying RAM, although writes still reach it. A banked routine may
+only use
 `$0000-$7FFF` and `$C000-$CFFF`, and may only call resident code living
 outside the window. This is why the software stack (`$C000`) and `GameState`
 (`$C100`) were moved - cc65 code touches its stack constantly - and why
 `LOWBSS` exists for state the bank machinery itself must read. `UPPERCODE`
 (`$8B48`) is inside the window and is therefore unreachable from a bank.
+Banked code is also immutable: a store to an instruction address writes the
+RAM beneath the cartridge, while instruction fetch still sees ROM. Use RAM
+pointers or tables instead of self-modifying operands.
 
-**Granularity.** Both bank-switch paths wait for the raster to wrap before
-disabling interrupts: free when the raster is on lines 0-255, up to ~56 lines
-otherwise. Negligible for one coarse call wrapping a large piece of work,
-costly if the same work is split across many small banked calls. Bank whole
-operations, not inner-loop helpers.
+**Granularity.** Each far call still pays a fixed map/register transition and
+should not be used for inner-loop helpers. Long banked operations no longer
+stop the raster IRQ, but they still block foreground gameplay until they
+return.
 
-`platform_object_type_info_get()` is the first routine to run this way; see
-`modules/typeinfo.c`, `cfg/banked_typeinfo.cfg` and the resident stub in
-`src/banked_api.s` for the pattern, and `EASYFLASH_CARTRIDGE.md`'s "Modules
-executed in place" for the packing side.
+`platform_object_type_info_get()` and the complete Inventory UI run this way;
+see `modules/typeinfo.c`, `modules/inventory.c`, their `cfg/banked_*.cfg`
+linker files, and the resident stubs in `src/banked_api.s` for the pattern.
+`EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
 
-The gameplay handler is entered directly through RAM `$FFFE/$FFFF`, saves and
-restores A/X/Y, and ends in `RTI`. A second `$0314` entry supports KERNAL-mapped
-disk intervals. Keyboard polling uses a short `$37` wrapper and restores the
-normal `$35` gameplay mapping before returning.
+Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with
+`$DE02=$06`, not `$36/$06`. `$01=$36` disables ROML along with BASIC. The
+generated layout emits both values so this hardware distinction remains
+explicit at every call site.
+
+The gameplay handler is entered directly through RAM `$FFFE/$FFFF` under the
+normal `$35` map, saves and restores A/X/Y, and ends in `RTI`. KERNAL is visible
+during either in-place cartridge mode because both require `$37`, so those IRQs
+enter through the installed `$0314` vector instead. Both entries call the same
+resident body. Keyboard polling likewise uses a short `$37` wrapper and
+restores the normal `$35` gameplay mapping before returning.
 
 A contiguous `$C000-$FFFF` object table is possible through `$01` banking, but
 records in its `$D000-$DFFF` quarter must be staged through visible scratch RAM

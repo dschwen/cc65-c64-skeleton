@@ -22,11 +22,8 @@
 .export _platform_far_call
 .export far_call_bank_operand
 .export far_call_target_operand
-
-.import _raster_irq_resync
-.import platform_raster_irq_active
-
-VIC_CTRL1 = $d011
+.export far_call_cpu_map_operand
+.export far_call_control_operand
 
 .segment "DATA"
 _platform_ef_copy_bank:
@@ -86,7 +83,8 @@ bank_call_scratch:
 ; EASYFLASH_OFF (matching what cart/ef_boot.s leaves it as) by
 ; _platform_boot_is_easyflash below, before anything can bank-switch.
 ;
-; Deliberately in "DATA", NOT "BSS": BSSRAM ($B500-$B80C, see cfg/myc64.cfg)
+; Deliberately in "DATA", NOT "BSS": BSSRAM ($B500-$B7DD currently; see
+; MEMORY_MAP.md)
 ; sits inside the $8000-$BFFF EasyFlash ROML/ROMH banking window. Writes
 ; there always land in the underlying RAM regardless of banking (true on
 ; real 6510 hardware), but easyflash_copy_window's *read* of these shadow
@@ -172,16 +170,11 @@ _platform_easyflash_disable:
 ;     jsr _platform_bank_call_leave
 ;
 ; Contract: interrupt code (src/irq.s) never calls these and never touches
-; EasyFlash bank state - it stays fully resident on resident data - so the
-; only thing these ever need to protect against is a *foreground* nested
-; call finding its own previous bank/mode disturbed, not a concurrent
-; IRQ-driven switch. Interrupts still have to be off for the whole
-; switched-in window regardless (see the ef_shadow_bank comment above and
-; PLATFORM_API.md's "Raster IRQ and water animation": most of $8000-$BFFF,
-; including GameState, resident BSS, and the software stack, physically
-; sits inside this banking window, so an interrupt that ran while ROM was
-; banked in would read garbage there even if its own code never banks
-; anything itself).
+; EasyFlash bank state. Its complete per-frame code and data closure is below
+; $8000, so the caller's interrupt-enable state is restored after the short
+; register/map transition and IRQs may run while the banked operation itself
+; executes. This keeps the charset split, frame counter and environment tick
+; alive during long copies and far calls.
 ;
 ; fastcall: A = target EasyFlash bank number. Always switches 16 KiB mode
 ; (both ROML and ROMH), matching every current banked use. Nests correctly
@@ -212,30 +205,6 @@ _platform_easyflash_disable:
 _platform_bank_call_enter:
     sta bank_call_scratch
 
-    ; Wait for a raster line safely away from TEXT_RASTER (the map/text
-    ; charset-switch boundary, near the bottom of the frame) before
-    ; disabling interrupts: a bank switch can run for many raster lines,
-    ; and interrupts disabled anywhere near that one exact line risks
-    ; missing the switch entirely, leaving the wrong charset on screen for
-    ; a frame. Waiting here for the 9-bit raster to wrap (VIC_CTRL1 bit 7
-    ; clearing) puts us at the top of a fresh frame instead - maximum
-    ; distance from that boundary. Skipped when the raster IRQ isn't
-    ; installed yet (early boot - platform_raster_irq_active starts at 0)
-    ; or is currently suspended by raster_irq_suspend() (which already
-    ; masks the interrupt source and pins tile charset for its whole
-    ; window - room transitions and script/inventory/saveload loads all
-    ; go through that, so this wait is a no-op for them). Same
-    ; wraparound-wait idiom _raster_irq_resync already uses, for the same
-    ; reason - reading VIC_CTRL1 depends only on the VIC-II's own raster
-    ; counter, not on interrupts actually firing, so this can't hang on a
-    ; masked IRQ.
-    lda platform_raster_irq_active
-    beq @raster_wait_done
-@raster_wait_top:
-    lda VIC_CTRL1
-    bmi @raster_wait_top
-@raster_wait_done:
-
     php
     pla
     ldx bank_stack_index
@@ -261,14 +230,19 @@ _platform_bank_call_enter:
     lda #EASYFLASH_16K
     sta ef_shadow_control
     sta EASYFLASH_CONTROL
+    dex
+    lda bank_stack_flags,x
+    and #$04
+    bne @enter_done
+    cli
+@enter_done:
     rts
 
-; Unwind one level pushed by _platform_bank_call_enter: restore the previous
-; bank/mode and CPU map, resynchronize the raster IRQ's phase tracking (an
-; unknown, possibly large number of cycles just ran with interrupts off),
-; then restore the exact interrupt-flag state _platform_bank_call_enter
-; captured for this level.
+; Unwind one level pushed by _platform_bank_call_enter. Interrupts are masked
+; only while restoring the previous bank/mode and CPU map, then the exact
+; entry flags are restored.
 _platform_bank_call_leave:
+    sei
     dec bank_stack_index
     ldx bank_stack_index
 
@@ -280,9 +254,8 @@ _platform_bank_call_leave:
     sta EASYFLASH_BANK
     lda bank_stack_cpuport,x
     sta CPU_PORT
-    jsr _raster_irq_resync
 
-    ldx bank_stack_index        ; reload: the jsr above may have clobbered X
+    ldx bank_stack_index
     lda bank_stack_flags,x
     pha
     plp
@@ -290,12 +263,11 @@ _platform_bank_call_leave:
 
 ; Far call dispatcher: one shared, self-modifying trampoline.
 ;
-; The FAR_CALL macro (src/platform.inc) writes the callee's bank into
-; far_call_bank_operand and its 16-bit address into far_call_target_operand,
-; then jsr's here. Those three bytes together are the "far address" - one
-; bank byte plus a 16-bit offset inside the banked window - so banked code is
-; addressed uniformly no matter which bank it lives in, and the whole 1 MiB
-; becomes reachable without a per-callee trampoline.
+; The FAR_CALL macro (src/platform.inc) writes the callee's bank, 16-bit
+; address, CPU map, and EasyFlash control value into operands below, then
+; jsr's here. The two mapping values are separate because ROML needs CPU map
+; $37 even when EasyFlash itself is in 8 KiB mode ($06). With that CPU map,
+; BASIC covers $A000-$BFFF; 8 KiB mode does not make upper RAM readable.
 ;
 ; Reentrant *despite* the self-modification, which is why this needs none of
 ; the fixed-depth bank_stack array the enter/leave pair above uses: every
@@ -312,12 +284,13 @@ _platform_bank_call_leave:
 ; macro's patch and its jsr. That is already the codebase-wide contract -
 ; see _platform_bank_call_enter above: interrupt code never bank-switches.
 ;
-; Constraint on the callee: while it runs, $8000-$BFFF is cartridge ROM, so
-; it must not touch anything living there. That currently includes the cc65
-; software stack ($BA00-$BBFF), GameState ($84E9), platform_room ($8000) and
-; the resident BSS ($B500) - which means banked routines must be assembly
-; over zero page, low RAM or $C000+ until the software stack moves below
-; $8000. See MEMORY_MAP_TARGET.md.
+; Constraint on the callee: an 8 KiB ROML call sees cartridge ROM at
+; $8000-$9FFF and BASIC ROM at $A000-$BFFF; a 16 KiB ROMH call sees cartridge
+; ROM across both halves. Neither may read underlying RAM anywhere in
+; $8000-$BFFF. The cc65 software stack ($C000) and GameState ($C100) remain
+; visible in either mode. The mode-aware
+; validate_banked_module.py enforces the linked-import side of this ABI. See
+; MEMORY_MAP_TARGET.md.
 _platform_far_call:
     ; Register contract, so a banked routine can be an ordinary cc65
     ; __fastcall__ function: A and X are passed through to the callee and its
@@ -328,16 +301,10 @@ _platform_far_call:
     ; and A/X.
     tay
 
-    ; Raster-safe point before disabling interrupts - identical reasoning to
-    ; _platform_bank_call_enter's wait above.
-    lda platform_raster_irq_active
-    beq @raster_wait_done
-@raster_wait_top:
-    lda VIC_CTRL1
-    bmi @raster_wait_top
-@raster_wait_done:
-
     php
+    pla
+    sta bank_call_scratch
+    pha
     sei
     lda ef_shadow_bank
     pha
@@ -347,53 +314,46 @@ _platform_far_call:
     pha
 
     and #$f8
-    ora #CPU_MAP_CART_16K
+    ora #$00                    ; CPU-map operand patched by FAR_CALL
+far_call_cpu_map_operand = * - 1
     sta CPU_PORT
 
     lda #$00                    ; operand patched by FAR_CALL
 far_call_bank_operand = * - 1
     sta ef_shadow_bank
     sta EASYFLASH_BANK
-    lda #EASYFLASH_16K
+    lda #$00                    ; EasyFlash-control operand patched by FAR_CALL
+far_call_control_operand = * - 1
     sta ef_shadow_control
     sta EASYFLASH_CONTROL
 
+    lda bank_call_scratch
+    and #$04
+    bne @far_call_irq_state_ready
+    cli
+@far_call_irq_state_ready:
     tya                         ; hand the argument back to the callee in A
     jsr $0000                   ; operand patched by FAR_CALL
 far_call_target_operand = * - 2
     tay                         ; stash the callee's return byte
+    sei                         ; bank/map restoration is the other critical edge
 
     ; Nothing below here is patched, so an inner FAR_CALL cannot disturb this
     ; invocation's unwind - the whole basis of the reentrancy argument above.
+    ; Keep I/O visible until both EasyFlash registers are restored. Writing
+    ; CPU_PORT first would make $DE00/$DE02 disappear if a future caller came
+    ; from an all-RAM map such as $34.
     pla
-    sta CPU_PORT
+    sta bank_call_scratch
     pla
     sta ef_shadow_control
     sta EASYFLASH_CONTROL
     pla
     sta ef_shadow_bank
     sta EASYFLASH_BANK
+    lda bank_call_scratch
+    sta CPU_PORT
 
-    ; Resync only when this unwind actually restored the plain gameplay map.
-    ; _raster_irq_resync lives in UPPERCODE ($8B48) and reads
-    ; platform_raster_irq_active ($B7EC) - both inside the $8000-$BFFF banking
-    ; window. At the outermost level the map is back to RAM and the call is
-    ; safe; unwinding a *nested* far call restores a still-cart-mapped state,
-    ; where that jsr would land in cartridge ROM instead of the routine. Found
-    ; the hard way: it hung boot solid the first time a nested far call ran.
-    ; Skipping it while nested is correct as well as necessary - the raster
-    ; phase only needs resynchronizing once, when interrupts are about to be
-    ; usable again, which is exactly the outermost unwind.
-    lda CPU_PORT
-    and #CPU_PORT_MASK
-    cmp #CPU_MAP_GAME
-    bne @skip_resync
-    txa                         ; _raster_irq_resync may clobber X, which
-    pha                         ; carries the high byte of a 16-bit return
-    jsr _raster_irq_resync
-    pla
-    tax
-@skip_resync:
     tya                         ; A := return byte, before plp restores flags
     plp
     rts
@@ -496,7 +456,10 @@ _platform_boot_is_easyflash:
     ldx #0
     rts
 
-; Clear exactly $C000-$FFFF with I/O/KERNAL hidden for the complete operation.
+; Clear only the hot-object-type arena, including its three linker padding
+; bytes: $C180-$E482. The cc65 software stack ($C000-$C0FF) and GameState
+; ($C100-$C173) now precede this arena and are live when platform_init() calls
+; us, so the old whole-$C000-$FFFF clear corrupted active program state.
 _platform_object_types_clear:
     php
     sei
@@ -505,25 +468,32 @@ _platform_object_types_clear:
     and #$f8
     ora #CPU_MAP_ALL_RAM
     sta CPU_PORT
-    lda #$00
+    lda #$80
     sta $fb
-    lda #$c0
+    lda #$c1
     sta $fc
-    ldx #64
-    lda #0
-@clear_page:
+    lda #$03                    ; $E483-$C180 = $2303 bytes
+    sta $fd
+    lda #$23
+    sta $fe
+    ldx #0
     ldy #0
 @clear_byte:
+    txa
     sta ($fb),y
-    iny
-    bne @clear_byte
+    inc $fb
+    bne :+
     inc $fc
-    dex
-    bne @clear_page
+:
+    lda $fd
+    bne :+
+    dec $fe
+:
+    dec $fd
+    lda $fd
+    ora $fe
+    bne @clear_byte
     pla
     sta CPU_PORT
     plp
     rts
-
-
-

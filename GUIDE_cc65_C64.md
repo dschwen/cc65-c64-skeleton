@@ -22,6 +22,17 @@ Common flags:
 - `-m game.map`: emits a link map (highly recommended)
 - `-Ln labels.lbl`: exports labels (useful for debugging/monitor tools)
 
+This project's compile rules also pass `--create-full-dep` and include the
+resulting `.d` files. Do not remove that dependency generation: structure and
+ABI declarations in headers affect many independently linked resident and
+overlay objects, and a stale object can still link successfully while using an
+old layout.
+
+Fixed EasyFlash module coordinates are declared once in
+`cfg/easyflash_layout.json`. The build generates C and ca65 constants from it,
+then `tools/validate_easyflash_layout.py` compares every fixed module against
+the final packed image and verifies the in-place module's linked entry address.
+
 ### Runtime + memory layout
 cc65 ships a **C64 runtime** and describes its memory layout and platform specifics in its C64 target documentation.  
 The default linker configuration file for the target is `cfg/c64.cfg`.
@@ -288,13 +299,14 @@ linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 | `$9900-$9CFF` | active 1 KiB room-specific code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A4E8` | destination-room or save-record/index staging |
-| `$A4E9-$B4FF` | rebuildable work RAM; inventory/story overlay while active |
+| `$A4E9-$B4FF` | rebuildable work RAM; remaining loaded overlays while active |
 | `$B500-$B80C` | ordinary platform BSS |
 | `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
 | `$BA00-$BBFF` | free (software stack moved to `$C000`) |
 | `$BC00-$BFFF` | sparse room-object delta journal |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | fixed resident `GameState` |
+| `$C174-$C178` | mutable in-place Inventory service state |
 | `$C180-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
 
 `$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
@@ -363,28 +375,34 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current room and `GameState` occupy `$8000-$85FF`. Resident world-state
-code is loaded at `$8600`; game/main and the shared room API occupy
-`$8B48-$98FF`. Independently linked room code has a 1 KiB window at
+The current room occupies `$8000-$83E8`; reserved load-image space and compact
+helpers continue through `$85FF`. Resident world-state code is loaded at
+`$8600`; game/main and the shared room API occupy `$8B48-$98FF`.
+Independently linked room code has a 1 KiB window at
 `$9900-$9CFF`, and the current-room pristine object baseline occupies
 `$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
-Ordinary BSS lives in RAM beneath BASIC ROM at `$B500-$B7F9`; independently
+Ordinary BSS currently ends at `$B7DD` in RAM beneath BASIC ROM; independently
 loaded helpers and the bottom-text pager occupy `$B80D-$B9FF`. The C software
-stack and `GameState` sit at `$C000-$C0FF` and `$C100-$C173` instead - that
+stack, `GameState`, and Inventory's five mutable service bytes sit at
+`$C000-$C0FF` and `$C100-$C178` instead - that
 region is the only RAM above `$8000` never covered by a cartridge bank, which
-is what lets banked code use them (see `PLATFORM_API.md`'s "Banked code"). KERNAL calls use CPU mapping `$36`, which keeps KERNAL and I/O
-visible while leaving BASIC hidden and these regions readable.
+is what lets banked code use them (see `PLATFORM_API.md`'s "Banked code").
+KERNAL-only calls use CPU mapping `$36`, which keeps KERNAL and I/O visible
+while leaving BASIC hidden. In-place cartridge execution instead requires
+`$01=$37`: use `$DE02=$06` for ROML-only or `$07` for ROML+ROMH. Even the
+ROML-only case reads BASIC ROM, not underlying RAM, at `$A000-$BFFF`.
 
-`WORKBSS` currently uses `$A4E9-$ADF8` for base colors, tile brightness,
+`WORKBSS` currently uses `$A4E9-$ACA7` for base colors, tile brightness,
 visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
 rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
 room-code copies are implemented in assembly because ROMH temporarily hides
-both the C stack and BSS. `$ADF9-$B4FF` is the current 1,799-byte WORKRAM tail.
+both the C stack and BSS. `$ACA8-$B4FF` is the current 2,136-byte WORKRAM tail.
 Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current `HIGH` segment has about 158 bytes of linker margin and `UPPER`
-has about 39 bytes; inspect `build/game.map` before adding resident logic.
+The current `HIGH` segment has about 95 bytes of linker margin and `UPPER`
+has about 36 bytes; `PROGRAM` is tighter at about 15 bytes after moving IRQ
+state into `LOWBSS`. Inspect `build/game.map` before adding resident logic.
 Cursor helpers deliberately use
 the remaining pre-charset and `$3900` gaps while the sprite bitmap area remains
 reserved for all eight hardware sprites.

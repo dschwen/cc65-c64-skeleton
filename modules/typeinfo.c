@@ -4,14 +4,16 @@
 
 /* Runs from an EasyFlash bank, in place - it is never copied into RAM. Called
  * through FAR_CALL (see _platform_object_type_info_get in src/banked_api.s),
- * which maps this bank over $8000-$BFFF for the duration.
+ * which selects 8 KiB ROML mode for the duration. CPU map $37 is still
+ * required to assert ROML, so BASIC ROM covers $A000-$BFFF; underlying upper
+ * RAM is not readable during the call. The implementation needs neither.
  *
  * Everything this touches therefore has to live outside that window: the
  * platform_ef_copy_* parameters are in DATA (below $8000),
  * platform_easyflash_copy_romh() is in HIGHCODE (below $8000), and the scratch
  * record it fills is in LOWBSS for exactly this reason. It is also cold - Look
- * and Take only - which matters, because a bank switch waits for the raster to
- * wrap and so is far too expensive for anything on a per-frame path.
+ * and Take only - which matters because even a 15-byte fetch pays nested bank
+ * transitions and is inappropriate for a per-frame hot path.
  */
 #define OBJECT_TYPE_COLD_BYTES 15u
 #define EF_TYPE_BANK_0         46u

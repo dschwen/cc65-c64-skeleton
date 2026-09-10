@@ -11,7 +11,6 @@
 .export _platform_rain_enable, _platform_rain_activate
 .export _platform_rain_disable, _platform_rain_is_active
 
-.import _platform_text_area_clear_native
 
 .include "platform.inc"
 
@@ -54,11 +53,10 @@ RAIN_X_MAX_LO   = 87       ; respawn once x_hi=1 and x_lo>=this: x >= 343, the m
 ; a screenshot showing streaks well below the map's drawn tiles.
 RAIN_Y_MAX      = 176
 
-; These two are read by _raster_irq_resync, which the EasyFlash bank-call
-; machinery calls on every unwind - including unwinds that happen while banked
-; code is running. BSS sits at $B500, inside the $8000-$BFFF banking window, so
-; reading them from that context would return cartridge ROM. LOWBSS keeps them
-; below $8000 where they stay visible under every map.
+; The IRQ remains enabled during long cartridge copies and in-place calls.
+; Consequently every byte of its transitive per-frame state must stay outside
+; the $8000-$BFFF EasyFlash window. LOWBSS keeps this state visible under every
+; map; _raster_irq_resync also relies on the first two bytes here.
 .segment "LOWBSS"
 platform_text_screen_active: .res 1
 ; Same byte under two names: the plain name is what src/irq.s and
@@ -68,8 +66,6 @@ platform_text_screen_active: .res 1
 ; src/platform.c, the only current C reader).
 _platform_raster_irq_active:
 platform_raster_irq_active: .res 1
-
-.segment "BSS"
 _platform_frame_counter: .res 1
 platform_rain_active: .res 1
 rain_x_lo: .res RAIN_COUNT+1   ; index 0 unused; 1-7 map to sprites 1-7
@@ -77,6 +73,8 @@ rain_x_hi: .res RAIN_COUNT+1   ; sprite X's 9th X-position bit (0 or 1)
 rain_y: .res RAIN_COUNT+1
 rain_seed: .res 1
 rain_setup_hook: .res 2
+platform_raster_irq_suspend_depth: .res 1
+platform_raster_irq_saved_enable: .res 1
 
 .segment "CODE"
 
@@ -86,6 +84,8 @@ _raster_irq_install:
     sta _platform_frame_counter
     sta platform_text_screen_active
     sta platform_rain_active
+    sta platform_raster_irq_suspend_depth
+    sta platform_raster_irq_saved_enable
     lda #$ac                ; an all-zero LFSR state never escapes zero
     sta rain_seed
     lda #1
@@ -150,8 +150,8 @@ _platform_text_screen_leave:
     sta VIC_MEMPTR
     rts
 
-; Re-establish the split after a long IRQ-disabled operation, such as copying
-; an EasyFlash room bank. Choose the next event from the VIC's full 9-bit
+; Re-establish the split after a deliberately suspended transaction, such as a
+; complete room/environment install. Choose the next event from the VIC's full 9-bit
 ; raster position so a pending interrupt cannot leave the text charset over
 ; the map for a frame.
 ; HIGHCODE, not UPPERCODE: UPPERCODE is at $8B48, inside the banking window, so
@@ -215,28 +215,24 @@ _raster_irq_resync:
     plp
     rts
 
-; Room transactions call this from ordinary map mode and want the tile
-; charset with no split while no status text is visible - clearing rows
-; 22-24 first avoids leaving text glyphs on screen when D018 is forced to
-; the tile bank. But inventory/save/load close out through this same path
-; (see saveload_cleanup() and game_inventory_show()) while still in a full
-; text screen: platform_text_screen_enter() was called by the loaded
-; overlay module itself, and platform_text_screen_active stays 1 until the
-; resident wrapper calls platform_text_screen_leave() - *after* this
-; suspend, not before. Forcing TILE_MEMPTR unconditionally here briefly
-; reinterpreted rows 0-21 of a still-fully-populated inventory/save screen
-; through the wrong charset before the wrapper's own memset cleared them -
-; a real, visible one-frame glitch. Pick the charset the same way
-; _raster_irq_resync's map-phase branch already does, instead of assuming
-; tile.
+; Nestable raster-source suspension. This is synchronization only: callers
+; own any text clearing or screen blanking. The first suspend saves the full
+; VIC enable register and masks only its raster bit; nested calls merely bump
+; the depth. The final resume restores the saved enable state. A redundant
+; resume at depth zero is a no-op because the room-script path can deliberately
+; resume an outer transition early when it needs readable paged text.
 .segment "UPPERCODE"
 _raster_irq_suspend:
-    jsr _platform_text_area_clear_native
     php
     sei
+    lda platform_raster_irq_suspend_depth
+    bne @suspend_nested
+    lda VIC_IRQ_ENABLE
+    sta platform_raster_irq_saved_enable
+    and #$fe
+    sta VIC_IRQ_ENABLE
     lda #0
     sta platform_raster_irq_active
-    sta VIC_IRQ_ENABLE
     lda platform_text_screen_active
     beq @suspend_tile
     lda #TEXT_MEMPTR
@@ -247,6 +243,8 @@ _raster_irq_suspend:
     sta VIC_MEMPTR
     lda #$01
     sta VIC_IRQ_STATUS
+@suspend_nested:
+    inc platform_raster_irq_suspend_depth
     plp
     rts
 
@@ -255,14 +253,23 @@ _platform_rain_is_active:
     lda platform_rain_active
     rts
 
+.segment "UPPERCODE"
 _raster_irq_resume:
     php
     sei
-    lda #1
+    lda platform_raster_irq_suspend_depth
+    beq @resume_done
+    dec platform_raster_irq_suspend_depth
+    bne @resume_done
+    lda platform_raster_irq_saved_enable
+    and #$01
     sta platform_raster_irq_active
+    beq @resume_restore_enable
     jsr _raster_irq_resync
-    lda #$01
+@resume_restore_enable:
+    lda platform_raster_irq_saved_enable
     sta VIC_IRQ_ENABLE
+@resume_done:
     plp
     rts
 
@@ -282,6 +289,12 @@ direct_irq_entry:
     rti
 
 raster_irq_body:
+    ; Clear the event being serviced before scheduling or doing any per-frame
+    ; work. If a later compare fires before this handler returns, it remains
+    ; pending instead of being accidentally cleared by a late acknowledgement.
+    lda #$01
+    sta VIC_IRQ_STATUS
+
     ; D012 wraps at line 256, so consult D011 first. A late IRQ in the
     ; vertical blank belongs to the text phase and must schedule line zero.
     lda VIC_CTRL1
@@ -347,8 +360,6 @@ raster_irq_body:
     sta VIC_RASTER
 
 @done:
-    lda #$01
-    sta VIC_IRQ_STATUS
     rts
 
 direct_nmi_entry:
@@ -373,6 +384,7 @@ direct_reset_entry:
     sta CPU_PORT
     jmp $fce2
 
+.segment "HIGHCODE"
 rain_hide_sprites:
     lda VIC_SPR_ENABLE
     and #<~RAIN_MASK
@@ -604,4 +616,3 @@ rain_bit_mask:
 kernal_irq_entry:
     jsr raster_irq_body
     jmp KERNAL_IRQ_OUT
-

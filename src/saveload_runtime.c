@@ -7,9 +7,9 @@
 
 /* Save-detail overlay ("SV": name entry + encode + disk write), separate
  * from the browse/load overlay above because both together would not fit
- * the shared 4119-byte $A4E9 window. Stored in bank 47 ROMH, otherwise
+ * the shared 4 KiB $B000 window. Stored in bank 47 ROMH, otherwise
  * unused (bank 47 ROML holds the object-type cold table). */
-#define SAVELOAD_SCREEN     ((uint8_t*)0x0400)
+#define SAVELOAD_SCREEN     ((uint8_t*)0xf800)
 #define SAVELOAD_COLOR      ((uint8_t*)0xd800)
 #define SAVELOAD_VIC_CTRL1  (*(volatile uint8_t*)0xd011)
 #define SAVE_RECORD_RAM     ((const uint8_t*)0xa000)
@@ -39,8 +39,8 @@ static uint16_t save_get16(const uint8_t* p) {
 #pragma code-name (push, "LOWCODE")
 
 /* Apply only after the browse overlay has returned. platform_room_enter()
- * stages room code at $A4E9 and room data at $A000, so calling it from the
- * overlay would overwrite both the executing code and this record. */
+ * stages room code at $B000 and room data at $2400, so calling it from the
+ * overlay would overwrite the executing code. */
 static uint8_t saveload_apply_pending(void) {
     const uint8_t* p;
     uint16_t delta_count;

@@ -83,7 +83,7 @@ bank_call_scratch:
 ; EASYFLASH_OFF (matching what cart/ef_boot.s leaves it as) by
 ; _platform_boot_is_easyflash below, before anything can bank-switch.
 ;
-; Deliberately in "DATA", NOT "BSS": BSSRAM ($B500-$B7DD currently; see
+; Deliberately in "DATA", NOT "BSS": BSSRAM ($2C00-$2EFF; see
 ; MEMORY_MAP.md)
 ; sits inside the $8000-$BFFF EasyFlash ROML/ROMH banking window. Writes
 ; there always land in the underlying RAM regardless of banking (true on

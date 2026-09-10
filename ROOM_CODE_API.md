@@ -344,7 +344,7 @@ the ABI. ABI 4 added `use_at`; ABI 3 added `enter_room`; ABI 2 changed
 `look_at` from one cardinal direction byte to the two tile-coordinate bytes
 documented above. The loader rejects older room code.
 
-A small assembly copier stages the file at `$A4E9` while 16 KiB EasyFlash ROM
+A small assembly copier stages the file at `$B000` while 16 KiB EasyFlash ROM
 is visible; it touches only hardware stack, zero page, and low DATA until the
 cartridge is disabled. Activation copies the validated overlay to `$9900` and
 zeros its BSS.

@@ -10,8 +10,8 @@
 .importzp ptr2
 .importzp regsave
 
-SCREEN_LEFT  = $0400 + 2 * 40 + 1
-SCREEN_RIGHT = $0400 + 2 * 40 + 21
+SCREEN_LEFT  = $f800 + 2 * 40 + 1
+SCREEN_RIGHT = $f800 + 2 * 40 + 21
 TYPE_NAME_LENGTH = 14
 
 .segment "CODE"

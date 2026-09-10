@@ -146,11 +146,11 @@ and new caret cells. The in-place Inventory service uses the same incremental-ca
 approach; it redraws the list only after `use` because story code may have
 changed inventory contents.
 
-Loading reads and validates the complete `Sn` record into `$A000-$A4E8`.
+Loading reads and validates the complete `Sn` record into `$A000-$A479`.
 The browse overlay then returns before the room transition starts. This order
-is mandatory: `platform_room_enter()` uses `$A000` for room staging and
-`$A4E9` for room-code staging, so calling it while the save/load overlay was
-still executing at `$A4E9` caused a reset/blue-screen crash. Resident code in
+is mandatory: `platform_room_enter()` uses `$2400` for room staging and
+`$B000` for room-code staging, so calling it while the save/load overlay was
+still executing at `$B000` would overwrite its code. Resident code in
 `src/saveload_runtime.c` now copies the decoded game state and journal to
 their permanent locations, disables the leaving-room capture hook, enters
 the saved room, restores the hook, sets `GAME_ENTRY_LOAD`, and invokes the
@@ -159,14 +159,14 @@ room's `enter_room()` and `enter_tile()` hooks.
 ## Save/load overlay
 
 The implementation uses two independently linked overlays because their
-combined UI and disk code does not fit the shared 4,119-byte window:
+combined UI and disk code does not fit the shared 4 KiB window:
 
 - `modules/saveload.c` (`SL`) provides the slot browser and full Load read;
 - `modules/saveload_save.c` (`SV`) provides name entry, encoding, Save,
   readback verification, and index update.
 
-They temporarily own `$A4E9-$B4FF`, the rebuildable render/lighting RAM that
-used to host Inventory too, and never run together. `SL` is stored in
+They temporarily own `$B000-$BFFF`, the rebuildable render/lighting RAM, and
+never run together. `SL` is stored in
 EasyFlash bank 48 ROML. `SV` is stored in bank 47 ROMH. Each has a 16-byte
 header (ABI 1) validated by the generic resident overlay loader
 (`platform_overlay_load()`,
@@ -186,8 +186,7 @@ in place, so no second 16-byte name buffer or copy-back loop is needed. Its
 measured header/code/RODATA/BSS footprint is 4,001 bytes. The build passes
 `SAVELOAD_SAVE_MAX_FOOTPRINT` (default `$0FE0`, 4,064 bytes) to the overlay
 finalizer, which counts BSS as well as file-backed bytes and fails the build
-if `SV` consumes the 32-byte relocation reserve in a future `$B000-$BFFF`
-window.
+if `SV` consumes the 32-byte reserve in the `$B000-$BFFF` window.
 
 Inside the overlays, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
 `CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with
@@ -215,8 +214,8 @@ runtime purely for save storage.
 ## Capacity policy
 
 The global journal and v1 file format both support 200 changed object slots.
-The maximum record is 1,146 bytes and fits in the 1,257-byte `$A000-$A4E8`
-room-staging area. Type 0 slots cost a record just like additions or movement.
+The maximum record is 1,146 bytes and fits at `$A000-$A479`. Type 0 slots cost
+a record just like additions or movement.
 When the journal is full, save-aware mutations and room transitions fail
 without discarding prior state. Future formats can compact known one-shot
 items into game flags while retaining v1 load compatibility.

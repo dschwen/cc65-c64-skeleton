@@ -34,37 +34,36 @@ room-transition logic even when a graphic extends in several directions.
 
 | Address/range | Owner |
 |---|---|
-| `$0400-$07E7` | screen matrix |
-| `$07F8-$07FF` | eight sprite pointers |
-| `$2000-$27FF` | tile charset |
-| `$2800-$2FFF` | text charset |
+| `$2000-$23FF` | current-room RAM |
+| `$2400-$27FF` | destination-room staging |
+| `$2800-$2BFF` | sparse world-delta journal |
+| `$2C00-$2EFF` | ordinary resident BSS |
+| `$2F00-$2FFF` | compact resident helpers and rain/water setup code |
 | `$3000-$38FF` | tiles and tile properties |
 | `$3900-$39FF` | compact read-only lookup tables |
-| `$3A00-$3BFF` | eight 64-byte sprite bitmap slots; look cursor uses slot 0 |
+| `$3A00-$3BFF` | independently loaded native/SID/text/validator module |
 | `$3C00-$7FFF` | platform code and read-only tables |
-| `$8000-$84E8` | current-room region (1,001-byte `PlatformRoom` plus 256 bytes of reserved load-image slack) |
-| `$84E9-$855C` | reserved load-image space formerly used by `GameState` |
-| `$855D-$85FF` | compact native resident helpers |
+| `$8000-$85FF` | file-backed fill; hidden by cartridge ROM during banked calls |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A4E8` | destination-room staging (1,001-byte `PlatformRoom`; like `$8000-$84E8`, the linker region is still sized 1,257 bytes, so `script_resource_kind` - src/script_runtime.c - borrows one of the 256 otherwise-unclaimed slack bytes rather than costing BSSRAM, which has none free) |
-| `$A4E9-$B4FF` | rebuildable work RAM; remaining loaded overlays while active |
-| `$B500-$B7DD` | ordinary resident BSS; `$B7DE-$B80C` is the free region tail |
-| `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
-| `$BA00-$BBFF` | free (the software stack moved to `$C000`) |
-| `$BC00-$BFFF` | sparse room-object delta journal |
+| `$A000-$A479` | save-record/index scratch |
+| `$B000-$BFFF` | rebuildable work RAM, staging, or one copied overlay |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | persistent `GameState` |
 | `$C174-$C178` | in-place Inventory service state |
 | `$C180-$CFFD` | hot object-type records 0-105 |
 | `$D000-$DFFE` | hot object-type records 106-222 beneath I/O |
 | `$E000-$E482` | hot object-type records 223-255 beneath KERNAL |
+| `$E800-$EFFF` | tile charset in VIC bank 3 |
+| `$F000-$F7FF` | text charset in VIC bank 3 |
+| `$F800-$FBFF` | screen matrix and sprite pointers |
+| `$FC00-$FDFF` | cursor/portrait/rain sprite data |
 
 The platform preallocates:
 
-- one 1,001-byte `PlatformRoom` (in a 1,257-byte linker region - see the memory map above);
+- one 1,001-byte `PlatformRoom` in a 1 KiB linker region;
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
 - 256 resident 35-byte hot object-type records (8,960 bytes), with names and
@@ -175,7 +174,7 @@ leaving-room baseline is current; the restore hook runs on the staged
 destination and may reject it before commit. Any non-`PLATFORM_OK` result
 aborts the transition without removing the current player.
 
-Call `platform_init()` once before other platform APIs. It selects VIC bank 0,
+Call `platform_init()` once before other platform APIs. It selects VIC bank 3,
 sets border/background black, selects the tile charset, installs the raster IRQ,
 and initializes the platform. Room `00` and types 0-1 baked into the PRG are a
 placeholder fallback for the (unexpected) case where the EasyFlash cartridge
@@ -651,7 +650,7 @@ than 40 characters. When output needs a third line, the pager waits for a
 fresh press and release, moves the lower line to the upper line, clears the
 lower line, and continues. Explicit carriage returns and line feeds also
 advance through the same pager. The implementation is an assembly module
-whose helper block loads at `$B80D`; the pager entry remains `$B880`.
+whose helper block loads at `$3A00`; the pager entry remains `$3A73`.
 
 The lower-level `platform_text_write_line()` call remains available for
 fixed-position UI and clips at column 40; it does not invoke wrapping or
@@ -816,10 +815,10 @@ prior state (the portrait code goes through `env_disable()`/`env_enable()`
 instead - see "Room environment module" below - rather than calling this
 directly).
 
-The shared streak bitmap occupies `$3B80-$3BBF`; all seven sprite pointers
-point at it (`$EE`), since the bitmap is static and only sprite position
-changes. The otherwise-unused slot-7 bytes at `$3BC0-$3BFF` hold the compact
-per-frame advance/respawn code.
+The shared streak bitmap occupies `$FD80-$FDBF`; all seven sprite pointers
+point at it (`$F6`, relative to VIC bank 3). It is initialized procedurally
+once, and only sprite position changes. Compact rain/water setup code lives at
+`$2FA0-$2FE1`; `$FDC0-$FDFF` remains an unused sprite slot.
 
 EasyFlash storage reserves banks 49-56 (8 KiB ROML mode, 32 portraits per
 bank) for the full 256-ID range, mirroring the room asset layout's fixed
@@ -840,7 +839,7 @@ offset 9  JMP env_disable  - pause (e.g. a portrait/conversation)
 ```
 
 This is reserved, always-resident RAM (`ENVCODE_BASE`, `$7E00-$7FFF` -
-`src/platform.inc`/`cfg/myc64.cfg`), never a banked `$A4E9`-style overlay:
+`src/platform.inc`/`cfg/myc64.cfg`), never a copied `$B000` overlay:
 the raster IRQ calls `env_tick` every frame via `weather_animate`
 (`src/irq.s`), and interrupt code can never bank-switch to reach a room's
 own EasyFlash bank to fetch it fresh. Instead, the *whole module* - init,
@@ -1069,8 +1068,9 @@ in that interval. The exact per-ID access policy and the alternative
 `$8000-$BFFF` layout are documented in `EASYFLASH_CARTRIDGE.md`.
 
 The bottom-of-map branch also animates tile charset character 14. After the
-VIC switches to the text charset, it rotates all eight bytes at `$2070-$2077`
-left by one bit, wrapping each byte's bit 7 into bit 0. Water-property tiles 2,
+VIC switches to the text charset, it rotates an eight-byte `LOWBSS` shadow and
+writes the result to `$E870-$E877`, wrapping each byte's bit 7 into bit 0.
+This avoids reading charset RAM while KERNAL is mapped. Water-property tiles 2,
 3, and 21 all use character 14 in every quadrant. A one-byte frame divider
 runs the rotation every second bottom split: 25 updates/second on PAL and 30
 updates/second on NTSC.

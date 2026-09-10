@@ -6,7 +6,7 @@
 /* Independently linked save-detail overlay ("SV"): name entry, record
  * encode, and the disk write for the slot chosen by the browse overlay
  * (modules/saveload.c, "SL") -- a separate overlay because the two
- * together do not fit the shared 4119-byte $A4E9 RAM window. See
+ * together do not fit the shared 4 KiB `$B000` RAM window. See
  * SAVE_GAME.md. Same constraints as modules/saveload.c: no runtime
  * library, so no memcpy/memset, no library string/number formatting, no
  * division/modulo by a non-power-of-two, and no storing a 16-bit value
@@ -34,12 +34,12 @@
 #define FILE_I 0x49u
 #define FILE_S 0x53u
 
-#define SCREEN        ((uint8_t*)0x0400)
+#define SCREEN        ((uint8_t*)0xf800)
 #define COLOR         ((uint8_t*)0xd800)
 #define SCREEN_COLS   40u
 #define SCREEN_ROWS   25u
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
-#define NAME_SCREEN   ((uint8_t*)0x059f)
+#define NAME_SCREEN   ((uint8_t*)0xf99f)
 
 void platform_memory_kernal(void);
 void platform_memory_game(void);
@@ -54,7 +54,7 @@ void platform_disk_read_block(void);
 void platform_disk_write_block(void);
 void platform_disk_index_write_block(void);
 
-/* The full 1,146-byte record uses room-stage RAM at $A000. Preserve the
+/* The full 1,146-byte record uses save scratch RAM at $A000. Preserve the
  * browser's 146-byte index here before record encoding overwrites it. Name
  * entry edits the selected index entry directly; keeping a second 16-byte
  * name copy wastes scarce overlay RAM and would only need copying back. */

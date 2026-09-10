@@ -17,7 +17,7 @@ SEGMENT = re.compile(
 
 def overlay_payload(path: Path, magic: bytes) -> bytes:
     raw = path.read_bytes()
-    if len(raw) < 18 or int.from_bytes(raw[:2], "little") != 0xA4E9:
+    if len(raw) < 18 or int.from_bytes(raw[:2], "little") != 0xB000:
         raise ValueError(f"{path}: invalid overlay load address or size")
     payload = raw[2:]
     if payload[0] != 0x4C or payload[3:5] != magic:

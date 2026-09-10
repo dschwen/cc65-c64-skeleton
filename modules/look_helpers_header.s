@@ -3,7 +3,7 @@
 .import _look_helpers_overlay_run
 
 .segment "LOADADDR"
-    .word $a4e9
+    .word $b000
 
 .segment "LOOKHELPERSHEADER"
     jmp _look_helpers_overlay_run

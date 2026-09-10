@@ -10,7 +10,7 @@
  * banked-in code, so there is no risk of this overlay's load overwriting a
  * room's code while it is still executing. (platform_room_object_add() is
  * NOT here: platform_room_enter() calls it after staging the destination
- * room's code at $A4E9, so moving it into a same-address overlay would
+ * room's code at `$B000`, so moving it into a same-address overlay would
  * clobber that staged room code before it runs.)
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
@@ -76,7 +76,7 @@ static uint8_t room_helpers_neighbor(void) {
  * since dirty_cells/dirty_x/dirty_y (src/platform.c) are plain resident BSS,
  * not WORKBSS. Does NOT call redraw_dirty() or platform_lighting_rebuild()
  * itself: both read and write platform_base_colors/platform_brightness,
- * which live in WORKBSS - the same $A4E9 memory this overlay's own compiled
+ * which live in WORKBSS - the same `$B000` memory this overlay's own compiled
  * code occupies right now, while this function is running from it. A read
  * there would return this overlay's own bytes instead of real data; a write
  * (redraw_dirty() makes one, to platform_base_colors) would overwrite this
@@ -84,7 +84,7 @@ static uint8_t room_helpers_neighbor(void) {
  * not just a wrong color, since the overlay is still executing through that
  * same memory. Reports back through room_helpers_emitted_light instead, so
  * platform_room_object_remove() (src/platform.c) can do both calls safely
- * after this overlay has returned and $A4E9 is free again. Found live as
+ * after this overlay has returned and `$B000` is free again. Found live as
  * colorful full-screen corruption after Take, whenever the removed object
  * emitted light. */
 static uint8_t room_helpers_object_remove(void) {

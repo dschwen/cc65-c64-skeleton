@@ -181,9 +181,9 @@ The current cartridge instead treats the working PRG as its payload:
 7. It copies a position-independent second-stage loader to `$C000` and jumps
    there before selecting bank 1 through `$DE00`.
 8. The RAM stage copies banks 1 and 2 into contiguous destination RAM.
-9. It writes a small disable-and-jump trampoline into screen RAM at `$0400`.
+9. It writes a small disable-and-jump trampoline into free low RAM at `$0400`.
 10. The trampoline disables EasyFlash and jumps to cc65 startup at `$080D`.
-11. The game clears screen RAM during its normal initialization.
+11. The game initializes its bank-3 screen RAM at `$F800` normally.
 
 The trampoline is necessary because an instruction following `sta $DE02`
 could no longer be fetched from ROML after the cartridge is disabled.
@@ -382,9 +382,8 @@ room or `GameState` instead of cartridge assets. With `$37`, BASIC ROM hides
 the C stack and BSS at `$A000-$BFFF`, so runtime ROML copying is a stackless
 assembly operation using only the hardware stack, zero page, and low DATA.
 Writes through BASIC or KERNAL ROM reach underlying RAM. The `$D000-$DFFF`
-object-type quarter is first staged at `$A4E9`, then copied with all RAM mapped
-through `$B4E8`, then copied with all RAM mapped so I/O registers are not
-written. Gameplay mapping `$35` is restored after
+object-type middle zone is first staged at `$B000-$BFFE`, then copied with all
+RAM mapped so I/O registers are not written. Gameplay mapping `$35` is restored after
 the cartridge is disabled. The copy path:
 
 1. disable IRQs and remember the previous interrupt state;
@@ -406,18 +405,18 @@ copies the selected `CXX` overlay to staging without touching the C stack or
 BSS, both of which ROMH temporarily hides. ROML room and object-type assets use
 the same native copier with an `$8000` source base. See `ROOM_CODE_API.md`.
 
-Active room code does **not** run from `$A4E9`. `game_room_code_prepare()`
+Active room code does **not** run from `$B000`. `game_room_code_prepare()`
 (`src/room_runtime.c`) copies and validates the destination room's code at
-`$A4E9` only as scratch; `game_room_code_activate()` then `memcpy`s the
+`$B000` only as scratch; `game_room_code_activate()` then `memcpy`s the
 validated bytes to `$9900` (`ROOM_CODE_BASE`), where the room's
 `enter_room()`/`enter_tile()`/`look()`/`use()` handlers actually live and run
-for as long as that room stays current. `$A4E9` is only unsafe for another
+for as long as that room stays current. `$B000` is only unsafe for another
 overlay to load into during the few instructions inside
 `platform_room_enter()` between `prepare()` and `activate()` - that's the
 window `platform_room_object_add()` runs in, which is why it stays resident.
 It is *not* unsafe for anything called from a room's own already-active
 `$9900` code, since by the time that code runs, `activate()` has already
-freed `$A4E9`. (`platform_room_clear()`/`object_transfer()`/
+freed `$B000`. (`platform_room_clear()`/`object_transfer()`/
 `transition_check()` still have no real callers to verify against, so
 they're undecided, not confirmed-unsafe - don't assume "might be called from
 room code" alone rules them out.)
@@ -425,7 +424,7 @@ room code" alone rules them out.)
 The inventory UI and global story-specific item-use code form an independently
 linked, execute-in-place service. `tools/pack_easyflash.py` puts its raw linked
 bytes at bank 48 ROMH offset zero (`$A000` at run time). Pressing `I` enters it
-through the resident far-call stub; no code is copied to `$A4E9`, so the
+through the resident far-call stub; no code is copied to `$B000`, so the
 render/lighting work buffers survive the UI unchanged. Five mutable UI bytes
 live at `$C174-$C178`, immediately after `GameState`. Item names use a nested
 far call to the bank-47 type-info service, which fetches its cold record from
@@ -662,15 +661,23 @@ room is fully drawn, the transition resynchronizes `$D018` and the next compare,
 then restores the previous VIC interrupt-enable state. Suspend/resume is
 depth-counted.
 
+The VIC display is deliberately in bank 3: tile/text charsets at
+`$E800/$F000`, screen at `$F800`, and sprite data at `$FC00`. A tested bank-2
+layout was rejected because the VIC saw EasyFlash ROMH in place of charset RAM
+while Inventory executed from ROMH, producing corrupted text despite correct
+underlying RAM. In bank 3 the VIC sees RAM beneath KERNAL independently of the
+CPU. IRQ animation keeps a low-RAM shadow of the water glyph because CPU reads
+from `$E800-$FFFF` still see KERNAL during disk calls.
+
 The IRQ itself also treats late entry on lines 1-225 as a missed top event and
 lines 227-311 as a bottom event, rather than waiting almost a complete frame.
 
 The executable image also contains an independently linked resident helper and
 bottom-text module after the main payload in bank 2. The RAM-resident bootstrap
-copies it to `$B80D-$B9FC` before disabling EasyFlash; the pager's fixed entry
-remains `$B880`. Disk builds load the same `build/text.prg` as a second file,
+copies it to `$3A00-$3BEF` before disabling EasyFlash; the pager's fixed entry
+remains `$3A73`. Disk builds load the same `build/text.prg` as a second file,
 so neither format requires zero padding from the end of resident code to
-`$B80D`.
+`$3A00`.
 
 VICE can persist EasyFlash modifications back into the attached CRT on exit.
 Do not leave an emulator attached to `build/game.crt` while rebuilding it: a
@@ -686,7 +693,7 @@ program and asset banks before `cartconv` creates the CRT.
 
 Full room rendering uses an assembly blitter instead of 880 individual C cell
 writes. It streams room tile IDs, indexes eight-byte definitions at `$3000`,
-and write the four characters and colors directly to `$0400` and `$D800` while
+and write the four characters and colors directly to `$F800` and `$D800` while
 maintaining pointers to two adjacent screen rows.
 
 Those destinations are self-modifying operands. Both the left and right

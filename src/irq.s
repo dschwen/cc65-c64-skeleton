@@ -31,13 +31,13 @@ RAM_NMI_VECTOR = $fffa
 RAM_RST_VECTOR = $fffc
 RAM_IRQ_VECTOR = $fffe
 
-TILE_MEMPTR    = $18       ; screen $0400, charset $2000
-TEXT_MEMPTR    = $1a       ; screen $0400, charset $2800
+TILE_MEMPTR    = $ea       ; bank 3 screen $F800, charset $E800
+TEXT_MEMPTR    = $ec       ; bank 3 screen $F800, charset $F000
 TEXT_RASTER    = 226       ; one line before row 22's badline
-WATER_CHAR     = $2000 + 14 * 8
-SPRITE_POINTERS = $07f8
-RAIN_BITMAP     = $3b80
-RAIN_POINTER    = RAIN_BITMAP / 64
+WATER_CHAR     = $e800 + 14 * 8
+SPRITE_POINTERS = $fbf8
+RAIN_BITMAP     = $fd80
+RAIN_POINTER    = (RAIN_BITMAP - $c000) / 64
 RAIN_MASK       = $fe      ; sprites 1-7; portraits borrow 1-5 (mutually exclusive with rain)
 RAIN_COUNT      = 7
 RAIN_STEP       = 20
@@ -73,6 +73,11 @@ rain_x_hi: .res RAIN_COUNT+1   ; sprite X's 9th X-position bit (0 or 1)
 rain_y: .res RAIN_COUNT+1
 rain_seed: .res 1
 rain_setup_hook: .res 2
+; Authoritative water glyph bytes stay below $8000. During KERNAL disk I/O,
+; CPU reads at $E000-$FFFF see ROM even though writes still reach RAM and the
+; VIC still sees that RAM. The IRQ therefore rotates this copy and only writes
+; the result to WATER_CHAR; it never reads the charset through KERNAL ROM.
+water_bitmap: .res 8
 platform_raster_irq_suspend_depth: .res 1
 platform_raster_irq_saved_enable: .res 1
 
@@ -80,6 +85,7 @@ platform_raster_irq_saved_enable: .res 1
 
 _raster_irq_install:
     sei
+    jsr initialize_vic_assets
     lda #0
     sta _platform_frame_counter
     sta platform_text_screen_active
@@ -377,6 +383,42 @@ direct_nmi_entry:
     rti
 
 .segment "UPPERCODE"
+; One-time setup after platform_init() has fetched both charsets. The display
+; assets live beneath KERNAL and are not part of the contiguous PRG image.
+initialize_vic_assets:
+    ldx #7
+@copy_water:
+    lda WATER_CHAR,x
+    sta water_bitmap,x
+    dex
+    bpl @copy_water
+
+    ldx #0
+    lda #0
+@clear_rain_bitmap:
+    sta RAIN_BITMAP,x
+    inx
+    cpx #64
+    bne @clear_rain_bitmap
+
+    ldx #0
+    ldy #0
+    lda #$80
+@draw_rain_streak:
+    sta RAIN_BITMAP,y
+    iny
+    iny
+    iny
+    lsr
+    bne :+
+    lda #$80
+    iny
+:
+    inx
+    cpx #21
+    bne @draw_rain_streak
+    rts
+
 direct_reset_entry:
     lda #$2f
     sta CPU_DDR
@@ -566,30 +608,28 @@ rain_call_hook:
     jmp (rain_setup_hook)
 
 ; Animate water once every other frame and advance rain every frame. This
-; segment shares sprite slot 7's old bitmap storage, which is free now that
-; rain uses sprites 1-7 directly instead of multiplexing through slot 7.
+; compact segment occupies the 96-byte `$2FA0-$2FFF` helper region freed by
+; moving the display into VIC bank 3.
 weather_animate:
     lda _platform_frame_counter
     and #$01
     bne @rain
     ldx #7
 @roll_water:
-    lda WATER_CHAR,x
+    lda water_bitmap,x
     asl
     bcc :+
     ora #$01                ; wrap the old bit 7 into bit 0
 :
+    sta water_bitmap,x
     sta WATER_CHAR,x
     dex
     bpl @roll_water
 
 @rain:
-    jmp rain_advance_and_tick   ; RAINCODE (this segment) is a fixed,
-                                 ; nearly-full 64-byte area reusing old
-                                 ; sprite-slot-7 storage - no room to grow
-                                 ; here, so the actual two-call sequence
-                                 ; lives in HIGHCODE instead (just below
-                                 ; rain_advance), which has plenty.
+    jmp rain_advance_and_tick   ; Keep the actual two-call sequence in
+                                 ; HIGHCODE; RAINCODE remains a deliberately
+                                 ; small fixed helper region.
 
 _platform_rain_disable:
     lda #0

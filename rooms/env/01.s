@@ -6,7 +6,7 @@
 ; PLATFORM_API.md's "Room environment module" for the fixed 12-byte
 ; jump-table header every environment module starts with (init/tick/
 ; enable/disable), and why this must be reserved, always-RAM space rather
-; than a banked $A4E9-style overlay (the raster IRQ calls the tick vector
+; than a copied `$B000` overlay (the raster IRQ calls the tick vector
 ; every frame and can never bank-switch to reach it).
 .setcpu "6502"
 
@@ -43,13 +43,13 @@ RES_FILT    = SID+23
 MODE_VOL    = SID+24
 
 ; ---- VIC sprite registers (rain's 7 dedicated sprites, 1-7) ----
-VIC_SPRITE_POINTERS = $07f8
+VIC_SPRITE_POINTERS = $fbf8
 VIC_SPRITE_ENABLE   = $d015
 VIC_SPRITE_YEXPAND  = $d017
 VIC_SPRITE_PRIORITY = $d01b
 VIC_SPRITE_XEXPAND  = $d01d
 VIC_SPRITE0_COLOR   = $d027
-RAIN_BITMAP_POINTER = $3b80 / 64
+RAIN_BITMAP_POINTER = ($fd80 - $c000) / 64
 RAIN_SPRITE_MASK     = $fe   ; sprites 1-7
 RAIN_SPRITE_MASK_INV = $01   ; ~RAIN_SPRITE_MASK & $ff
 

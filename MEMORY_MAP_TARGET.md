@@ -23,6 +23,7 @@ happen in. Update it as steps land.
 | Inventory -> in-place bank 48 ROMH | Removed its copy/validate cycle and 32-byte selected-slot cache. Five mutable bytes live at `$C174-$C178`; the 1,315-byte code/RODATA image runs at `$A000-$A522` and nests through bank 47/46 for cold type names. |
 | Mode-aware far calls | The generated descriptor now carries CPU map and EasyFlash control separately. Type Info runs as bank 47 ROML with `$01=$37`/`$DE02=$06`; Inventory remains bank 48 ROMH with `$37`/`$07`. The validator applies the effective visibility contract. |
 | `SV` reduced below one page | Save-name editing now reuses the selected `SINDEX` entry. Header + code + RODATA + BSS fell from 4,107 to 4,001 bytes, leaving 95 bytes in a 4 KiB page; the build enforces a 4,064-byte ceiling (32-byte minimum reserve). A named save/readback/load round-trip passed in VICE. |
+| Atomic VIC/layout migration | VIC bank 3 now owns `$E800-$FDFF`; room/staging/journal/BSS moved below `$3000`; the text module moved to `$3A00`; all copied overlays and rebuildable work data use `$B000-$BFFF`. PAL and NTSC VICE traces cover the new paths. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -97,8 +98,8 @@ loaders for that combination:
 | `game_enter_room()`, `platform_resource_fetch(..._ENVIRONMENT...)` | `ENVCODE_BASE` (`$7E00-$7FFF`) | Yes - `weather_animate` jumps into `ENVCODE_TICK` every frame | The one real hazard - now always called from inside a bracket (see above) |
 | `platform_init()`'s three boot `platform_resource_fetch(..._ASSET...)` calls (charsets, tiles) | `charset_tile`/`charset_text`/`tile_data` | N/A | Run before `raster_irq_install()` - no IRQ exists yet to race |
 | `modules/script.c`'s `platform_resource_fetch_range()` (windowed script reader) | private resident script buffer | No | Not IRQ-touched; also has no checksum step at all (documented: range fetches don't verify checksums) |
-| `platform_overlay_load()` (room-helpers, look-helpers, script, saveload, saveload-save overlays) | `$A4E9` staging / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
-| Room/object-type EasyFlash loaders (`platform_room_load`, `platform_object_types_load`, `room_code_prepare_easyflash`) | `platform_room`, object-type tables, `$A4E9` room-code staging | No | Same - not IRQ-touched |
+| `platform_overlay_load()` (room-helpers, look-helpers, script, saveload, saveload-save overlays) | `$B000` overlay window / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
+| Room/object-type EasyFlash loaders (`platform_room_load`, `platform_object_types_load`, `room_code_prepare_easyflash`) | `platform_room`, object-type tables, `$B000` staging | No | Same - not IRQ-touched |
 | `platform_object_type_info_get()` (in-place `FAR_CALL`) | `platform_object_type_info_scratch` (`LOWBSS`) | No | Not IRQ-touched; also human-input-paced only per its own doc comment |
 | Inventory UI (in-place `FAR_CALL`) | screen/color RAM and `$C174-$C178`; reads `GameState` | No | IRQ stays active; no dependency on `$8000-$BFFF` RAM |
 
@@ -370,8 +371,8 @@ unpredictable rather than a specific fixed glitch.
 (`src/platform.c`) are deliberately placed in `WORKBSS` to save resident RAM
 (`MEMORY_MAP_TARGET.md`'s own earlier note: "already rebuilt rather than
 persistent" - a known, accepted trade-off pending the future VIC-bank-move
-work). `WORKBSS` occupies `$A4E9-$ACA7` - the *same physical memory* every
-`$A4E9`-style overlay (room-helpers, look-helpers, script/conversation/room-
+work). `WORKBSS` now occupies `$B000-$B7BE` - the *same physical memory* every
+`$B000` overlay (room-helpers, look-helpers, script/conversation/room-
 text, inventory, save/load) is staged into and runs from. Two call chains
 touch these arrays **from inside an overlay's own execution**, not from
 resident code:
@@ -428,7 +429,7 @@ script text):
   `room_helpers_emitted_light`. `platform_room_object_remove()`
   (`src/platform.c`) now calls `redraw_dirty()` and, conditionally,
   `platform_lighting_rebuild()` itself, after `platform_overlay_run_native()`
-  has returned and `$A4E9` is free again.
+  has returned and `$B000` is free again.
 
 Moving `platform_room_object_remove()` into `UPPERCODE` (it and
 `platform_look_tile_check()`'s prefetch both grew `HIGHCODE` past its
@@ -646,81 +647,61 @@ call still pays fixed transition overhead, so **bank whole operations, not
 inner-loop helpers**; a long banked operation also still blocks foreground
 gameplay even though display timing continues.
 
-## Former layout blocker, now cleared
+## Layout bridge completed
 
-The VIC bank move (screen and sprites to `$8000-$85FF`, charsets to
-`$A000-$AFFF`, freeing `$2000-$2FFF` and `$3A00-$3BBF` below `$8000`) does not
-currently fit. Evacuating those two ranges means rehoming:
+The blocked relocation is now implemented as one atomic map change:
 
-| Block | Size |
-|---|---:|
-| `ROOMRAM` + `STATEEXT` (`$8000-$85FF`) | 1,536 |
-| `ROOMSTAGE` (`$A000-$A4E8`) | 1,257 |
-| overlay window (`$A4E9-$B4FF`, must stay contiguous) | 4,119 |
-| **total** | **6,912** |
+- VIC bank 3 owns `$E800-$FDFF` (charsets, screen, pointers, sprites).
+- `PlatformRoom`, room staging, `WORLDDELTA`, BSS, and compact helpers moved
+  into the freed `$2000-$2FFF` space.
+- the native/text/validator module moved to `$3A00-$3BEF`;
+- renderer `WORKBSS`, object-type staging, room-code staging, and every copied
+  overlay now share the page-aligned `$B000-$BFFF` window;
+- the 4,001-byte `SV` image leaves 95 bytes in that page, with a stricter
+  4,064-byte build ceiling retaining 32 bytes of policy reserve.
 
-Available is ~1,792 left in the window after the VIC takes its share plus
-~4,851 below `$8000` (including what the move itself frees) = **6,643**. The
-original arrangement was short by roughly 270 bytes. Moving `WORLDDELTA` out
-lets the overlay window sit at `$B000-$BFFF`; that was initially blocked
-because the 4,107-byte save-detail overlay exceeded the page by 11 bytes.
+An intermediate bank-2 design put the screen at `$8000` and charsets at
+`$A000`. It linked and the underlying RAM tested correctly, but Inventory's
+16 KiB ROMH mapping changed what the VIC itself fetched at `$A000`, producing
+garbled text. The final bank-3 design avoids the cartridge window entirely.
+The VIC still reads RAM beneath KERNAL, while IRQ water animation reads its
+source from an eight-byte low-RAM shadow so CPU-side KERNAL mapping is safe.
 
-That immediate blocker is now cleared: `SV` occupies 4,001 bytes, leaving 95
-bytes in a 4 KiB page, and its build ceiling is 4,064 bytes. The relocation
-itself is still pending: `WORLDDELTA`, every overlay linker configuration,
-the resident loader constants, and all documented ownership boundaries must
-move together before the VIC layout changes.
+PAL VICE has exercised Inventory in bank 48 ROMH, Type Info's nested 8 KiB
+far call, `LH`, `SC`, the relocated text pager, both save overlays with an
+actual named save/load round trip, and `RH` at `$B1E7`. NTSC produces a clean
+Inventory frame while the frame counter advances. The tests inspect `$01`,
+`$DD00`, `$D018`, `$DE00/$DE02`, overlay headers, screen/charset bytes, and
+saved state rather than relying only on screenshots.
 
-The answer is not to find 270 bytes: it is to **delete the overlay window**,
-which is 4,119 bytes of RAM whose only job is holding a copy of code that
-already exists in a bank.
+## Remaining redesign order
 
-## Order of remaining work
+1. Keep Inventory as the in-place reference implementation and retain copied
+   overlays as the compatibility path. The atomic move removes the immediate
+   memory collision; it does not prove that every overlay can execute in ROM.
+2. Move additional renderer/service mutable data below `$8000` only when a
+   complete map-derived dependency closure fits. `RH` still follows resident
+   pointers into the room and renderer state; a code-only conversion remains
+   unsafe.
+3. Convert only coarse, value-oriented services. A candidate must include its
+   C stack, globals, literals, runtime helpers, nested callees, and IRQ-visible
+   state. Validate PAL and NTSC and force at least one IRQ during its banked
+   execution.
+4. Remove `$B000-$BFFF` as an overlay window only after `SC`, `SL`/`SV`, and
+   `LH`/`RH` no longer use it. Until then its temporal ownership contract is
+   simpler and safer than fine-grained bank switches or hidden copies.
 
-1. **Inventory is the completed pilot service island.** `RH` was audited first
-   as planned, but cannot run under the present 16 KiB far-call map: it follows
-   `room_helpers_room` into `platform_room` at `$8000` and reads
-   `rendered_room`/`rendered_object_limit` at `$B7xx`, all hidden by ROM. A
-   direct resident rewrite was also measured and rejected: it overflowed
-   `UPPER` by 60 bytes. Keeping the current overlay is safer than disguising
-   those dependencies behind copies or numerous fine-grained far calls.
-2. **Mode-aware far calls are complete, with an important negative result.**
-   Type Info now runs in 8 KiB ROML mode and nested bank restoration is proven,
-   but `$A000-$BFFF` is BASIC ROM, not RAM. PAL and NTSC VICE traces forced an
-   IRQ while bank 47/control `$06` was active, observed the nested bank
-   46/control `$07` copy, then the exact unwind through bank 47, bank 48, and
-   normal `$35`/off state. The render buffer at `$A4E9` was unchanged. This
-   closes the trampoline milestone but invalidates the old proposed `SC`/`SL`
-   conversion order.
-3. **The size half of the layout bridge is complete.** `SV` is now 4,001
-   bytes including header and BSS, 95 bytes below one 4 KiB page. Reusing its
-   selected index entry removed 106 bytes, and the finalizer enforces a 4,064
-   byte ceiling so at least 32 bytes remain. PAL VICE exercised F1 -> slot 0
-   -> name `TEST` -> Save, full record readback, `SINDEX` update, then F3 ->
-   slot 0 -> Load. The 146-byte files were present and the load restored a
-   deliberately changed health byte from 1 to 100; `$01`, EasyFlash bank and
-   control returned to `$35`/0/`$04`, the pending flag cleared, and the frame
-   counter advanced. The remaining half of this step is to move `WORLDDELTA`
-   and the common overlay window to `$B000-$BFFF` as one layout change.
-4. Perform the **VIC bank move**, freeing `$2000-$2FFF` and `$3A00-$3BBF`
-   below `$8000`. Keep the copy-to-RAM overlays operational during this step;
-   it is a layout migration, not yet an overlay deletion.
-5. **Move the renderer's hot data** into the newly freed always-visible area.
-   Measured need: `platform_room`
-   1,373 + `platform_base_colors` 880 + `platform_brightness` 220 +
-   `platform_light_visibility` 220 + `platform_view_tiles` 220 + scratch and
-   `rendered_*`/`native_*` ~60 = **~4,350**, against ~4,850 available. Note
-   `base_colors` and `brightness` currently live in `WORKBSS`, i.e. inside the
-   overlay window, so they are already rebuilt rather than persistent.
-6. **Convert `SC`, then `SL`/`SV`, `LH`/`RH`, and finally the renderer** as
-   coarse service calls only after each service's complete mutable-data closure
-   is below `$8000` or in `$C000-$CFFF`. Keep APIs value-oriented and pass each
-   module through the validator plus PAL/NTSC emulator regressions.
+## Build-system limitation: D64 is not cartridge-equivalent
 
-Only after every user of `$A4E9-$B4FF` has been converted can the overlay
-window be removed and the previously circular dependency break. Keep the
-copy-to-RAM path until then as the compatibility path; mixing the two models
-module-by-module is safer than one large migration.
+`make d64` builds successfully, but the runtime resource layer is EasyFlash
+only. The disk image packages rooms, object types, portraits, and room code,
+yet `platform_resource_fetch()`, copied-overlay loading, and room-code loading
+do not have disk backends. Static charsets/tiles are BSS destinations populated
+only when the EasyFlash boot marker is present. A headless D64 smoke run returns
+to BASIC rather than reaching a playable room. Treat `make cartridge` as the
+complete build until a disk resource directory/loader and banked-service
+substitutes are designed; merely adding the missing `RA` files to the D64 does
+not make the engine consume them.
 
 ## Dead ends, recorded so they are not retried
 

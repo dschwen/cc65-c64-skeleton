@@ -3,7 +3,7 @@
 .import _saveload_overlay_run
 
 .segment "LOADADDR"
-    .word $a4e9
+    .word $b000
 
 .segment "SAVELOADHEADER"
     jmp _saveload_overlay_run

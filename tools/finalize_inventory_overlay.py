@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch and validate an independently linked $A4E9-window overlay."""
+"""Patch and validate an independently linked $B000-window overlay."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from pathlib import Path
 SEGMENT = re.compile(
     r"^(BSS)\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+([0-9A-F]{6})\s+"
 )
-LOAD_ADDRESS = 0xA4E9
-MAX_BYTES = 0x1017
+LOAD_ADDRESS = 0xB000
+MAX_BYTES = 0x1000
 HEADER_BYTES = 16
 ABI_VERSION = 1
 DEFAULT_MAGIC = "IU"
@@ -21,7 +21,7 @@ DEFAULT_MAGIC = "IU"
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Patch and validate a $A4E9-window loaded overlay "
+        description="Patch and validate a $B000-window loaded overlay "
                      "(inventory/story, save/load, ...)."
     )
     parser.add_argument("--input", type=Path, required=True)

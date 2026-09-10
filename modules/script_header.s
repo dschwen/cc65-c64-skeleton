@@ -3,7 +3,7 @@
 .import _script_overlay_run
 
 .segment "LOADADDR"
-    .word $a4e9
+    .word $b000
 
 .segment "SCRIPTHEADER"
     jmp _script_overlay_run

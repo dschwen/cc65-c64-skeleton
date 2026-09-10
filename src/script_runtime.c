@@ -139,7 +139,7 @@ static void run_loaded_overlay(void) {
      * honest reason (see this function's earlier comment); this one didn't.
      * platform_lighting_repair() is not a no-op either, though:
      * platform_base_colors/platform_brightness live in WORKBSS, the same
-     * $A4E9 memory this overlay's own code just occupied, so both arrays are
+     * `$B000` memory this overlay's own code just occupied, so both arrays are
      * now holding the overlay's leftover bytes, not real lighting/color data
      * (the same hazard fixed for Take/Look's darkness check this session -
      * see MEMORY_MAP_TARGET.md's "Color RAM corruption" section). Color RAM

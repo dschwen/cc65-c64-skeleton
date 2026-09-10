@@ -146,7 +146,7 @@ void game_wait_fresh_key(void) {
  * game_transition_message_show()/game_transition_reveal() below. */
 void game_transition_show_message(const char* text) {
     platform_screen_blank();
-    memset((void*)0x0400, platform_text_screen_code(' '), 920u);
+    memset((void*)0xf800, platform_text_screen_code(' '), 920u);
     memset((void*)0xd800, 0, 920u);
     game_text_write(PLATFORM_TEXT_LINE_TOP, text, 1u);
     platform_screen_unblank();

@@ -25,13 +25,15 @@ make
 Outputs:
 - `build/game.prg`
 - `build/text.prg`
-- `build/IV` (inventory UI and story-specific item-use overlay)
+- `build/IV` (inventory UI and story-specific in-place cartridge service)
 - `build/game.map`
 - `build/game.lbl`
 
 `game.prg` is the resident engine and `text.prg` is the independently loaded
-bottom-text pager. Use the D64 or cartridge target to run the complete game;
-the engine PRG alone deliberately does not contain a padded copy of the pager.
+bottom-text pager. The cartridge target is the complete runtime. The D64 target
+currently exercises the legacy disk bootstrap/fallback path; it packages room
+files but the engine does not yet provide a disk-backed replacement for the
+EasyFlash resource and banked-service APIs.
 
 Build disk image:
 ```bash
@@ -45,8 +47,8 @@ Output:
   object-type assets
 
 The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
-address, loads the helper/text module `TEXT` at `$B80D`, and then enters cc65
-startup at `$080D`. The `IV` overlay is loaded on demand when inventory opens.
+address, loads the helper/text module `TEXT` at `$3A00`, and then enters cc65
+startup at `$080D`. Inventory executes in place from EasyFlash bank 48 ROMH.
 
 Build an EasyFlash cartridge image:
 ```bash
@@ -68,7 +70,7 @@ Output:
 ## Run
 Run via Makefile targets:
 ```bash
-make run      # builds and autostarts the complete D64
+make run      # builds and autostarts the legacy D64 fallback
 make run-d64  # same explicit disk workflow
 make run-cartridge # attaches game.crt and persistent build/saves.d64
 ```

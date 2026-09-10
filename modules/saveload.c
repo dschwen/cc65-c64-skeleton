@@ -8,7 +8,7 @@
  * record format and the "Save/load overlay" architecture section, and
  * modules/saveload_save.c for the Save flow (name entry + encode + write),
  * a separate overlay because the two together do not fit this overlay's
- * shared 4119-byte RAM window. This file does not link against the cc65
+ * shared 4 KiB `$B000` RAM window. This file does not link against the cc65
  * runtime library (same constraint as modules/inventory.c): no
  * memcpy/memset, no library string/number formatting, no division/modulo
  * by a non-power-of-two.
@@ -35,7 +35,7 @@
 #define FILE_I 0x49u
 #define FILE_S 0x53u
 
-#define SCREEN        ((uint8_t*)0x0400)
+#define SCREEN        ((uint8_t*)0xf800)
 #define COLOR         ((uint8_t*)0xd800)
 #define SCREEN_COLS   40u
 #define SCREEN_ROWS   25u
@@ -47,7 +47,7 @@ void raster_irq_suspend(void);
 void raster_irq_resume(void);
 
 /* modules/disk_io.s: hand-written block I/O, not a byte-loop over small C
- * wrappers -- the C version was too large for this overlay's 4119-byte
+ * wrappers -- the C version was too large for this overlay's 4 KiB
  * window. See that file for the parameter/result convention. */
 extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
@@ -94,7 +94,7 @@ static void copy_bytes(uint8_t* dst, const uint8_t* src, uint8_t count) {
     while (count-- != 0u) *dst++ = *src++;
 }
 
-/* ---- screen helpers (direct $0400/$D800 poke, matching modules/inventory.c) */
+/* ---- screen helpers (direct $F800/$D800 poke, matching modules/inventory.c) */
 
 static void clear_screen(void) {
     uint16_t i;

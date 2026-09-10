@@ -16,7 +16,7 @@
  * overwriting code that is still executing.
  *
  * Not here: platform_look_exit() (src/platform.c) - it calls
- * platform_room_neighbor(), itself an overlay in this same $A4E9 window
+ * platform_room_neighbor(), itself an overlay in this same `$B000` window
  * (modules/room_helpers.c), so it must stay resident to call that overlay
  * sequentially without overwriting its own still-executing code. It no
  * longer shares the look_buffer/look_append machinery either - its two
@@ -145,7 +145,7 @@ static uint8_t look_helpers_tile_check(void) {
     }
 
     /* Not a read of platform_brightness[offset] here: that array lives in
-     * WORKBSS, the same $A4E9 memory this overlay's own code occupies while
+     * WORKBSS, the same `$B000` memory this overlay's own code occupies while
      * running - platform_look_tile_check() (src/platform.c) already read it
      * resident-side, before loading this overlay, into look_helpers_light.
      * See that function's own comment. */

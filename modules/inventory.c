@@ -3,7 +3,7 @@
 #include "game.h"
 #include "story.h"
 
-#define INVENTORY_SCREEN       ((uint8_t*)0x0400)
+#define INVENTORY_SCREEN       ((uint8_t*)0xf800)
 #define INVENTORY_COLOR        ((uint8_t*)0xd800)
 #define INVENTORY_VIC_CTRL1    (*(volatile uint8_t*)0xd011)
 #define INVENTORY_BODY_ROWS    23u

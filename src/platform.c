@@ -8,11 +8,11 @@
 #pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
 
-#define P_SCREEN_RAM       ((uint8_t*)0x0400)
+#define P_SCREEN_RAM       ((uint8_t*)0xf800)
 #define P_COLOR_RAM        ((volatile uint8_t*)0xd800)
-#define P_SPRITE_POINTERS  ((uint8_t*)0x07f8)
-#define P_SPRITE_DATA      ((uint8_t*)0x3a00)
-#define P_OBJECT_TYPE_STAGE ((uint8_t*)0xa4e9)
+#define P_SPRITE_POINTERS  ((uint8_t*)0xfbf8)
+#define P_SPRITE_DATA      ((uint8_t*)0xfc00)
+#define P_OBJECT_TYPE_STAGE ((uint8_t*)0xb000)
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
 #define DIRTY_BYTES        110u
 #define DIRTY_CELL_LIMIT   32u
@@ -58,9 +58,9 @@
 #define PORTRAIT_SCREEN_X       23u
 #define PORTRAIT_SCREEN_Y       49u
 #define PORTRAIT_SPRITE_DATA \
-    ((uint8_t*)(0x3a00u + PORTRAIT_FIRST_SPRITE * 64u))
+    ((uint8_t*)(0xfc00u + PORTRAIT_FIRST_SPRITE * 64u))
 #define PORTRAIT_BG_DATA \
-    ((uint8_t*)(0x3a00u + PORTRAIT_BG_SPRITE * 64u))
+    ((uint8_t*)(0xfc00u + PORTRAIT_BG_SPRITE * 64u))
 #define WALL_CACHE_QUADRANT_NW 0x01u
 #define WALL_CACHE_QUADRANT_NE 0x02u
 #define WALL_CACHE_QUADRANT_SW 0x04u
@@ -226,7 +226,7 @@ static PlatformRoom room_stage;
  * of room_commit() never touch room_stage again afterward). So the instant
  * the memcpy completes, its memory is free until the *next* transition's
  * room_stage_load(), and room_commit() below claims it immediately for this
- * instead - the same "one buffer, temporally exclusive uses" pattern $A4E9
+ * instead - the same "one buffer, temporally exclusive uses" pattern `$B000`
  * already uses across staging/overlays. Sized via sizeof(room_stage), not a
  * hardcoded constant, so it tracks PlatformRoom automatically if that
  * struct's own size ever changes. */
@@ -448,16 +448,16 @@ uint16_t platform_resource_last_size(void) {
 #pragma code-name (pop)
 
 /*
- * Generic loaded-overlay fetch, shared by the remaining $A4E9-$B4FF overlays
+ * Generic loaded-overlay fetch, shared by the remaining $B000-$BFFF overlays
  * (room/look/script and save/load): copy the fixed
  * 16-byte header from the given EasyFlash bank/half, read its declared
  * size, copy the complete payload, then hand off to the native validator
  * (src/inventory_api.s) with the requested magic bytes. Resident code
  * budget is too tight to duplicate this loader/validator per overlay.
  */
-#define OVERLAY_BASE          ((uint8_t*)0xa4e9)
+#define OVERLAY_BASE          ((uint8_t*)0xb000)
 #define OVERLAY_HEADER_BYTES  16u
-#define OVERLAY_MAX_BYTES     0x1017u
+#define OVERLAY_MAX_BYTES     0x1000u
 
 uint8_t platform_overlay_validate_native(uint16_t loaded_size);
 
@@ -493,7 +493,7 @@ uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
 
 /*
  * Room-helpers overlay ("RH"): platform_room_object_remove/platform_room_
- * neighbor's actual bodies (modules/room_helpers.c). Not every $A4E9 overlay
+ * neighbor's actual bodies (modules/room_helpers.c). Not every `$B000` overlay
  * gets its own EasyFlash bank - both halves of every bank through 48 are
  * already spoken for (rooms, object types, inventory, save/load), so this
  * one shares TYPE_BANK_1's ROML half with the object-type Zone C table
@@ -556,7 +556,7 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
  * through room_helpers_emitted_light - it must NOT call redraw_dirty() or
  * platform_lighting_rebuild() while it's still running. Both read AND write
  * platform_base_colors/platform_brightness, which live in WORKBSS - the
- * exact same $A4E9 memory this overlay's own compiled code currently
+ * exact same `$B000` memory this overlay's own compiled code currently
  * occupies while it's loaded and executing. A read there returns the
  * overlay's own bytes instead of real color/brightness data; a write (which
  * redraw_dirty() does, to platform_base_colors) overwrites the overlay's
@@ -566,7 +566,7 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
  * corruption after Take, reproducible whenever the removed object emitted
  * light (see the screenshot this was diagnosed from). Fixed by doing both
  * calls here instead, after platform_overlay_run_native() has returned and
- * $A4E9 is free again - the same "resident wrapper redraws after the
+ * `$B000` is free again - the same "resident wrapper redraws after the
  * overlay returns" pattern room-code activation and script/room-script
  * text already use. */
 #pragma code-name (push, "UPPERCODE")
@@ -643,7 +643,7 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
     /* Prefetch the tile's brightness here, resident-side, instead of letting
      * look_helpers_tile_check() (modules/look_helpers.c) read
      * platform_brightness[] itself while running: that array lives in
-     * WORKBSS, the same $A4E9 memory the LOOK_HELPERS overlay's own compiled
+     * WORKBSS, the same `$B000` memory the LOOK_HELPERS overlay's own compiled
      * code occupies once loaded, so a read from inside the overlay returns
      * the overlay's own bytes instead of real brightness data - silently
      * wrong "too dark"/"visible" judgments, found live as part of the same
@@ -885,10 +885,10 @@ void platform_init(void) {
     uint8_t cartridge;
 
     cartridge = platform_boot_is_easyflash();
-    *((volatile uint8_t*)0xdd00) |= 0x03;
+    *((volatile uint8_t*)0xdd00) &= 0xfcu;
     P_VIC(0x20) = 0;
     P_VIC(0x21) = 0;
-    P_VIC(0x18) = 0x18;
+    P_VIC(0x18) = 0xeau;
     P_VIC(0x15) = 0;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
@@ -1030,7 +1030,7 @@ uint8_t platform_object_types_load(void) {
     platform_ef_copy_size = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
 
-    /* Zone B: types 106-222, bank 46 offset 3710, staged via $A4E9 then to $D000. */
+    /* Zone B: types 106-222, bank 46 offset 3710, staged via `$B000` then to $D000. */
     platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
     platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES;
@@ -1395,7 +1395,7 @@ static void redraw_map_and_objects(const PlatformRoom* room,
 }
 
 /* Repairs platform_base_colors/platform_brightness (WORKBSS) after loading
- * an $A4E9 overlay has silently overwritten them with the overlay's own
+ * a `$B000` overlay has silently overwritten them with the overlay's own
  * code - see run_loaded_overlay() (src/script_runtime.c), the only caller.
  * Deliberately not platform_room_draw(): nothing about the room's actual
  * appearance needs to change here (the map, its objects, and visibility are
@@ -1810,7 +1810,7 @@ void platform_text_write_line(uint8_t line, uint8_t column,
  * new room) - true for every current borrower, since they all run from
  * resident code between transitions, never from inside one. Nothing
  * resident reads it between borrows (each borrower fetches whatever it
- * needs, fresh), so unlike $A4E9's overlays there's no "restore it before
+ * needs, fresh), so unlike `$B000` overlays there's no "restore it before
  * returning" contract to honor. */
 uint8_t* platform_room_scratch(void) {
     return PLATFORM_ROOM_SCRATCH_BUFFER;
@@ -1921,7 +1921,7 @@ uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
         P_SPRITE_DATA[(uint8_t)(row * 3u)] = 0x80u;
         P_SPRITE_DATA[(uint8_t)(row * 3u + 2u)] = 0x40u;
     }
-    P_SPRITE_POINTERS[0] = (uint8_t)(0x3a00u / 64u);
+    P_SPRITE_POINTERS[0] = (uint8_t)((0xfc00u - 0xc000u) / 64u);
     look_cursor_position(tile_x, tile_y);
     P_VIC(0x17) &= 0xfeu;
     P_VIC(0x1b) &= 0xfeu;
@@ -2009,11 +2009,11 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
     memset(PORTRAIT_BG_DATA, 0xffu, 63u);
     PORTRAIT_BG_DATA[63] = 0u;
 
-    P_SPRITE_POINTERS[1] = (uint8_t)(0x3a40u / 64u);
-    P_SPRITE_POINTERS[2] = (uint8_t)(0x3a80u / 64u);
-    P_SPRITE_POINTERS[3] = (uint8_t)(0x3ac0u / 64u);
-    P_SPRITE_POINTERS[4] = (uint8_t)(0x3b00u / 64u);
-    P_SPRITE_POINTERS[5] = (uint8_t)(0x3b40u / 64u);
+    P_SPRITE_POINTERS[1] = (uint8_t)((0xfc40u - 0xc000u) / 64u);
+    P_SPRITE_POINTERS[2] = (uint8_t)((0xfc80u - 0xc000u) / 64u);
+    P_SPRITE_POINTERS[3] = (uint8_t)((0xfcc0u - 0xc000u) / 64u);
+    P_SPRITE_POINTERS[4] = (uint8_t)((0xfd00u - 0xc000u) / 64u);
+    P_SPRITE_POINTERS[5] = (uint8_t)((0xfd40u - 0xc000u) / 64u);
 
     P_VIC(0x17) = (P_VIC(0x17) & 0xc1u) | 0x20u; /* Y-expand: bg sprite only */
     P_VIC(0x1b) &= 0xc1u;                        /* priority: all in front */

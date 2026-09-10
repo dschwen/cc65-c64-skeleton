@@ -2,7 +2,7 @@
 
 ; Block-oriented KERNAL sequential-file I/O for the save/load overlay,
 ; hand-written in assembly because the C equivalent (a byte loop calling
-; small CHRIN/CHROUT wrappers) was too large for the overlay's 4119-byte
+; small CHRIN/CHROUT wrappers) was too large for the overlay's 4 KiB
 ; window. Callers must map KERNAL in (platform_memory_kernal()) before
 ; using either block routine and restore gameplay mapping
 ; (platform_memory_game()) afterward.

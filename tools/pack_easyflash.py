@@ -122,10 +122,10 @@ ROOM_CODE_DIRECTORY_BANK = 3
 ROOM_CODE_DIRECTORY_BYTES = 0x800
 ROOM_CODE_FIRST_BANK = 3
 ROOM_CODE_LAST_BANK = TYPE_BANK_1
-INVENTORY_LOAD_ADDRESS = 0xA4E9
-INVENTORY_HEADER_BYTES = 16
-INVENTORY_MAX_BYTES = 0x1017
-INVENTORY_ABI = 1
+LOADED_OVERLAY_ADDRESS = 0xB000
+LOADED_OVERLAY_HEADER_BYTES = 16
+LOADED_OVERLAY_MAX_BYTES = 0x1000
+LOADED_OVERLAY_ABI = 1
 
 
 def split_object_type(record: bytes) -> tuple[bytes, bytes]:
@@ -311,20 +311,20 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
 
 
 def load_overlay(path: Path, magic: bytes) -> bytes:
-    """Load and validate an independently linked $A4E9-window overlay
-    (inventory/story, save/load, ...); see tools/finalize_inventory_overlay.py,
+    """Load and validate an independently linked $B000-window overlay
+    (room/look/script/save-load helpers); see tools/finalize_inventory_overlay.py,
     which patches the size/BSS/checksum fields this function checks."""
     raw = path.read_bytes()
-    if len(raw) < 2 or int.from_bytes(raw[:2], "little") != INVENTORY_LOAD_ADDRESS:
+    if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOADED_OVERLAY_ADDRESS:
         raise ValueError(f"{path}: invalid overlay load address")
     data = raw[2:]
-    if not INVENTORY_HEADER_BYTES <= len(data) <= INVENTORY_MAX_BYTES:
+    if not LOADED_OVERLAY_HEADER_BYTES <= len(data) <= LOADED_OVERLAY_MAX_BYTES:
         raise ValueError(f"{path}: invalid overlay size {len(data)}")
     if (data[0] != 0x4C or
-            data[3:6] != magic + bytes((INVENTORY_ABI,)) or
+            data[3:6] != magic + bytes((LOADED_OVERLAY_ABI,)) or
             int.from_bytes(data[6:8], "little") != len(data)):
         raise ValueError(f"{path}: invalid overlay header")
-    checksum = sum(data[INVENTORY_HEADER_BYTES:]) & 0xFFFF
+    checksum = sum(data[LOADED_OVERLAY_HEADER_BYTES:]) & 0xFFFF
     if checksum != int.from_bytes(data[12:14], "little"):
         raise ValueError(f"{path}: invalid overlay checksum")
     return data

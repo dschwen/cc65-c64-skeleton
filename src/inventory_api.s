@@ -2,7 +2,7 @@
 .macpack longbranch
 
 ; Generic loaded-overlay entry/validator, shared by every overlay that uses
-; the 16-byte header/ABI convention at $A4E9 (save/load and helper overlays):
+; the 16-byte header/ABI convention at $B000 (save/load and helper overlays):
 ; JMP vector, 2-byte magic, ABI byte, size/BSS-offset/BSS-size/checksum
 ; words. platform_overlay_magic0/1 (src/platform.c) select which overlay's
 ; magic is expected; each caller sets them before loading.
@@ -18,8 +18,8 @@
 
 .importzp ptr1, ptr2, tmp1, tmp2, tmp3, tmp4
 
-OVERLAY_ENTRY = $a4e9
-OVERLAY_VALIDATE_POST = $b9ca
+OVERLAY_ENTRY = $b000
+OVERLAY_VALIDATE_POST = $3bbd
 
 .segment "MIDCODE"
 
@@ -38,7 +38,7 @@ _platform_overlay_validate_native:
     sta tmp3
     stx tmp4
 
-    ; 16 <= size <= $1017.
+    ; 16 <= size <= $1000.
     cpx #$11
     bcs @state_invalid
     cpx #$00
@@ -49,7 +49,7 @@ _platform_overlay_validate_native:
     cpx #$10
     bcc @header
     bne @state_invalid
-    cmp #$18
+    cmp #$01
     bcs @state_invalid
 
 @header:
@@ -89,7 +89,7 @@ _platform_overlay_validate_native:
 
 .segment "STATEEXT"
 _platform_overlay_validate_bss_bounds:
-    ; offset + BSS size must stay at or below $1017.
+    ; offset + BSS size must stay at or below $1000.
     clc
     lda OVERLAY_ENTRY+8
     adc OVERLAY_ENTRY+10
@@ -101,8 +101,7 @@ _platform_overlay_validate_bss_bounds:
     jcc _platform_overlay_validate_checksum
     jne _platform_overlay_validate_invalid
     lda ptr1
-    cmp #$18
-    jcs _platform_overlay_validate_invalid
+    jne _platform_overlay_validate_invalid
     jmp _platform_overlay_validate_checksum
 
 .segment "UPPERCODE"

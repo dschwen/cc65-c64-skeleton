@@ -9,7 +9,7 @@
  * must stay in sync with it by hand, there is no shared source of truth).
  *
  * Loaded and run via game_script_play()/game_room_script_entry() in
- * src/script_runtime.c, the same $A4E9 pattern as every other overlay. The
+ * src/script_runtime.c, the same `$B000` pattern as every other overlay. The
  * compiled bytecode itself is separate from this overlay's own code:
  * fetched at run time from the generic sparse resource directory
  * (standalone scripts/conversations use resource IDs 240-255; a room's own
@@ -308,12 +308,12 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 break;
             case OP_ROOM_TRANSITION:
                 /* Queued, not applied here: platform_room_enter() stages the
-                 * destination room's code at $A4E9, where this overlay is
+                 * destination room's code at `$B000`, where this overlay is
                  * itself currently running - calling it directly would
                  * overwrite this code out from under itself. The resident
                  * main loop applies the transition (via
                  * game_process_pending_transition()) once this overlay has
-                 * returned and freed $A4E9 - the same reason
+                 * returned and freed `$B000` - the same reason
                  * saveload_runtime.c's saveload_apply_pending() defers it.
                  * The optional message string must be copied out now too,
                  * for the same reason - see set_transition_message(). */

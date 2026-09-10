@@ -13,7 +13,7 @@ CPU_MAP_CART_16K    = $07
 ; KERNAL and I/O visible, BASIC hidden so $A000-$BFFF remains usable RAM.
 CPU_MAP_KERNAL      = $06
 
-SCREEN_RAM          = $0400
+SCREEN_RAM          = $f800
 COLOR_RAM           = $d800
 TILE_DATA           = $3000
 TILE_PROPERTIES     = $3800

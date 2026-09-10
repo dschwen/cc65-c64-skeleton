@@ -155,9 +155,9 @@ bank1_stage:
     sta COPY_SRC
     lda #>text_module
     sta COPY_SRC+1
-    lda #<$b80d
+    lda #<$3a00
     sta COPY_DST
-    lda #>$b80d
+    lda #>$3a00
     sta COPY_DST+1
     lda #<TEXT_MODULE_SIZE
     sta COPY_LEN

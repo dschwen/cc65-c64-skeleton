@@ -277,52 +277,54 @@ cc65-c64-skeleton/
 
 ### Current skeleton layout
 
-The demo keeps the VIC-II in bank 0 and uses these fixed addresses:
+The game keeps the VIC-II in bank 3 and uses these fixed addresses:
 
 `MEMORY_MAP.md` is the authoritative detailed allocation, including actual
 linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 
 | Address range | Use |
 |---|---|
-| `$0400-$07E7` | 40x25 screen matrix |
-| `$2000-$27FF` | tile charset (`charset.cchr` bank 0) |
-| `$2800-$2FFF` | text charset (`charset.cchr` bank 1) |
+| `$2000-$23FF` | current room |
+| `$2400-$27FF` | destination-room staging |
+| `$2800-$2BFF` | sparse world-delta journal |
+| `$2C00-$2FFF` | resident BSS and compact helpers |
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
-| `$3A00-$3BFF` | eight runtime sprite bitmap slots; sprite 0 is the Look cursor |
+| `$3A00-$3BFF` | independently loaded helpers and bottom-text pager |
 | `$3C00-$7FFF` | resident platform code and read-only tables |
-| `$8000-$84E8` | current 1,257-byte room |
-| `$84E9-$855C` | reserve, formerly `GameState` (moved to `$C100`) |
-| `$855D-$85FF` | compact native resident helpers |
+| `$8000-$85FF` | file-backed load-image fill |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-specific code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A4E8` | destination-room or save-record/index staging |
-| `$A4E9-$B4FF` | rebuildable work RAM; remaining loaded overlays while active |
-| `$B500-$B80C` | ordinary platform BSS |
-| `$B80D-$B9FF` | independently loaded helpers and bottom-text pager |
-| `$BA00-$BBFF` | free (software stack moved to `$C000`) |
-| `$BC00-$BFFF` | sparse room-object delta journal |
+| `$A000-$A479` | save-record/index scratch |
+| `$B000-$BFFF` | rebuildable work RAM, staging, or one copied overlay |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | fixed resident `GameState` |
 | `$C174-$C178` | mutable in-place Inventory service state |
-| `$C180-$FFFF` | 256 resident object-type records beneath I/O/KERNAL |
+| `$C180-$E482` | 256 hot object-type records, partly beneath I/O/KERNAL |
+| `$E800-$EFFF` | tile charset in VIC bank 3 |
+| `$F000-$F7FF` | text charset in VIC bank 3 |
+| `$F800-$FBFF` | screen matrix and sprite pointers |
+| `$FC00-$FDFF` | cursor/portrait/rain sprite bitmaps |
 
-`$D018` is `$18` for tiles and `$1A` for text. The raster IRQ switches to
+`$D018` is `$EA` for tiles and `$EC` for text. The raster IRQ switches to
 the text charset at screen row 22 and restores the tile charset at raster 0.
 Room transitions clear rows 22-24, disable the VIC raster source, and force
-`$D018=$18` until the destination has been completely drawn. Their epilogue
+`$D018=$EA` until the destination has been completely drawn. Their epilogue
 resynchronizes the split before reenabling the source. The handler also
 uses `$D011` bit 7 with `$D012`: `$D012` alone wraps at raster line 256 and is
 not enough to distinguish vertical blank from the top of the next frame.
 The IRQ is implemented entirely in `src/irq.s`. Rainy rooms use hardware
 sprites 1-7 directly, one dedicated sprite per streak; no raster multiplexing
 is needed since there are exactly as many sprites as streaks. Its
-bottom-of-map branch rotates charset character 14 (`$2070-$2077`) left every
+bottom-of-map branch rotates a low-RAM shadow of charset character 14 and
+writes it to `$E870-$E877` every
 second frame (25 Hz PAL, 30 Hz NTSC) and advances all seven streaks every
 frame (50 Hz PAL, 60 Hz NTSC). Both happen only after the VIC has switched
-away from the tile charset, avoiding visible partial writes.
+away from the tile charset, avoiding visible partial writes. The water source
+is an eight-byte shadow below `$8000`, so the IRQ never reads charset RAM while
+KERNAL hides it.
 Row 22 is left blank as spacing above the text on rows 23-24. A full room draw
 clears all three rows in both screen and Color RAM before drawing the new room.
 It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
@@ -348,23 +350,22 @@ EasyFlash banks 0-2, and creates `build/game.crt` with VICE `cartconv`. The cart
 both the standard `CBM80` header at `$8000` and Ultimax vectors in the final
 six bytes of physical ROMH. Its bootstrap selects 16 KiB mode, initializes the
 KERNAL, copies the PRG to its linked RAM layout, copies the helper/text module
-from the unused tail of executable bank 2 to `$B80D`, and disables the cartridge before
+from the unused tail of executable bank 2 to `$3A00`, and disables the cartridge before
 entering the cc65 startup at `$080D`.
 
 ### Split disk load
 
-The linker does not pad the resident PRG across the runtime gap from `$9900` to
-`$B80D`. `build/game.prg` ends with its last resident byte near `$9900`, while
-`build/text.prg` is a normal fixed-address PRG with a `$B80D` load header.
+The native/text module is linked separately from the resident engine.
+`build/text.prg` is a normal fixed-address PRG with a `$3A00` load header.
 `build/disk-boot.prg` is stored first on the D64 as `GAME`; it relocates its
 81-byte loader body to `$0200`, loads `ENGINE`, loads `TEXT`, and jumps to the
-resident cc65 entry point. This saves roughly 8 KiB of disk transfer on every
-cold boot and leaves the pager replaceable without relinking the engine ABI.
+resident cc65 entry point. This leaves the pager replaceable without relinking
+the engine ABI.
 
 The pager is linked after the resident label file exists. Its calls to
 `platform_wait_frame()` and `platform_input_poll()`, and its references to the
-resident color/line parameters, are resolved from `build/game.lbl`. Only the
-entry point at `$B880` is fixed in the resident program (`src/text_api.s`).
+resident color/line parameters, are resolved from `build/game.lbl`. The fixed
+pager entry is `$3A73` (`src/text_api.s`).
 
 The game now maintains a backend-neutral sparse room-object journal in RAM but
 does not yet write save data to flash. EasyFlash programming
@@ -375,14 +376,13 @@ See `EASYFLASH_CARTRIDGE.md` for the complete cartridge-generation guide,
 including boot vectors, CRT CHIP layout, validation, dynamic room banks,
 object-type RAM placement, native drawing plans, and flash-save constraints.
 
-The current room occupies `$8000-$83E8`; reserved load-image space and compact
-helpers continue through `$85FF`. Resident world-state code is loaded at
+The current room occupies `$2000-$23E8`; destination staging is `$2400-$27E9`
+and the world journal is `$2800-$2BE7`. Resident world-state code is loaded at
 `$8600`; game/main and the shared room API occupy `$8B48-$98FF`.
 Independently linked room code has a 1 KiB window at
 `$9900-$9CFF`, and the current-room pristine object baseline occupies
-`$9D00-$9FFF`. The 200-record sparse journal occupies `$BC00-$BFFF`.
-Ordinary BSS currently ends at `$B7DD` in RAM beneath BASIC ROM; independently
-loaded helpers and the bottom-text pager occupy `$B80D-$B9FF`. The C software
+`$9D00-$9FFF`. Ordinary BSS is at `$2C00-$2EDD`; independently loaded helpers
+and the bottom-text pager occupy `$3A00-$3BEF`. The C software
 stack, `GameState`, and Inventory's five mutable service bytes sit at
 `$C000-$C0FF` and `$C100-$C178` instead - that
 region is the only RAM above `$8000` never covered by a cartridge bank, which
@@ -392,20 +392,20 @@ while leaving BASIC hidden. In-place cartridge execution instead requires
 `$01=$37`: use `$DE02=$06` for ROML-only or `$07` for ROML+ROMH. Even the
 ROML-only case reads BASIC ROM, not underlying RAM, at `$A000-$BFFF`.
 
-`WORKBSS` currently uses `$A4E9-$ACA7` for base colors, tile brightness,
+`WORKBSS` currently uses `$B000-$B7BE` for base colors, tile brightness,
 visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
 rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
 room-code copies are implemented in assembly because ROMH temporarily hides
-both the C stack and BSS. `$ACA8-$B4FF` is the current 2,136-byte WORKRAM tail.
+the destination. `$B7BF-$BFFF` is the normal-play WORKRAM tail; copied overlays
+may use the complete `$B000-$BFFF` page after the resident caller has staged
+arguments and accepted that renderer work data will be rebuilt.
 Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current `HIGH` segment has about 95 bytes of linker margin and `UPPER`
-has about 36 bytes; `PROGRAM` is tighter at about 15 bytes after moving IRQ
-state into `LOWBSS`. Inspect `build/game.map` before adding resident logic.
-Cursor helpers deliberately use
-the remaining pre-charset and `$3900` gaps while the sprite bitmap area remains
-reserved for all eight hardware sprites.
+The current `HIGH` segment has 44 bytes of linker margin, `UPPER` has 65,
+and `PROGRAM` has 42. Inspect `build/game.map` before adding resident logic.
+The VIC display lives beneath KERNAL in bank 3: charsets at `$E800/$F000`,
+screen at `$F800`, and sprite data at `$FC00-$FDFF`.
 
 Generic room-callable functions live in resident `src/game_support.c` and are
 resolved by address when each room is linked. Room binaries contain only their

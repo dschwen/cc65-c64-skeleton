@@ -139,12 +139,11 @@ ROOM_HELPERS_C_OBJ := $(OUTDIR)/room-helpers-module.o
 ROOM_HELPERS_HEADER_OBJ := $(OUTDIR)/room-helpers-header.o
 ROOM_HELPERS_RESOLVER_SRC := $(OUTDIR)/room-helpers-resolver.s
 ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
-ROOM_HELPERS_MODULE_CFG := cfg/room_helpers_overlay.cfg
-ROOM_HELPERS_MODULE_RAW := $(OUTDIR)/room-helpers.raw
+ROOM_HELPERS_MODULE_CFG := cfg/banked_room_helpers.cfg
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
 # Banked type-info module executed in place from its EasyFlash bank (never
-# copied into RAM, like inventory and unlike the RH/SC/LH/SL/SV overlays) -
-# see the banked module linker configurations.
+# copied into RAM, like Inventory and RH and unlike the SC/LH/SL/SV overlays)
+# - see the banked module linker configurations.
 TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
 TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
 TYPEINFO_RESOLVER_SRC := $(OUTDIR)/typeinfo-resolver.s
@@ -390,16 +389,15 @@ $(ROOM_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(ROOM_HELPERS_C_OBJ) \
 $(ROOM_HELPERS_RESOLVER_OBJ): $(ROOM_HELPERS_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(ROOM_HELPERS_MODULE_RAW): $(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
-		$(ROOM_HELPERS_RESOLVER_OBJ) $(ROOM_HELPERS_MODULE_CFG)
+$(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
+		$(ROOM_HELPERS_RESOLVER_OBJ) $(ROOM_HELPERS_MODULE_CFG) \
+		tools/validate_banked_module.py
 	$(LD65) -C $(ROOM_HELPERS_MODULE_CFG) -m $(OUTDIR)/room-helpers.map -o $@ \
 		$(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
 		$(ROOM_HELPERS_RESOLVER_OBJ)
-
-$(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/room-helpers.map --magic RH --output $@
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module room_helpers --map $(OUTDIR)/room-helpers.map \
+		--resolver $(ROOM_HELPERS_RESOLVER_SRC)
 
 $(TYPEINFO_C_OBJ): modules/typeinfo.c src/platform.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
@@ -575,6 +573,7 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
 		--script $(SCRIPT_MODULE) --look-helpers $(LOOK_HELPERS_MODULE) \
 		--typeinfo $(TYPEINFO_MODULE) --inventory-map $(OUTDIR)/inventory.map \
+		--room-helpers-map $(OUTDIR)/room-helpers.map \
 		--typeinfo-map $(OUTDIR)/typeinfo.map
 
 $(OUT_CRT): $(OUT_EF_BIN)

@@ -5,9 +5,9 @@
 #include "script_format.h"
 
 /* Resident trigger for the script/conversation/room interpreter overlay
- * (modules/script.c). Every bank through 48 is already spoken for, so like
- * room-helpers this shares TYPE_BANK_1's ROML half (with the object-type
- * Zone C table and the room-helpers overlay) at a fixed offset past both.
+ * (modules/script.c). Every bank through 48 is already spoken for, so it
+ * shares TYPE_BANK_1's ROML half with the object-type Zone C table and the
+ * in-place RH service, at a fixed offset past both.
  * The packer and runtime both consume cfg/easyflash_layout.json.
  *
  * Script/conversation/room *content* (the compiled bytecode - see

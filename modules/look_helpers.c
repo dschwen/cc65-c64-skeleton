@@ -15,12 +15,11 @@
  * of a load stall on a hot path and no risk of this overlay's load
  * overwriting code that is still executing.
  *
- * Not here: platform_look_exit() (src/platform.c) - it calls
- * platform_room_neighbor(), itself an overlay in this same `$B000` window
- * (modules/room_helpers.c), so it must stay resident to call that overlay
- * sequentially without overwriting its own still-executing code. It no
- * longer shares the look_buffer/look_append machinery either - its two
- * messages are fixed literals, written directly.
+ * Not here: platform_look_exit() (src/platform.c) - it calls the in-place RH
+ * service. RH's 8 KiB ROML mapping puts BASIC over `$A000-$BFFF`, so a call
+ * made while LH itself executes at `$B000` would hide LH before control could
+ * return. The resident function no longer shares the look_buffer/look_append
+ * machinery either - its two messages are fixed literals, written directly.
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
  * arguments into look_helpers_* globals and set look_helpers_op before

@@ -1044,9 +1044,12 @@ should not be used for inner-loop helpers. Long banked operations no longer
 stop the raster IRQ, but they still block foreground gameplay until they
 return.
 
-`platform_object_type_info_get()` and the complete Inventory UI run this way;
-see `modules/typeinfo.c`, `modules/inventory.c`, their `cfg/banked_*.cfg`
-linker files, and the resident stubs in `src/banked_api.s` for the pattern.
+`platform_object_type_info_get()`, the complete Inventory UI, and the Room
+Helpers service run this way; see `modules/typeinfo.c`, `modules/inventory.c`,
+`modules/room_helpers.c`, their linker files under `cfg/`, and the resident
+stubs in `src/banked_api.s` for the pattern. RH deliberately performs any
+hot-type lookup before entry because that lookup may restore `$01=$35` and
+would unmap a ROML caller.
 `EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
 
 Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with

@@ -18,6 +18,7 @@
 
 .export _platform_object_type_info_get
 .export _platform_inventory_run_banked
+.export _platform_room_helpers_run_banked
 
 ; Bank and CPU entry come from the same generated layout consumed by the
 ; packer. tools/validate_easyflash_layout.py additionally checks the linked
@@ -39,4 +40,10 @@ _platform_object_type_info_get:
 ; user closes the screen, while the resident raster IRQ continues to run.
 _platform_inventory_run_banked:
     FAR_CALL EF_LAYOUT_INVENTORY_BANK, EF_LAYOUT_INVENTORY_ENTRY, EF_LAYOUT_INVENTORY_CPU_MAP, EF_LAYOUT_INVENTORY_CONTROL
+    rts
+
+; void platform_room_helpers_run_banked(void)
+; Parameters and result live in low resident DATA; see src/platform.c.
+_platform_room_helpers_run_banked:
+    FAR_CALL EF_LAYOUT_ROOM_HELPERS_BANK, EF_LAYOUT_ROOM_HELPERS_ENTRY, EF_LAYOUT_ROOM_HELPERS_CPU_MAP, EF_LAYOUT_ROOM_HELPERS_CONTROL
     rts

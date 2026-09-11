@@ -26,6 +26,7 @@ Outputs:
 - `build/game.prg`
 - `build/text.prg`
 - `build/IV` (inventory UI and story-specific in-place cartridge service)
+- `build/RH` (in-place room-neighbor/object-removal service)
 - `build/game.map`
 - `build/game.lbl`
 
@@ -48,7 +49,8 @@ Output:
 
 The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
 address, loads the helper/text module `TEXT` at `$3A00`, and then enters cc65
-startup at `$080D`. Inventory executes in place from EasyFlash bank 48 ROMH.
+startup at `$080D`. This packaging path is not currently playable without the
+EasyFlash-only resource and service backends described above.
 
 Build an EasyFlash cartridge image:
 ```bash

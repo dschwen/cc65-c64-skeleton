@@ -24,6 +24,7 @@ happen in. Update it as steps land.
 | Mode-aware far calls | The generated descriptor now carries CPU map and EasyFlash control separately. Type Info runs as bank 47 ROML with `$01=$37`/`$DE02=$06`; Inventory remains bank 48 ROMH with `$37`/`$07`. The validator applies the effective visibility contract. |
 | `SV` reduced below one page | Save-name editing now reuses the selected `SINDEX` entry. Header + code + RODATA + BSS fell from 4,107 to 4,001 bytes, leaving 95 bytes in a 4 KiB page; the build enforces a 4,064-byte ceiling (32-byte minimum reserve). A named save/readback/load round-trip passed in VICE. |
 | Atomic VIC/layout migration | VIC bank 3 now owns `$E800-$FDFF`; room/staging/journal/BSS moved below `$3000`; the text module moved to `$3A00`; all copied overlays and rebuildable work data use `$B000-$BFFF`. PAL and NTSC VICE traces cover the new paths. |
+| Room Helpers -> in-place bank 47 ROML | Removed RH's copy/header/checksum/BSS path. Its 452 read-only bytes run at `$84C0-$8683`; the seven-byte ABI remains below `$2000`. Hot-type lookup and dirty marking moved before the far call so their `$34` -> `$35` mapping cycle cannot unmap the executing ROML service. PAL and NTSC tests cover neighbor lookup and a synthetic take/removal using type 106 under I/O RAM. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -98,10 +99,11 @@ loaders for that combination:
 | `game_enter_room()`, `platform_resource_fetch(..._ENVIRONMENT...)` | `ENVCODE_BASE` (`$7E00-$7FFF`) | Yes - `weather_animate` jumps into `ENVCODE_TICK` every frame | The one real hazard - now always called from inside a bracket (see above) |
 | `platform_init()`'s three boot `platform_resource_fetch(..._ASSET...)` calls (charsets, tiles) | `charset_tile`/`charset_text`/`tile_data` | N/A | Run before `raster_irq_install()` - no IRQ exists yet to race |
 | `modules/script.c`'s `platform_resource_fetch_range()` (windowed script reader) | private resident script buffer | No | Not IRQ-touched; also has no checksum step at all (documented: range fetches don't verify checksums) |
-| `platform_overlay_load()` (room-helpers, look-helpers, script, saveload, saveload-save overlays) | `$B000` overlay window / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
+| `platform_overlay_load()` (look-helpers, script, saveload, saveload-save overlays) | `$B000` overlay window / room-code `$9900` | No | None of these addresses are read or written by `src/irq.s` |
 | Room/object-type EasyFlash loaders (`platform_room_load`, `platform_object_types_load`, `room_code_prepare_easyflash`) | `platform_room`, object-type tables, `$B000` staging | No | Same - not IRQ-touched |
 | `platform_object_type_info_get()` (in-place `FAR_CALL`) | `platform_object_type_info_scratch` (`LOWBSS`) | No | Not IRQ-touched; also human-input-paced only per its own doc comment |
 | Inventory UI (in-place `FAR_CALL`) | screen/color RAM and `$C174-$C178`; reads `GameState` | No | IRQ stays active; no dependency on `$8000-$BFFF` RAM |
+| Room Helpers (in-place `FAR_CALL`) | room at `$2000`, ABI at `$1F40-$1F46`, rendered state below `$3000` | No | IRQ stays active; all `$B000` work and mapping-changing hot-type access remain outside the far call |
 
 Conclusion: `ENVCODE_BASE` was the only instance of this hazard class, and it
 is now closed for every path that reaches it. No other latent instance found.
@@ -133,8 +135,9 @@ rather than after:
    Holding two such pointers at once - e.g. future code comparing two
    objects' hot fields, both IDs >= 106 - would have the second fetch
    silently overwrite the first's data underneath the caller. Audited every
-   current call site (`src/platform.c`, `src/game_support.c`,
-   `modules/room_helpers.c`); none currently hold two pointers at once.
+   current call site (`src/platform.c`, `src/game_support.c`); none currently
+   hold two pointers at once. RH's wrapper consumes the light value before
+   entering cartridge code and never exports the scratch pointer.
    **Recommended fix**: either a second scratch slot, or a debug assertion
    that traps a second fetch while a live pointer from the first is still
    plausibly in scope, before any code needs to compare two objects' types.
@@ -169,8 +172,9 @@ to be selected.
 The raster IRQ's complete per-frame code and state now live below `$8000`.
 Bank wrappers mask interrupts only while changing `$01` and the EasyFlash
 registers, then restore the caller's interrupt state for the copy or far call.
-VICE verification showed the frame counter advance during a 507-byte RH copy
-while CPU port `$01` was `$37` and ROML/ROMH were selected. The existing blank
+VICE verification (before RH's later in-place conversion) showed the frame
+counter advance during its 507-byte copy while CPU port `$01` was `$37` and
+ROML/ROMH were selected. The existing blank
 brackets around large overlay loads remain as conservative loading presentation,
 but are no longer required to hide a frozen charset split.
 
@@ -371,9 +375,9 @@ unpredictable rather than a specific fixed glitch.
 (`src/platform.c`) are deliberately placed in `WORKBSS` to save resident RAM
 (`MEMORY_MAP_TARGET.md`'s own earlier note: "already rebuilt rather than
 persistent" - a known, accepted trade-off pending the future VIC-bank-move
-work). `WORKBSS` now occupies `$B000-$B7BE` - the *same physical memory* every
-`$B000` overlay (room-helpers, look-helpers, script/conversation/room-
-text, inventory, save/load) is staged into and runs from. Two call chains
+work). `WORKBSS` occupies the head of `$B000-$BFFF` - the same physical memory
+the copied overlays use. At the time this bug was found, RH was one of those
+overlays. Two call chains
 touch these arrays **from inside an overlay's own execution**, not from
 resident code:
 
@@ -422,14 +426,12 @@ script text):
   `platform_brightness[offset]` resident-side, *before* loading the overlay,
   and passes it through a new staging global, `look_helpers_light`.
 - `room_helpers_object_remove()` no longer calls `redraw_dirty()`/
-  `platform_lighting_rebuild()`. It does only the object-array mutation and
-  dirty-cell marking (both of those - `dirty_clear()`/`mark_object_cells()`
-  via `dirty_set()` - are plain resident `BSS`, not `WORKBSS`, so they were
-  never part of this hazard) and reports back through a new staging global,
-  `room_helpers_emitted_light`. `platform_room_object_remove()`
-  (`src/platform.c`) now calls `redraw_dirty()` and, conditionally,
-  `platform_lighting_rebuild()` itself, after `platform_overlay_run_native()`
-  has returned and `$B000` is free again.
+  `platform_lighting_rebuild()`. The first fix left dirty marking inside the
+  copied overlay and moved only the WORKBSS operations after its return. RH's
+  later in-place conversion tightened that boundary further: light lookup,
+  `dirty_clear()`, and `mark_object_cells()` now all run resident-side before
+  the far call; the ROML service only mutates the room object and rendered
+  limit; redraw/lighting still run resident-side after it returns.
 
 Moving `platform_room_object_remove()` into `UPPERCODE` (it and
 `platform_look_tile_check()`'s prefetch both grew `HIGHCODE` past its
@@ -437,16 +439,14 @@ margin - see `platform_room_object_remove()`'s own comment) was needed to
 make room; verified via clean `make`/`make d64`/`make cartridge` (HIGH now
 has ~156 bytes free, UPPER ~76).
 
-**Live-verified partially**: reproduced a clean, uncorrupted room 01 after
-the fix, and confirmed both of that room's placed objects return "Nothing to
-take."/"You cannot take that." (not takeable) rather than triggering the
-removal path at all - didn't find a convenient takeable, light-emitting
-object in the rooms explored this session to force the exact removal path
-live before time ran out. The fix itself is not in doubt (verified by
-reading the exact `WORKBSS` segment placements and call chain, the same
-level of certainty the transition-hang diagnosis had before it was also
-live-confirmed) - recommend confirming with whatever object actually
-produced the reported screenshot.
+**Live-verified**: the original fix reproduced a clean, uncorrupted room 01.
+The later RH conversion adds a deterministic removal-path check: VICE writes
+a valid type-106 hot record into RAM beneath I/O, places that takeable object
+on the player tile, drives `T` + Enter through the normal UI, and breaks at
+RH's `$84C0` entry. On PAL and NTSC the object is present on entry and zeroed
+on return, inventory gains type 106, `$01` changes from the service's `$37`
+back to gameplay `$35`, EasyFlash changes from bank 47/control `$06` back to
+bank 0/control `$04`, and the frame counter continues advancing.
 
 **Not audited this session**: whether any *other* code reads or writes
 `platform_base_colors`/`platform_brightness`/other `WORKBSS` members from
@@ -669,26 +669,45 @@ source from an eight-byte low-RAM shadow so CPU-side KERNAL mapping is safe.
 
 PAL VICE has exercised Inventory in bank 48 ROMH, Type Info's nested 8 KiB
 far call, `LH`, `SC`, the relocated text pager, both save overlays with an
-actual named save/load round trip, and `RH` at `$B1E7`. NTSC produces a clean
-Inventory frame while the frame counter advances. The tests inspect `$01`,
-`$DD00`, `$D018`, `$DE00/$DE02`, overlay headers, screen/charset bytes, and
-saved state rather than relying only on screenshots.
+actual named save/load round trip, and RH executing at `$84C0` in bank 47
+ROML. RH neighbor and type-106 removal paths pass on both PAL and NTSC while
+the frame counter advances. The tests inspect `$01`, `$DD00`, `$D018`,
+`$DE00/$DE02`, overlay entries, screen/charset bytes, and saved state rather
+than relying only on screenshots.
+
+## Next-candidate dependency audit
+
+The independent linker resolvers were classified against the effective ROML
+map, then checked for transitive mapping and workspace effects. A low imported
+address is necessary but not sufficient: it may still change `$01`, call an
+upper routine, or follow a pointer into hidden RAM.
+
+| Module | Direct closure | Blocking transitive/data dependency | Rank |
+|---|---|---|---|
+| `RH` | All imports below `$8000`; no BSS/initialized writable data | Hot type IDs 106-222 make `platform_object_type_get()` restore `$35`; fixed by doing lookup/dirty marking in the resident wrapper | Converted |
+| `LH` | Resolver imports are below `$8000` (including Type Info's far-call stub) | 339 bytes of private BSS must move/reuse scratch; `platform_object_intersects_tile()` can call the same `$34` -> `$35` hot-type path; a copied LH at `$B000` also cannot call ROML RH because 8 KiB mode maps BASIC over its caller | Best next code-only candidate after collision results are staged resident-side |
+| `SL` | Direct imports are below `$8000` | Its record/index workspace is hard-coded at `$A000`, which ROML sees as BASIC and ROMH sees as cartridge; it explicitly calls `platform_memory_game()` and then continues, which would unmap an in-place caller | Requires I/O/workspace redesign, not a relink |
+| `SC` | Several imports are above `$8000` (`game_inventory_add`, transition and portrait routines) | Its sliding script buffer borrows `$B000`, hidden in either in-place mode | Keep copied until APIs and scratch ownership change |
+| `SV` | Several imports are above `$8000` (`game_world_capture_current`, IRQ suspend/resume) | Same `$A000` save workspace and `$35` restoration as SL; near the complete 4 KiB overlay budget already | Last candidate; split disk transaction from UI/encode first |
 
 ## Remaining redesign order
 
-1. Keep Inventory as the in-place reference implementation and retain copied
-   overlays as the compatibility path. The atomic move removes the immediate
-   memory collision; it does not prove that every overlay can execute in ROM.
-2. Move additional renderer/service mutable data below `$8000` only when a
-   complete map-derived dependency closure fits. `RH` still follows resident
-   pointers into the room and renderer state; a code-only conversion remains
-   unsafe.
+1. Keep Inventory, Type Info, and RH as the in-place reference implementations
+   and retain copied overlays as the compatibility path. RH demonstrates that
+   transitive map changes must be moved across the far-call boundary, not just
+   accepted because their entry points are resident.
+2. If more resident pressure must be relieved, convert LH next by staging
+   collision results and assigning its 339 bytes of temporary state an
+   explicit lifetime below the cartridge window. Do not merely relink it.
 3. Convert only coarse, value-oriented services. A candidate must include its
    C stack, globals, literals, runtime helpers, nested callees, and IRQ-visible
    state. Validate PAL and NTSC and force at least one IRQ during its banked
    execution.
-4. Remove `$B000-$BFFF` as an overlay window only after `SC`, `SL`/`SV`, and
-   `LH`/`RH` no longer use it. Until then its temporal ownership contract is
+4. Split disk transactions from SL/SV UI and encoding before considering
+   in-place execution; their `$A000` buffers and explicit `$35` restoration
+   violate both cartridge modes today.
+5. Remove `$B000-$BFFF` as an overlay window only after `SC`, `SL`/`SV`, and
+   `LH` no longer use it. Until then its temporal ownership contract is
    simpler and safer than fine-grained bank switches or hidden copies.
 
 ## Build-system limitation: D64 is not cartridge-equivalent

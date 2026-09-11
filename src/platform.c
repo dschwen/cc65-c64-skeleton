@@ -108,6 +108,10 @@ void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
 void platform_text_area_clear_native(void);
 void __fastcall__ platform_text_output_native(const char* text);
+void platform_room_helpers_run_banked(void);
+void platform_overlay_run_native(void);
+static void dirty_clear(void);
+static void mark_object_cells(const PlatformObject* object);
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
 
@@ -207,8 +211,8 @@ static uint8_t dirty_cells[DIRTY_BYTES];
 static uint8_t dirty_x[DIRTY_CELL_LIMIT];
 static uint8_t dirty_y[DIRTY_CELL_LIMIT];
 static uint8_t dirty_count;
-/* Non-static: read/written by the room-helpers overlay (modules/room_helpers.c)
- * via the resolver, same as any other resident symbol an overlay binds to. */
+/* Non-static: read/written by the in-place RH service through its generated
+ * resolver; these addresses remain visible under the ROML mapping. */
 const PlatformRoom* rendered_room;
 const PlatformObject* rendered_player;
 uint16_t rendered_object_limit;
@@ -492,100 +496,65 @@ uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
 #pragma code-name (pop)
 
 /*
- * Room-helpers overlay ("RH"): platform_room_object_remove/platform_room_
- * neighbor's actual bodies (modules/room_helpers.c). Not every `$B000` overlay
- * gets its own EasyFlash bank - both halves of every bank through 48 are
- * already spoken for (rooms, object types, inventory, save/load), so this
- * one shares TYPE_BANK_1's ROML half with the object-type Zone C table
- * (src/platform.c's OBJECT_TYPE_ZONE_C_COUNT, 770 bytes) at a fixed offset
- * comfortably past it, instead of getting a bank of its own - see
- * cfg/easyflash_layout.json.
+ * In-place room-helpers service ("RH"): platform_room_object_remove/platform_
+ * room_neighbor's compact mutation/query bodies (modules/room_helpers.c).
+ * It executes at `$84C0` in bank 47 ROML, after the object-type Zone C table,
+ * and owns no writable storage. The low resident globals below are its ABI;
+ * cfg/easyflash_layout.json is the single source of its bank and address.
  */
 #define ROOM_HELPERS_OP_NEIGHBOR 0u
 #define ROOM_HELPERS_OP_REMOVE   1u
 
-void platform_overlay_run_native(void);
-void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
+static void redraw_dirty(const PlatformRoom* room,
+                         const PlatformObject* player);
 
-/* Explicitly zero-initialized (not plain BSS): BSSRAM has no margin left,
- * while PROGRAM (where cc65 places initialized DATA) does. See banking.s's
- * ef_shadow_bank for the same trick and why it matters here too - these are
- * both written and read from ordinary resident code, never from a banked
- * window, so plain RAM placement is all that's needed, just not out of the
- * full BSSRAM budget. */
+/* Explicitly initialized into low DATA so the in-place service can see every
+ * parameter/result while ROML and BASIC hide `$8000-$BFFF`. */
 PlatformRoom* room_helpers_room = 0;
 uint8_t room_helpers_slot = 0;
-const PlatformObject* room_helpers_player = 0;
 uint8_t room_helpers_direction = 0;
 uint8_t room_helpers_room_id = 0;
 uint8_t room_helpers_op = 0;
 uint8_t room_helpers_result = 0;
-/* Set by room_helpers_object_remove() (modules/room_helpers.c), read here
- * after the overlay returns - see platform_room_object_remove()'s own
- * comment for why the redraw itself can no longer happen inside the
- * overlay. */
+/* Computed resident-side before entry; see platform_room_object_remove(). */
 uint8_t room_helpers_emitted_light = 0;
 
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id) {
-    uint8_t status;
-
     if (room == 0 || room_id == 0) return PLATFORM_ERR_ARGUMENT;
     room_helpers_op = ROOM_HELPERS_OP_NEIGHBOR;
     room_helpers_room = (PlatformRoom*)room;
     room_helpers_direction = direction;
-    status = platform_overlay_load(EF_LAYOUT_ROOM_HELPERS_BANK,
-                                   EF_LAYOUT_ROOM_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_ROOM_HELPERS_OFFSET,
-                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_1);
-    if (status != PLATFORM_OK) return status;
-    platform_overlay_run_native();
+    platform_room_helpers_run_banked();
     if (room_helpers_result == PLATFORM_OK) *room_id = room_helpers_room_id;
     return room_helpers_result;
 }
 
-/* UPPERCODE, not HIGHCODE like this function's neighbor above: this was moved
- * when HIGH overflowed during the WORKBSS-aliasing fix. HIGH has a small tail
- * again after later refactors, but moving this back buys nothing; callers must
- * still invoke it only with cartridge ROM disabled. Purely a segment-budget
- * choice.
- *
- * room_helpers_object_remove() (modules/room_helpers.c) does only the
- * object-array mutation and dirty-cell marking itself, then reports back
- * through room_helpers_emitted_light - it must NOT call redraw_dirty() or
- * platform_lighting_rebuild() while it's still running. Both read AND write
- * platform_base_colors/platform_brightness, which live in WORKBSS - the
- * exact same `$B000` memory this overlay's own compiled code currently
- * occupies while it's loaded and executing. A read there returns the
- * overlay's own bytes instead of real color/brightness data; a write (which
- * redraw_dirty() does, to platform_base_colors) overwrites the overlay's
- * own not-yet-executed instructions with color values - genuinely
- * undefined behavior, not just wrong colors, since the overlay is still
- * running through that same memory. Found live: colorful full-screen
- * corruption after Take, reproducible whenever the removed object emitted
- * light (see the screenshot this was diagnosed from). Fixed by doing both
- * calls here instead, after platform_overlay_run_native() has returned and
- * `$B000` is free again - the same "resident wrapper redraws after the
- * overlay returns" pattern room-code activation and script/room-script
- * text already use. */
+/* UPPERCODE purely for segment balance. Before entering ROML, compute light
+ * and dirty cells resident-side. `mark_object_cells()` can transitively call
+ * `platform_object_type_get()`, whose under-I/O path restores gameplay `$35`;
+ * doing that from ROML would unmap the service before its RTS. The service
+ * performs only the object mutation and rendered-limit update. Redraw and
+ * lighting repair also remain resident because they use `$B000` WORKBSS. */
 #pragma code-name (push, "UPPERCODE")
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player) {
-    uint8_t status;
+    PlatformObject* object;
 
     if (room == 0) return PLATFORM_ERR_ARGUMENT;
+    object = &room->objects[slot];
     room_helpers_op = ROOM_HELPERS_OP_REMOVE;
     room_helpers_room = room;
     room_helpers_slot = slot;
-    room_helpers_player = player;
-    status = platform_overlay_load(EF_LAYOUT_ROOM_HELPERS_BANK,
-                                   EF_LAYOUT_ROOM_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_ROOM_HELPERS_OFFSET,
-                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_ROOM_HELPERS_MAGIC_1);
-    if (status != PLATFORM_OK) return status;
-    platform_overlay_run_native();
+    if (object->type != 0u) {
+        room_helpers_emitted_light = PLATFORM_OBJECT_LIGHT(
+            platform_object_type_get(object->type));
+        dirty_clear();
+        mark_object_cells(object);
+    } else {
+        room_helpers_emitted_light = 0u;
+    }
+    platform_room_helpers_run_banked();
     if (room_helpers_result == PLATFORM_OK) {
         redraw_dirty(room, player);
         if (room_helpers_emitted_light != 0u && room == rendered_room) {
@@ -599,21 +568,19 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
 
 /*
  * Look-helpers overlay ("LH"): platform_look_tile/_check/object_take_prompt/
- * object_taken_message's actual bodies (modules/look_helpers.c). Same
- * shared TYPE_BANK_1 ROML half as room-helpers/script above, at a further
- * offset past both - see cfg/easyflash_layout.json.
- * platform_look_exit() stays here (not moved): it calls
- * platform_room_neighbor() above, itself an overlay in this same window,
- * so it must stay resident to call that sequentially without overwriting
- * its own still-executing code if it were overlay content too.
+ * object_taken_message's actual bodies (modules/look_helpers.c). It shares
+ * bank 47 ROML with the RH in-place service and the SC copied overlay; see
+ * cfg/easyflash_layout.json. platform_look_exit() stays resident: calling RH
+ * while executing LH at `$B000` would select 8 KiB cartridge mode, map BASIC
+ * over `$A000-$BFFF`, and hide LH's next instruction before RH returned.
  */
 #define LOOK_HELPERS_OP_TILE         0u
 #define LOOK_HELPERS_OP_TILE_CHECK   1u
 #define LOOK_HELPERS_OP_TAKE_PROMPT  2u
 #define LOOK_HELPERS_OP_TAKEN_MSG    3u
 
-/* Explicitly zero-initialized (not plain BSS) - see room_helpers_room's own
- * comment above for why. */
+/* Explicitly zero-initialized (not plain BSS) so this copied overlay's ABI
+ * does not consume the already-full resident BSS segment. */
 const PlatformRoom* look_helpers_room = 0;
 const PlatformObject* look_helpers_viewer = 0;
 uint8_t look_helpers_tile_x = 0;
@@ -792,8 +759,7 @@ static void compose_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
     }
 }
 
-/* Non-static: called by the room-helpers overlay via the resolver. */
-void dirty_clear(void) {
+static void dirty_clear(void) {
     memset(dirty_cells, 0, sizeof(dirty_cells));
     dirty_count = 0;
 }
@@ -813,8 +779,7 @@ static void dirty_set(uint8_t x, uint8_t y) {
     }
 }
 
-/* Non-static: called by the room-helpers overlay via the resolver. */
-void mark_object_cells(const PlatformObject* object) {
+static void mark_object_cells(const PlatformObject* object) {
     const PlatformObjectType* type;
     int16_t left;
     int16_t top;
@@ -852,9 +817,8 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
     return limit;
 }
 
-/* Non-static: called by the room-helpers overlay via the resolver. */
-void redraw_dirty(const PlatformRoom* room,
-                  const PlatformObject* player) {
+static void redraw_dirty(const PlatformRoom* room,
+                         const PlatformObject* player) {
     uint8_t i;
     uint8_t x;
     uint8_t y;

@@ -2,22 +2,18 @@
 
 #include "platform.h"
 
-/* Independently linked room-helpers overlay ("RH"): the bodies of
+/* Independently linked, in-place room-helpers service ("RH"): the bodies of
  * platform_room_object_remove() and platform_room_neighbor(), moved out of
  * the always-resident engine. Both are confirmed safe to run from here -
  * every call site (game_support.c's Take handler, platform_player_step(),
  * platform_look_exit()) runs from resident code, never from a room's own
- * banked-in code, so there is no risk of this overlay's load overwriting a
- * room's code while it is still executing. (platform_room_object_add() is
- * NOT here: platform_room_enter() calls it after staging the destination
- * room's code at `$B000`, so moving it into a same-address overlay would
- * clobber that staged room code before it runs.)
+ * banked-in code. `platform_room_object_add()` remains resident because room
+ * entry uses it while destination room code is staged at `$B000`.
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
  * arguments into room_helpers_* globals and set room_helpers_op before
- * loading and running this overlay (there is only one native entry point,
- * room_helpers_overlay_run(), since overlay code is always called
- * parameterless - see platform_overlay_run_native()); the result goes back
+ * entering this service (there is one parameterless native entry point,
+ * `room_helpers_banked_run()`; see `src/banked_api.s`). The result goes back
  * out through room_helpers_result (and room_helpers_room_id for the
  * neighbor lookup).
  */
@@ -31,13 +27,8 @@ extern uint8_t room_helpers_direction;
 extern uint8_t room_helpers_room_id;
 extern uint8_t room_helpers_op;
 extern uint8_t room_helpers_result;
-extern uint8_t room_helpers_emitted_light;
-
 extern const PlatformRoom* rendered_room;
 extern uint16_t rendered_object_limit;
-
-extern void dirty_clear(void);
-extern void mark_object_cells(const PlatformObject* object);
 
 static uint8_t room_helpers_neighbor(void) {
     const PlatformRoom* room;
@@ -72,21 +63,11 @@ static uint8_t room_helpers_neighbor(void) {
     return PLATFORM_OK;
 }
 
-/* Does only the object-array mutation and dirty-cell marking - both safe,
- * since dirty_cells/dirty_x/dirty_y (src/platform.c) are plain resident BSS,
- * not WORKBSS. Does NOT call redraw_dirty() or platform_lighting_rebuild()
- * itself: both read and write platform_base_colors/platform_brightness,
- * which live in WORKBSS - the same `$B000` memory this overlay's own compiled
- * code occupies right now, while this function is running from it. A read
- * there would return this overlay's own bytes instead of real data; a write
- * (redraw_dirty() makes one, to platform_base_colors) would overwrite this
- * overlay's own not-yet-executed instructions - genuine undefined behavior,
- * not just a wrong color, since the overlay is still executing through that
- * same memory. Reports back through room_helpers_emitted_light instead, so
- * platform_room_object_remove() (src/platform.c) can do both calls safely
- * after this overlay has returned and `$B000` is free again. Found live as
- * colorful full-screen corruption after Take, whenever the removed object
- * emitted light. */
+/* Only mutate the object array and resident rendered-object limit. Dirty-cell
+ * marking and light lookup stay in the resident wrapper: their transitive
+ * path may select all-RAM `$01=$34` and restore gameplay `$35`, which would
+ * unmap this ROML service before its RTS. Keeping that mapping boundary
+ * outside the far call is part of the in-place ABI. */
 static uint8_t room_helpers_object_remove(void) {
     PlatformRoom* room;
     PlatformObject* object;
@@ -96,10 +77,6 @@ static uint8_t room_helpers_object_remove(void) {
     slot = room_helpers_slot;
     object = &room->objects[slot];
     if (object->type == 0u) return PLATFORM_ERR_ARGUMENT;
-    room_helpers_emitted_light = PLATFORM_OBJECT_LIGHT(
-        platform_object_type_get(object->type));
-    dirty_clear();
-    mark_object_cells(object);
     object->type = 0;
     object->x = 0;
     object->y = 0;
@@ -112,7 +89,7 @@ static uint8_t room_helpers_object_remove(void) {
     return PLATFORM_OK;
 }
 
-void room_helpers_overlay_run(void) {
+void room_helpers_banked_run(void) {
     if (room_helpers_op == ROOM_HELPERS_OP_REMOVE) {
         room_helpers_result = room_helpers_object_remove();
     } else {

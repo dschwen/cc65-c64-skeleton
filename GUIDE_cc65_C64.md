@@ -390,7 +390,10 @@ is what lets banked code use them (see `PLATFORM_API.md`'s "Banked code").
 KERNAL-only calls use CPU mapping `$36`, which keeps KERNAL and I/O visible
 while leaving BASIC hidden. In-place cartridge execution instead requires
 `$01=$37`: use `$DE02=$06` for ROML-only or `$07` for ROML+ROMH. Even the
-ROML-only case reads BASIC ROM, not underlying RAM, at `$A000-$BFFF`.
+ROML-only case reads BASIC ROM, not underlying RAM, at `$A000-$BFFF`. The RH
+service now executes at `$84C0` in that mode; its resident wrapper performs
+mapping-changing hot-type access before entry and all `$B000` redraw work
+after return.
 
 `WORKBSS` currently uses `$B000-$B7BE` for base colors, tile brightness,
 visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
@@ -402,8 +405,8 @@ arguments and accepted that renderer work data will be rebuilt.
 Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current `HIGH` segment has 44 bytes of linker margin, `UPPER` has 65,
-and `PROGRAM` has 42. Inspect `build/game.map` before adding resident logic.
+The current `HIGH` segment has 67 bytes of linker margin, `UPPER` has 34,
+and `PROGRAM` has 44. Inspect `build/game.map` before adding resident logic.
 The VIC display lives beneath KERNAL in bank 3: charsets at `$E800/$F000`,
 screen at `$F800`, and sprite data at `$FC00-$FDFF`.
 

@@ -312,7 +312,7 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
 
 def load_overlay(path: Path, magic: bytes) -> bytes:
     """Load and validate an independently linked $B000-window overlay
-    (room/look/script/save-load helpers); see tools/finalize_inventory_overlay.py,
+    (look/script/save-load helpers); see tools/finalize_inventory_overlay.py,
     which patches the size/BSS/checksum fields this function checks."""
     raw = path.read_bytes()
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOADED_OVERLAY_ADDRESS:
@@ -363,8 +363,8 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     image[start : start + len(bank46)] = bank46
     # Cold records get TYPE_BANK_0's otherwise-unused ROMH half to themselves.
     # They used to trail the Zone C hot table in TYPE_BANK_1's ROML half, which
-    # the room-helpers/script/look-helpers overlays are packed into afterwards -
-    # so the overlays silently overwrote them (see OBJECT_TYPE_COLD_BASE in
+    # the room-helpers/script/look-helpers modules are packed into afterwards -
+    # so those modules silently overwrote them (see OBJECT_TYPE_COLD_BASE in
     # src/platform.c).
     start = TYPE_BANK_0 * BANK_BYTES + ROML_BYTES
     if len(cold_blob) > ROML_BYTES:
@@ -395,7 +395,7 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
         raise ValueError(
             "room_helpers overlaps the object-type Zone C table")
     if room_helpers_place.offset + len(room_helpers_data) > ROML_BYTES:
-        raise ValueError("room-helpers overlay exceeds its ROML half")
+        raise ValueError("room-helpers module exceeds its ROML half")
     start = room_helpers_place.image_offset
     image[start:start + len(room_helpers_data)] = room_helpers_data
     script_place = layout["script"]
@@ -403,7 +403,7 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     if (script_place.bank == room_helpers_place.bank and
             script_place.half == room_helpers_place.half and
             script_place.offset < room_helpers_place.offset + len(room_helpers_data)):
-        raise ValueError("SCRIPT_OFFSET overlaps the room-helpers overlay")
+        raise ValueError("SCRIPT_OFFSET overlaps the room-helpers module")
     if script_place.offset + len(script_data) > ROML_BYTES:
         raise ValueError("script overlay exceeds its ROML half")
     start = script_place.image_offset

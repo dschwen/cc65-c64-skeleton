@@ -53,11 +53,11 @@ interrupts because I/O, including VIC and EasyFlash registers, is hidden.
 | `$3000-$38FF` | tile definitions and property bytes |
 | `$3900-$39F9` | compact resident lookup/code; `$39FA-$39FF` free |
 | `$3A00-$3BEF` | separately loaded native/SID/text/overlay-validator module; `$3BF0-$3BFF` free |
-| `$3C00-$7DD3` | resident platform code and read-only tables |
+| `$3C00-$7DBC` | resident platform code and read-only tables; `$7DBD-$7DFF` free |
 | `$7E00-$7FFF` | current room's resident environment module |
 | `$8000-$85FF` | file-backed fill needed by the contiguous PRG; hidden by ROML in banked calls |
 | `$8600-$8B43` | resident save/world code; `$8B44-$8B47` free |
-| `$8B48-$98BE` | resident game/main/shared room API; `$98BF-$98FF` free |
+| `$8B48-$98DD` | resident game/main/shared room API; `$98DE-$98FF` free |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A479` | maximum 1,146-byte save record, or 146-byte index; `$A47A-$AFFF` free |
@@ -81,7 +81,7 @@ interrupts because I/O, including VIC and EasyFlash registers, is hidden.
 | `$FFFA-$FFFF` | direct NMI/reset/IRQ RAM vectors |
 
 The tightest fixed regions are deliberate and build-checked. Current margins
-include 42 bytes in `PROGRAM`, 44 in `HIGH`, 65 in `UPPER`, 34 in `BSS`, 30
+include 44 bytes in `PROGRAM`, 67 in `HIGH`, 34 in `UPPER`, 34 in `BSS`, 30
 in `RAINMEM`, 24 in `WORLDDELTA`, and 16 in both the text-module range and
 `STATEEXT`. The save-detail overlay has a separately enforced 4,064-byte
 ceiling and currently uses 4,001 bytes including BSS, leaving 95 bytes in the
@@ -124,16 +124,17 @@ The system now has three execution classes:
 1. **Resident code** is ordinary writable RAM code. IRQ entry points, banking
    machinery, frame waits, and anything callable under arbitrary mappings
    must be resident in an always-visible range.
-2. **Copied overlays** (`RH`, `LH`, `SC`, `SL`, `SV`) are copied from cartridge
+2. **Copied overlays** (`LH`, `SC`, `SL`, `SV`) are copied from cartridge
    into `$B000-$BFFF`, validated, run synchronously, and discarded. They may
    use writable code and normal RAM semantics, but cannot call another owner
    of that same window or read renderer `WORKBSS` while they occupy it.
    Resident wrappers stage arguments/results and repair or redraw after return.
-3. **In-place cartridge services** currently include Inventory in bank 48
-   ROMH and Type Info in 8 KiB ROML. Their code is immutable and any read from
-   `$8000-$BFFF` sees ROM/BASIC rather than RAM. Their stack and persistent
-   state therefore live at `$C000-$C178`, and their resident callees must be
-   outside the cartridge window.
+3. **In-place cartridge services** are Inventory in bank 48 ROMH, Room Helpers
+   at `$84C0` in bank 47 ROML, and Type Info at `$9A00` in bank 47 ROML. Their
+   code is immutable and any read from `$8000-$BFFF` sees ROM/BASIC rather than
+   RAM. Their stack and persistent state therefore live outside that window,
+   and every imported callee/data address is checked against the effective
+   mapping. RH's parameter/result block is low resident DATA at `$1F40-$1F46`.
 
 The in-place model removes copy latency and saves overlay RAM only when the
 entire service's mutable-data closure is accessible. It is not a general
@@ -144,7 +145,7 @@ was rejected in testing because 16 KiB ROMH replaced the VIC's charset even
 though the CPU-side RAM contents were correct. Bank 3 solves VIC visibility,
 but its data remains CPU-invisible whenever KERNAL is mapped.
 
-The remaining copied overlays are intentionally retained as a compatibility
+The four remaining copied overlays are intentionally retained as a compatibility
 boundary. Converting one requires a map-derived dependency closure, explicit
 value-oriented inputs/outputs, no self-modifying code, PAL and NTSC IRQ tests,
 and tests while the relevant cartridge half is actually selected. Coarse

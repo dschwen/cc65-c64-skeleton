@@ -432,6 +432,16 @@ bank 46 and then unwinds to bank 48. On return, resident code restores the
 charset split and redraws the room. See `STORY_CODE_API.md` for the callable
 contract and restrictions.
 
+Room Helpers (`RH`) is the second gameplay service converted from a copied
+overlay to this model. Its 452-byte read-only image runs at `$84C0-$8683` in
+bank 47 ROML. The resident wrapper stages a seven-byte argument/result block
+at `$1F40-$1F46`, then enters through `platform_room_helpers_run_banked()`.
+Object-type lookup and dirty-cell discovery deliberately happen before the
+far call: type IDs 106-222 require temporarily exposing RAM under I/O, and the
+lookup restores gameplay `$01=$35`, which would unmap ROML if performed by RH
+itself. Redraw and lighting repair happen after return because their work
+arrays occupy `$B000`, hidden by RH's 8 KiB cartridge mapping.
+
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
 `bank = first_bank + id / per_bank` formula as rooms. Each 256-byte portrait
@@ -518,7 +528,8 @@ bank-switch routine and its copy loop must therefore execute from stable RAM.
 
 Distinct from the loaded overlays above, a module can be linked inside ROML or
 ROMH and **executed straight out of its bank**, never copied into RAM.
-`modules/typeinfo.c` and `modules/inventory.c` use this model.
+`modules/typeinfo.c`, `modules/inventory.c`, and `modules/room_helpers.c` use
+this model.
 
 The rules such a module follows:
 
@@ -553,9 +564,13 @@ to upper RAM.
 Unlike an overlay it needs no header, magic, or run-time checksum, because
 nothing copies it. Build-time validators check its read-only segments, imported
 addresses, linked entry point, packed bytes, and overlap bounds. A banked
-routine may itself bank-switch: Inventory enters bank 47 for type-info while
-running from bank 48, and type-info fetches from bank 46; each nested switch
-restores the caller's bank before execution resumes.
+routine may itself bank-switch only through a nesting-safe far/copy primitive:
+Inventory enters bank 47 for type-info while running from bank 48, and
+type-info fetches from bank 46; each nested switch restores the caller's bank
+before execution resumes. A resident helper that directly changes `$01` is
+not equivalent: if it restores `$35` before returning to a ROML caller, it
+removes that caller's code. RH therefore moves its under-I/O hot-type access
+outside the far call rather than treating a low-address callee as sufficient.
 
 What a banked routine may touch is constrained by the mapping, not by the
 cartridge - see `MEMORY_MAP.md`'s "Banked code and what it may touch".
@@ -626,8 +641,8 @@ straight from EasyFlash into a small scratch buffer whenever
 
 It lives alone in **bank 46's ROMH half**, which nothing else uses, and is read
 with a ROMH copy. It previously trailed the zone-C hot records in bank 47's
-ROML half - but that half also hosts the room-helpers, script and look-helpers
-overlays at fixed offsets, and those are packed afterwards, so they silently
+ROML half - but that half also hosts room-helpers, script and look-helpers
+modules at fixed offsets, and those are packed afterwards, so they silently
 overwrote it. Zone C + the cold table + those three overlays need roughly
 9.5 KiB in an 8 KiB half, so the overlap was unavoidable rather than a tuning
 mistake: every type from the room-helpers offset upward read overlay code
@@ -788,7 +803,7 @@ space. This was the cause of the first black-screen cartridge build.
 
 - Runtime room banks are fixed at 3-45; type pages are banks 46-47 (46 ROML
   holds zones A+B, 46 ROMH the cold name/flags table, 47 ROML zone C plus the
-  room-helpers/script/look-helpers overlays and the in-place banked module);
+  in-place RH/Type Info services and the script/look-helpers overlays);
   portraits are banks 49-56; the generic resource directory reserves
   banks 57-63, the last banks the hardware supports -- no banks remain
   free after it.

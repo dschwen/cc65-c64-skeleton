@@ -24,8 +24,7 @@
       "bank": 47,
       "half": "roml",
       "offset": 1216,
-      "kind": "overlay",
-      "magic": "RH"
+      "kind": "in_place"
     },
     "script": {
       "bank": 47,

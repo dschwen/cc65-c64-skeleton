@@ -1,9 +1,10 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "look_helpers_abi.h"
 #include "platform.h"
 
-/* Independently linked look-helpers overlay ("LH"): the bodies of
+/* Independently linked, in-place look-helpers service ("LH"): the bodies of
  * platform_look_tile(), platform_look_tile_check(), platform_object_take_
  * prompt(), and platform_object_taken_message(), moved out of the always-
  * resident engine (src/platform.c), along with their private look_append
@@ -11,22 +12,16 @@
  * these are used anywhere else. All four are confirmed called only on a
  * discrete confirm action (Look/Take's Enter key in src/main.c, the Take
  * handler in src/game_support.c), never per-keypress during cursor
- * movement and never from a room's own banked-in code, so there is no risk
- * of a load stall on a hot path and no risk of this overlay's load
- * overwriting code that is still executing.
+ * movement and never from a room's own banked-in code.
  *
- * Not here: platform_look_exit() (src/platform.c) - it calls the in-place RH
- * service. RH's 8 KiB ROML mapping puts BASIC over `$A000-$BFFF`, so a call
- * made while LH itself executes at `$B000` would hide LH before control could
- * return. The resident function no longer shares the look_buffer/look_append
- * machinery either - its two messages are fixed literals, written directly.
+ * Not here: platform_look_exit() (src/platform.c), whose two fixed messages
+ * do not use the buffer machinery and which calls RH sequentially.
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
- * arguments into look_helpers_* globals and set look_helpers_op before
- * loading and running this overlay (there is only one native entry point,
- * look_helpers_overlay_run(), since overlay code is always called
- * parameterless - see platform_overlay_run_native()); the result goes back
- * out through look_helpers_result.
+ * arguments into look_helpers_* globals and set look_helpers_op before the
+ * far call. There is one parameterless entry, look_helpers_banked_run(); the
+ * result goes back through look_helpers_result. Private mutable state borrows
+ * the low-RAM room staging buffer through look_helpers_workspace.
  */
 
 #define LOOK_HELPERS_OP_TILE         0u
@@ -43,6 +38,7 @@ extern uint8_t look_helpers_type_id;
 extern uint8_t look_helpers_op;
 extern uint8_t look_helpers_result;
 extern uint8_t look_helpers_light;
+extern LookHelpersWorkspace* look_helpers_workspace;
 
 extern const PlatformRoom* rendered_room;
 extern uint16_t rendered_object_limit;
@@ -62,10 +58,11 @@ static const char take_prompt_prefix[] = "Take: ";
 static const char take_prompt_arrows[] = "   < >";
 static const char taken_suffix[] = " taken.";
 
-static uint8_t look_counts[PLATFORM_OBJECT_TYPE_COUNT];
-static char look_buffer[81];
-static uint8_t look_length;
-static uint8_t look_truncated;
+#define look_counts     (look_helpers_workspace->counts)
+#define look_intersects (look_helpers_workspace->intersects)
+#define look_buffer     (look_helpers_workspace->buffer)
+#define look_length     (look_helpers_workspace->length)
+#define look_truncated  (look_helpers_workspace->truncated)
 
 static void look_append_char(char ch) {
     if (look_length < 80u) {
@@ -143,11 +140,9 @@ static uint8_t look_helpers_tile_check(void) {
         return PLATFORM_ERR_BLOCKED;
     }
 
-    /* Not a read of platform_brightness[offset] here: that array lives in
-     * WORKBSS, the same `$B000` memory this overlay's own code occupies while
-     * running - platform_look_tile_check() (src/platform.c) already read it
-     * resident-side, before loading this overlay, into look_helpers_light.
-     * See that function's own comment. */
+    /* Not a read of platform_brightness[offset] here: ROML execution exposes
+     * BASIC instead of the underlying `$B000` WORKBSS. The resident wrapper
+     * already staged the value in look_helpers_light. */
     light = look_helpers_light & 0x03u;
 
     distance_x = (viewer->x >> 1) > tile_x
@@ -192,17 +187,18 @@ static uint8_t look_helpers_tile(void) {
     memset(look_counts, 0, sizeof(look_counts));
     limit = room == rendered_room ? rendered_object_limit : PLATFORM_ROOM_OBJECT_COUNT;
     for (i = 0u; i < limit; ++i) {
+        look_intersects[i] = 0u;
         type_id = room->objects[i].type;
         if (type_id == 0u ||
             !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
+        look_intersects[i] = 1u;
         if (look_counts[type_id] != 0xffu) ++look_counts[type_id];
     }
     found = 0u;
     for (i = 0u; i < limit; ++i) {
         type_id = room->objects[i].type;
         count = look_counts[type_id];
-        if (type_id == 0u || count == 0u ||
-            !platform_object_intersects_tile(&room->objects[i], tile_x, tile_y)) continue;
+        if (type_id == 0u || count == 0u || !look_intersects[i]) continue;
         if (found) look_append_string(", ");
         if (count > 1u) look_append_count(count);
         look_append_type_name(type_id);
@@ -234,7 +230,7 @@ static uint8_t look_helpers_taken_msg(void) {
     return PLATFORM_OK;
 }
 
-void look_helpers_overlay_run(void) {
+void look_helpers_banked_run(void) {
     switch (look_helpers_op) {
         case LOOK_HELPERS_OP_TILE_CHECK:
             look_helpers_result = look_helpers_tile_check();

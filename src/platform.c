@@ -4,6 +4,7 @@
 #include "easyflash_layout.h"
 #include "platform.h"
 #include "game.h"
+#include "look_helpers_abi.h"
 
 #pragma code-name ("HIGHCODE")
 #pragma rodata-name ("HIGHRODATA")
@@ -109,7 +110,7 @@ void platform_color_clear_native(void);
 void platform_text_area_clear_native(void);
 void __fastcall__ platform_text_output_native(const char* text);
 void platform_room_helpers_run_banked(void);
-void platform_overlay_run_native(void);
+void platform_look_helpers_run_banked(void);
 static void dirty_clear(void);
 static void mark_object_cells(const PlatformObject* object);
 extern uint8_t platform_text_output_color;
@@ -230,10 +231,10 @@ static PlatformRoom room_stage;
  * of room_commit() never touch room_stage again afterward). So the instant
  * the memcpy completes, its memory is free until the *next* transition's
  * room_stage_load(), and room_commit() below claims it immediately for this
- * instead - the same "one buffer, temporally exclusive uses" pattern `$B000`
- * already uses across staging/overlays. Sized via sizeof(room_stage), not a
- * hardcoded constant, so it tracks PlatformRoom automatically if that
- * struct's own size ever changes. */
+ * instead. LH also borrows this memory for its counts and text buffer between
+ * transitions; the workspace is 595 bytes versus the
+ * 1,001-byte room buffer. Sized via sizeof(room_stage), not a hardcoded
+ * constant, so it tracks PlatformRoom automatically if that struct changes. */
 #define PLATFORM_ROOM_SCRATCH_BUFFER ((uint8_t*)&room_stage)
 #define PLATFORM_ROOM_SCRATCH_MAX_BYTES ((uint16_t)sizeof(room_stage))
 #pragma bss-name (push, "WORKBSS")
@@ -286,11 +287,13 @@ static uint8_t object_type_is_valid(const PlatformObjectType* type) {
 #pragma code-name (push, "HIGHCODE")
 const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
     uint8_t irq_status;
+    uint8_t cpu_port;
 
     if (type_id < OBJECT_TYPE_ZONE_A_COUNT) {
         return &object_types_a[type_id];
     }
     irq_status = platform_irq_save_disable();
+    cpu_port = *(volatile uint8_t*)0x0001u;
     platform_memory_all_ram();
     if (type_id < OBJECT_TYPE_ZONE_AB_COUNT) {
         memcpy(&platform_object_type_scratch,
@@ -301,7 +304,11 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
                &object_types_c[type_id - OBJECT_TYPE_ZONE_AB_COUNT],
                sizeof(platform_object_type_scratch));
     }
-    platform_memory_game();
+    /* Restore the caller's exact map, not an assumed gameplay `$35`. This
+     * accessor is called transitively by collision/render helpers and may be
+     * reached from an in-place ROML service whose code requires `$37`.
+     * Hard-coding `$35` here removed that caller before its next instruction. */
+    *(volatile uint8_t*)0x0001u = cpu_port;
     platform_irq_restore(irq_status);
     return &platform_object_type_scratch;
 }
@@ -452,8 +459,8 @@ uint16_t platform_resource_last_size(void) {
 #pragma code-name (pop)
 
 /*
- * Generic loaded-overlay fetch, shared by the remaining $B000-$BFFF overlays
- * (room/look/script and save/load): copy the fixed
+ * Generic loaded-overlay fetch, shared by the remaining `$B000-$BFFF`
+ * script and save/load overlays: copy the fixed
  * 16-byte header from the given EasyFlash bank/half, read its declared
  * size, copy the complete payload, then hand off to the native validator
  * (src/inventory_api.s) with the requested magic bytes. Resident code
@@ -531,11 +538,9 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 }
 
 /* UPPERCODE purely for segment balance. Before entering ROML, compute light
- * and dirty cells resident-side. `mark_object_cells()` can transitively call
- * `platform_object_type_get()`, whose under-I/O path restores gameplay `$35`;
- * doing that from ROML would unmap the service before its RTS. The service
- * performs only the object mutation and rendered-limit update. Redraw and
- * lighting repair also remain resident because they use `$B000` WORKBSS. */
+ * and dirty cells resident-side. The service performs only the object
+ * mutation and rendered-limit update; redraw and lighting repair also remain
+ * resident because they use `$B000` WORKBSS. */
 #pragma code-name (push, "UPPERCODE")
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player) {
@@ -567,20 +572,19 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
 #pragma code-name (pop)
 
 /*
- * Look-helpers overlay ("LH"): platform_look_tile/_check/object_take_prompt/
- * object_taken_message's actual bodies (modules/look_helpers.c). It shares
- * bank 47 ROML with the RH in-place service and the SC copied overlay; see
- * cfg/easyflash_layout.json. platform_look_exit() stays resident: calling RH
- * while executing LH at `$B000` would select 8 KiB cartridge mode, map BASIC
- * over `$A000-$BFFF`, and hide LH's next instruction before RH returned.
+ * In-place Look Helpers service ("LH"): platform_look_tile/_check/object_
+ * take_prompt/object_taken_message's bodies (modules/look_helpers.c). It runs
+ * at `$9300` in bank 47 ROML and borrows room_stage for temporary state.
+ * platform_look_exit() remains resident because its two fixed messages do not
+ * need LH's formatting machinery and it calls RH sequentially.
  */
 #define LOOK_HELPERS_OP_TILE         0u
 #define LOOK_HELPERS_OP_TILE_CHECK   1u
 #define LOOK_HELPERS_OP_TAKE_PROMPT  2u
 #define LOOK_HELPERS_OP_TAKEN_MSG    3u
 
-/* Explicitly zero-initialized (not plain BSS) so this copied overlay's ABI
- * does not consume the already-full resident BSS segment. */
+/* Explicitly initialized into low DATA so every field remains visible while
+ * ROML and BASIC hide `$8000-$BFFF`. */
 const PlatformRoom* look_helpers_room = 0;
 const PlatformObject* look_helpers_viewer = 0;
 uint8_t look_helpers_tile_x = 0;
@@ -589,9 +593,9 @@ uint8_t look_helpers_color = 0;
 uint8_t look_helpers_type_id = 0;
 uint8_t look_helpers_op = 0;
 uint8_t look_helpers_result = 0;
-/* Set here, before the overlay loads - see platform_look_tile_check()'s own
- * comment for why look_helpers_tile_check() (modules/look_helpers.c) cannot
- * read platform_brightness[] itself. */
+LookHelpersWorkspace* look_helpers_workspace = 0;
+/* Set here before the far call; see platform_look_tile_check()'s comment for
+ * why banked code cannot read platform_brightness[] itself. */
 uint8_t look_helpers_light = 0;
 
 #pragma code-name (push, "HIGHCODE")
@@ -599,98 +603,51 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
                                  uint8_t color) {
-    uint8_t status;
-
     look_helpers_op = LOOK_HELPERS_OP_TILE_CHECK;
+    look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_room = room;
     look_helpers_viewer = viewer;
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
     /* Prefetch the tile's brightness here, resident-side, instead of letting
-     * look_helpers_tile_check() (modules/look_helpers.c) read
-     * platform_brightness[] itself while running: that array lives in
-     * WORKBSS, the same `$B000` memory the LOOK_HELPERS overlay's own compiled
-     * code occupies once loaded, so a read from inside the overlay returns
-     * the overlay's own bytes instead of real brightness data - silently
-     * wrong "too dark"/"visible" judgments, found live as part of the same
-     * WORKBSS-aliasing bug that corrupted the screen after Take (see
-     * platform_room_object_remove()'s comment). Bounds-checked the same way
-     * the overlay itself checks before using tile_x/tile_y, since an
-     * out-of-range pair here would otherwise read a plausible-looking but
-     * wrong array element. */
+     * look_helpers_tile_check() read platform_brightness[] while ROML is
+     * mapped: that array is at `$B000`, where 8 KiB mode exposes BASIC rather
+     * than RAM. Bounds-check before reading so invalid API arguments cannot
+     * stage a plausible-looking value from the wrong cell. */
     look_helpers_light = (tile_x < PLATFORM_MAP_WIDTH && tile_y < PLATFORM_MAP_HEIGHT)
                              ? platform_brightness[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x]
                              : 0u;
-    /* Keep the existing load presentation conservative. Bank copies now
-     * restore the caller's interrupt state while copying, so the raster split
-     * continues to run; blanking still avoids showing an intermediate UI state
-     * around a multi-frame load and can be reevaluated visually later. */
-    platform_screen_blank();
-    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
-                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
-    platform_screen_unblank();
-    if (status != PLATFORM_OK) return status;
-    platform_overlay_run_native();
+    platform_look_helpers_run_banked();
     return look_helpers_result;
 }
 
 uint8_t platform_look_tile(const PlatformRoom* room,
                            uint8_t tile_x, uint8_t tile_y, uint8_t color) {
-    uint8_t status;
-
     look_helpers_op = LOOK_HELPERS_OP_TILE;
+    look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_room = room;
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
-    platform_screen_blank();
-    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
-                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
-    platform_screen_unblank();
-    if (status != PLATFORM_OK) return status;
-    platform_overlay_run_native();
+    platform_look_helpers_run_banked();
     return look_helpers_result;
 }
 
 void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
-    uint8_t status;
-
     look_helpers_op = LOOK_HELPERS_OP_TAKE_PROMPT;
+    look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    platform_screen_blank();
-    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
-                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
-    platform_screen_unblank();
-    if (status != PLATFORM_OK) return;
-    platform_overlay_run_native();
+    platform_look_helpers_run_banked();
 }
 
 void platform_object_taken_message(uint8_t type_id, uint8_t color) {
-    uint8_t status;
-
     look_helpers_op = LOOK_HELPERS_OP_TAKEN_MSG;
+    look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    platform_screen_blank();
-    status = platform_overlay_load(EF_LAYOUT_LOOK_HELPERS_BANK,
-                                   EF_LAYOUT_LOOK_HELPERS_USE_ROMH,
-                                   EF_LAYOUT_LOOK_HELPERS_OFFSET,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_0,
-                                   EF_LAYOUT_LOOK_HELPERS_MAGIC_1);
-    platform_screen_unblank();
-    if (status != PLATFORM_OK) return;
-    platform_overlay_run_native();
+    platform_look_helpers_run_banked();
 }
 #pragma code-name (pop)
 
@@ -1767,7 +1724,7 @@ void platform_text_write_line(uint8_t line, uint8_t column,
     }
 }
 
-/* Lets a one-shot overlay (e.g. the script/conversation interpreter) borrow
+/* Lets a one-shot service (currently the script interpreter and LH) borrow
  * this same buffer as scratch RAM while it runs, the same "temporally
  * exclusive" reuse room_commit() already does with room_stage itself. Only
  * safe between room_commit() calls (i.e. while no transition is staging a
@@ -1820,8 +1777,8 @@ uint8_t platform_object_intersects_tile(const PlatformObject* object,
     return 0u;
 }
 
-/* platform_look_tile_check()'s real body now lives in the look-helpers
- * overlay (see the platform_look_tile_check wrapper earlier in this file);
+/* platform_look_tile_check()'s real body now lives in the in-place LH service
+ * (see the platform_look_tile_check wrapper earlier in this file);
  * platform_look_exit() calls that wrapper like any other caller. Its own
  * two messages are fixed literals - unlike look_tile/_check's dynamically
  * assembled ones, they need none of the moved look_buffer/look_append_*

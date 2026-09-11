@@ -437,10 +437,21 @@ overlay to this model. Its 452-byte read-only image runs at `$84C0-$8683` in
 bank 47 ROML. The resident wrapper stages a seven-byte argument/result block
 at `$1F40-$1F46`, then enters through `platform_room_helpers_run_banked()`.
 Object-type lookup and dirty-cell discovery deliberately happen before the
-far call: type IDs 106-222 require temporarily exposing RAM under I/O, and the
-lookup restores gameplay `$01=$35`, which would unmap ROML if performed by RH
-itself. Redraw and lighting repair happen after return because their work
-arrays occupy `$B000`, hidden by RH's 8 KiB cartridge mapping.
+far call. When RH was converted, type IDs 106-222 restored a hard-coded
+gameplay `$01=$35` after exposing RAM under I/O, which would have unmapped RH.
+The accessor now restores its caller's exact map (required by LH), but RH keeps
+the cleaner mutation-only service boundary. Redraw and lighting repair happen
+after return because their arrays occupy `$B000`, hidden by 8 KiB mode.
+
+Look Helpers (`LH`) now runs at `$9300-$9AE0` in the same bank. Its former 339-byte
+BSS (per-type counts plus an 81-byte text buffer and two scalars), plus a
+256-byte per-object hit cache, borrows the otherwise-idle 1,001-byte
+room-staging buffer at `$2400`. The hit cache avoids repeating collision and
+its IRQ-masked 35-byte hot-type copy during the formatting pass. Calls to Type Info nest from
+LH to `$9F80` in the same bank. Collision can touch hot types beneath I/O, so
+`platform_object_type_get()` saves/restores the caller's exact `$01` byte
+rather than assuming gameplay `$35`. PAL and NTSC traces exercise type 106,
+the nested Type Info call, frame IRQ progress, and final bank/map restoration.
 
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
@@ -528,8 +539,8 @@ bank-switch routine and its copy loop must therefore execute from stable RAM.
 
 Distinct from the loaded overlays above, a module can be linked inside ROML or
 ROMH and **executed straight out of its bank**, never copied into RAM.
-`modules/typeinfo.c`, `modules/inventory.c`, and `modules/room_helpers.c` use
-this model.
+`modules/typeinfo.c`, `modules/inventory.c`, `modules/room_helpers.c`, and
+`modules/look_helpers.c` use this model.
 
 The rules such a module follows:
 
@@ -567,10 +578,11 @@ addresses, linked entry point, packed bytes, and overlap bounds. A banked
 routine may itself bank-switch only through a nesting-safe far/copy primitive:
 Inventory enters bank 47 for type-info while running from bank 48, and
 type-info fetches from bank 46; each nested switch restores the caller's bank
-before execution resumes. A resident helper that directly changes `$01` is
-not equivalent: if it restores `$35` before returning to a ROML caller, it
-removes that caller's code. RH therefore moves its under-I/O hot-type access
-outside the far call rather than treating a low-address callee as sufficient.
+before execution resumes. Resident helpers that change `$01` must obey the
+same rule. `platform_object_type_get()` now saves and restores the exact caller
+map; its former hard-coded `$35` return removed ROML callers even though the
+helper's own address was below `$8000`. Direct-import validation cannot infer
+that side effect, so emulator coverage remains part of this ABI.
 
 What a banked routine may touch is constrained by the mapping, not by the
 cartridge - see `MEMORY_MAP.md`'s "Banked code and what it may touch".
@@ -625,8 +637,9 @@ take up the difference. `$E483-$FFF9` is free RAM.
 
 A renderer can access types 0-105 directly, and types 223-255 while the
 gameplay mapping is `$35`. For types 106-222 it must disable interrupts,
-select the `$34`-equivalent low bits, copy the one 35-byte record to an
-always-visible scratch record, restore `$35`, then render from scratch. It
+save the caller's `$01`, select the `$34`-equivalent low bits, copy the one
+35-byte record to an always-visible scratch record, restore the saved map,
+then render from scratch. It
 cannot draw directly while `$D000` RAM is selected because screen colors and
 VIC registers are hidden at the same time.
 
@@ -803,7 +816,7 @@ space. This was the cause of the first black-screen cartridge build.
 
 - Runtime room banks are fixed at 3-45; type pages are banks 46-47 (46 ROML
   holds zones A+B, 46 ROMH the cold name/flags table, 47 ROML zone C plus the
-  in-place RH/Type Info services and the script/look-helpers overlays);
+  in-place RH/LH/Type Info services and the script overlay);
   portraits are banks 49-56; the generic resource directory reserves
   banks 57-63, the last banks the hardware supports -- no banks remain
   free after it.

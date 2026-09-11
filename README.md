@@ -27,6 +27,7 @@ Outputs:
 - `build/text.prg`
 - `build/IV` (inventory UI and story-specific in-place cartridge service)
 - `build/RH` (in-place room-neighbor/object-removal service)
+- `build/LH` (in-place Look/Take text service)
 - `build/game.map`
 - `build/game.lbl`
 

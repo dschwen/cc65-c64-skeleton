@@ -81,7 +81,7 @@ interrupts because I/O, including VIC and EasyFlash registers, is hidden.
 | `$FFFA-$FFFF` | direct NMI/reset/IRQ RAM vectors |
 
 The tightest fixed regions are deliberate and build-checked. Current margins
-include 44 bytes in `PROGRAM`, 67 in `HIGH`, 34 in `UPPER`, 34 in `BSS`, 30
+include 42 bytes in `PROGRAM`, 218 in `HIGH`, 34 in `UPPER`, 34 in `BSS`, 30
 in `RAINMEM`, 24 in `WORLDDELTA`, and 16 in both the text-module range and
 `STATEEXT`. The save-detail overlay has a separately enforced 4,064-byte
 ceiling and currently uses 4,001 bytes including BSS, leaving 95 bytes in the
@@ -124,17 +124,20 @@ The system now has three execution classes:
 1. **Resident code** is ordinary writable RAM code. IRQ entry points, banking
    machinery, frame waits, and anything callable under arbitrary mappings
    must be resident in an always-visible range.
-2. **Copied overlays** (`LH`, `SC`, `SL`, `SV`) are copied from cartridge
+2. **Copied overlays** (`SC`, `SL`, `SV`) are copied from cartridge
    into `$B000-$BFFF`, validated, run synchronously, and discarded. They may
    use writable code and normal RAM semantics, but cannot call another owner
    of that same window or read renderer `WORKBSS` while they occupy it.
    Resident wrappers stage arguments/results and repair or redraw after return.
 3. **In-place cartridge services** are Inventory in bank 48 ROMH, Room Helpers
-   at `$84C0` in bank 47 ROML, and Type Info at `$9A00` in bank 47 ROML. Their
+   at `$84C0` in bank 47 ROML, Look Helpers at `$9300` in bank 47 ROML, and
+   Type Info at `$9F80` in bank 47 ROML. Their
    code is immutable and any read from `$8000-$BFFF` sees ROM/BASIC rather than
    RAM. Their stack and persistent state therefore live outside that window,
    and every imported callee/data address is checked against the effective
-   mapping. RH's parameter/result block is low resident DATA at `$1F40-$1F46`.
+   mapping. RH's parameter/result block is low resident DATA at `$1F40-$1F46`;
+   LH borrows 595 bytes of otherwise-idle room staging RAM for hit/count/text
+   scratch, avoiding a second mapping-sensitive collision pass.
 
 The in-place model removes copy latency and saves overlay RAM only when the
 entire service's mutable-data closure is accessible. It is not a general
@@ -145,7 +148,7 @@ was rejected in testing because 16 KiB ROMH replaced the VIC's charset even
 though the CPU-side RAM contents were correct. Bank 3 solves VIC visibility,
 but its data remains CPU-invisible whenever KERNAL is mapped.
 
-The four remaining copied overlays are intentionally retained as a compatibility
+The three remaining copied overlays are intentionally retained as a compatibility
 boundary. Converting one requires a map-derived dependency closure, explicit
 value-oriented inputs/outputs, no self-modifying code, PAL and NTSC IRQ tests,
 and tests while the relevant cartridge half is actually selected. Coarse

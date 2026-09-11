@@ -1007,7 +1007,7 @@ and **executed straight from its bank**, never copied into RAM. Call one with
 the `FAR_CALL` macro (`src/platform.inc`):
 
 ```asm
-    FAR_CALL 47, $9A00, CPU_MAP_CART_8K, EASYFLASH_8K
+    FAR_CALL 47, $9F80, CPU_MAP_CART_8K, EASYFLASH_8K
 ```
 
 It patches the bank, target, CPU map, and EasyFlash control into a single
@@ -1047,9 +1047,11 @@ return.
 `platform_object_type_info_get()`, the complete Inventory UI, and the Room
 Helpers service run this way; see `modules/typeinfo.c`, `modules/inventory.c`,
 `modules/room_helpers.c`, their linker files under `cfg/`, and the resident
-stubs in `src/banked_api.s` for the pattern. RH deliberately performs any
-hot-type lookup before entry because that lookup may restore `$01=$35` and
-would unmap a ROML caller.
+stubs in `src/banked_api.s` for the pattern. RH deliberately performs its
+hot-type lookup before entry to keep the cartridge operation mutation-only.
+LH can call collision directly because `platform_object_type_get()` now
+restores the exact caller map after exposing RAM under I/O, rather than
+hard-coding `$01=$35` and unmapping a ROML caller.
 `EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
 
 Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with

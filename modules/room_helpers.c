@@ -63,11 +63,10 @@ static uint8_t room_helpers_neighbor(void) {
     return PLATFORM_OK;
 }
 
-/* Only mutate the object array and resident rendered-object limit. Dirty-cell
- * marking and light lookup stay in the resident wrapper: their transitive
- * path may select all-RAM `$01=$34` and restore gameplay `$35`, which would
- * unmap this ROML service before its RTS. Keeping that mapping boundary
- * outside the far call is part of the in-place ABI. */
+/* Only mutate the object array and resident rendered-object limit. Light,
+ * dirty-cell, redraw, and lighting work stay in the resident wrapper so this
+ * immutable service has one small, explicit side-effect boundary and never
+ * depends on `$B000` renderer workspace. */
 static uint8_t room_helpers_object_remove(void) {
     PlatformRoom* room;
     PlatformObject* object;

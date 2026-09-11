@@ -18,6 +18,7 @@
 
 .export _platform_object_type_info_get
 .export _platform_inventory_run_banked
+.export _platform_look_helpers_run_banked
 .export _platform_room_helpers_run_banked
 
 ; Bank and CPU entry come from the same generated layout consumed by the
@@ -46,4 +47,10 @@ _platform_inventory_run_banked:
 ; Parameters and result live in low resident DATA; see src/platform.c.
 _platform_room_helpers_run_banked:
     FAR_CALL EF_LAYOUT_ROOM_HELPERS_BANK, EF_LAYOUT_ROOM_HELPERS_ENTRY, EF_LAYOUT_ROOM_HELPERS_CPU_MAP, EF_LAYOUT_ROOM_HELPERS_CONTROL
+    rts
+
+; void platform_look_helpers_run_banked(void)
+; Parameters and room-staging workspace pointer live in low resident DATA.
+_platform_look_helpers_run_banked:
+    FAR_CALL EF_LAYOUT_LOOK_HELPERS_BANK, EF_LAYOUT_LOOK_HELPERS_ENTRY, EF_LAYOUT_LOOK_HELPERS_CPU_MAP, EF_LAYOUT_LOOK_HELPERS_CONTROL
     rts

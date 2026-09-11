@@ -405,8 +405,8 @@ arguments and accepted that renderer work data will be rebuilt.
 Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
 the overlay map files whenever adding fixed buffers or resident APIs.
 
-The current `HIGH` segment has 67 bytes of linker margin, `UPPER` has 34,
-and `PROGRAM` has 44. Inspect `build/game.map` before adding resident logic.
+The current `HIGH` segment has 218 bytes of linker margin, `UPPER` has 34,
+and `PROGRAM` has 42. Inspect `build/game.map` before adding resident logic.
 The VIC display lives beneath KERNAL in bank 3: charsets at `$E800/$F000`,
 screen at `$F800`, and sprite data at `$FC00-$FDFF`.
 

@@ -108,7 +108,7 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {
 
 /* UPPERCODE is nearly full (see cfg/myc64.cfg) - these four functions land
  * in HIGHCODE instead, matching this session's earlier precedent of moving
- * new wrapper functions there under the same pressure (see the "LH" overlay
+ * new wrapper functions there under the same pressure (see the LH service
  * work). Both are equally resident/always-callable from anywhere; this is
  * purely about which fixed memory region absorbs the bytes. */
 #pragma code-name (push, "HIGHCODE")

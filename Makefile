@@ -142,7 +142,7 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/banked_room_helpers.cfg
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
 # Banked type-info module executed in place from its EasyFlash bank (never
-# copied into RAM, like Inventory and RH and unlike the SC/LH/SL/SV overlays)
+# copied into RAM, like Inventory/RH/LH and unlike the SC/SL/SV overlays)
 # - see the banked module linker configurations.
 TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
 TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
@@ -154,8 +154,7 @@ LOOK_HELPERS_C_OBJ := $(OUTDIR)/look-helpers-module.o
 LOOK_HELPERS_HEADER_OBJ := $(OUTDIR)/look-helpers-header.o
 LOOK_HELPERS_RESOLVER_SRC := $(OUTDIR)/look-helpers-resolver.s
 LOOK_HELPERS_RESOLVER_OBJ := $(OUTDIR)/look-helpers-resolver.o
-LOOK_HELPERS_MODULE_CFG := cfg/look_helpers_overlay.cfg
-LOOK_HELPERS_MODULE_RAW := $(OUTDIR)/look-helpers.raw
+LOOK_HELPERS_MODULE_CFG := cfg/banked_look_helpers.cfg
 LOOK_HELPERS_MODULE := $(OUTDIR)/LH
 SCRIPT_C_OBJ := $(OUTDIR)/script-module.o
 SCRIPT_HEADER_OBJ := $(OUTDIR)/script-header.o
@@ -424,7 +423,8 @@ $(TYPEINFO_MODULE): $(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) \
 		--module typeinfo --map $(OUTDIR)/typeinfo.map \
 		--resolver $(TYPEINFO_RESOLVER_SRC)
 
-$(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h | $(OUTDIR)
+$(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h \
+		src/look_helpers_abi.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(LOOK_HELPERS_HEADER_OBJ): modules/look_helpers_header.s | $(OUTDIR)
@@ -438,16 +438,15 @@ $(LOOK_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(LOOK_HELPERS_C_OBJ) \
 $(LOOK_HELPERS_RESOLVER_OBJ): $(LOOK_HELPERS_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(LOOK_HELPERS_MODULE_RAW): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
-		$(LOOK_HELPERS_RESOLVER_OBJ) $(LOOK_HELPERS_MODULE_CFG)
+$(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
+		$(LOOK_HELPERS_RESOLVER_OBJ) $(LOOK_HELPERS_MODULE_CFG) \
+		tools/validate_banked_module.py
 	$(LD65) -C $(LOOK_HELPERS_MODULE_CFG) -m $(OUTDIR)/look-helpers.map -o $@ \
 		$(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
 		$(LOOK_HELPERS_RESOLVER_OBJ)
-
-$(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/look-helpers.map --magic LH --output $@
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module look_helpers --map $(OUTDIR)/look-helpers.map \
+		--resolver $(LOOK_HELPERS_RESOLVER_SRC)
 
 $(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
@@ -573,6 +572,7 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
 		--script $(SCRIPT_MODULE) --look-helpers $(LOOK_HELPERS_MODULE) \
 		--typeinfo $(TYPEINFO_MODULE) --inventory-map $(OUTDIR)/inventory.map \
+		--look-helpers-map $(OUTDIR)/look-helpers.map \
 		--room-helpers-map $(OUTDIR)/room-helpers.map \
 		--typeinfo-map $(OUTDIR)/typeinfo.map
 

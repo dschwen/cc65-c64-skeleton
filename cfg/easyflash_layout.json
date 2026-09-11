@@ -37,13 +37,12 @@
       "bank": 47,
       "half": "roml",
       "offset": 4864,
-      "kind": "overlay",
-      "magic": "LH"
+      "kind": "in_place"
     },
     "typeinfo": {
       "bank": 47,
       "half": "roml",
-      "offset": 6656,
+      "offset": 8064,
       "kind": "in_place"
     }
   }

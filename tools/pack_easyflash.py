@@ -312,7 +312,7 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
 
 def load_overlay(path: Path, magic: bytes) -> bytes:
     """Load and validate an independently linked $B000-window overlay
-    (look/script/save-load helpers); see tools/finalize_inventory_overlay.py,
+    (script and save-load helpers); see tools/finalize_inventory_overlay.py,
     which patches the size/BSS/checksum fields this function checks."""
     raw = path.read_bytes()
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOADED_OVERLAY_ADDRESS:
@@ -415,7 +415,7 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
             look_helpers_place.offset < script_place.offset + len(script_data)):
         raise ValueError("LOOK_HELPERS_OFFSET overlaps the script overlay")
     if look_helpers_place.offset + len(look_helpers_data) > ROML_BYTES:
-        raise ValueError("look-helpers overlay exceeds its ROML half")
+        raise ValueError("look-helpers module exceeds its ROML half")
     start = look_helpers_place.image_offset
     image[start:start + len(look_helpers_data)] = look_helpers_data
     typeinfo_place = layout["typeinfo"]
@@ -423,7 +423,7 @@ def build_image(base: bytes, asset_dir: Path, object_types: Path,
     if (typeinfo_place.bank == look_helpers_place.bank and
             typeinfo_place.half == look_helpers_place.half and
             typeinfo_place.offset < look_helpers_place.offset + len(look_helpers_data)):
-        raise ValueError("TYPEINFO_OFFSET overlaps the look-helpers overlay")
+        raise ValueError("TYPEINFO_OFFSET overlaps the look-helpers module")
     if typeinfo_place.offset + len(typeinfo_data) > ROML_BYTES:
         raise ValueError("banked typeinfo module exceeds its ROML half")
     start = typeinfo_place.image_offset

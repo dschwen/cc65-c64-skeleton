@@ -2,18 +2,20 @@
 
 #include "game.h"
 #include "script_format.h"
+#include "script_abi.h"
 
-/* Independently linked script/conversation/room interpreter overlay ("SC").
+/* Independently linked script/conversation/room interpreter service ("SC").
+ * Its code and constants execute directly from bank 47 ROML at $8800; all
+ * mutable state is explicitly resident below $8000 (see script_abi.h).
  * Executes the bytecode format tools/compile_script.py compiles (see that
  * tool's docstring for the exact format and opcode encoding - this file
  * must stay in sync with it by hand, there is no shared source of truth).
  *
- * Loaded and run via game_script_play()/game_room_script_entry() in
- * src/script_runtime.c, the same `$B000` pattern as every other overlay. The
- * compiled bytecode itself is separate from this overlay's own code:
- * fetched at run time from the generic sparse resource directory
- * (standalone scripts/conversations use resource IDs 240-255; a room's own
- * script uses resource_id == room_id, 0-239), which can be up to
+ * Called via game_script_play()/game_room_script_entry() in
+ * src/script_runtime.c. The compiled bytecode is separate from the service:
+ * fetched at run time from the generic sparse resource directories
+ * (room scripts, standalone scripts, and conversations each have an
+ * independent 0-255 ID space), which can be up to
  * PLATFORM_RESOURCE_MAX_BYTES (8 KiB) - far more than fits at once in
  * platform_room_scratch()'s resident buffer (room_stage's memory, borrowed
  * - see platform.h, ~1 KiB). So script_buf holds a *sliding window* into
@@ -21,14 +23,14 @@
  * for how byte access re-fetches a fresh window on demand via
  * platform_resource_fetch_range().
  *
- * For a KIND_ROOM resource, game_room_script_entry() hands this overlay the
+ * For a KIND_ROOM resource, game_room_script_entry() hands this service the
  * requested entry key (script_entry_key) and this file finds it in the
  * entry table itself (find_room_entry(), mirroring find_topic() but with a
  * plain numeric key and no fallback - an unmatched key is a normal,
  * silent no-op, not an error), reporting back through script_entry_found
  * whether anything actually ran.
  *
- * Like modules/inventory.c and modules/saveload.c, this overlay links
+ * Like the other independently linked banked modules, this service links
  * against no cc65 runtime library (the resident game binary doesn't export
  * those helpers for the overlay resolver to bind against). Beyond their
  * documented avoid-list (memcpy/memset, division/modulo by a non-power-of-2
@@ -85,7 +87,7 @@ extern uint8_t platform_text_output_line;
 
 /* script_buf holds a sliding *window* into the resource, not the whole
  * thing - a resource can be up to PLATFORM_RESOURCE_MAX_BYTES (8 KiB; see
- * platform.h) now, far more than this overlay's resident buffer
+ * platform.h) now, far more than this service's resident buffer
  * (platform_room_scratch(), ~1 KiB) can hold at once. window_base is the
  * absolute resource offset script_buf[0] currently represents; window_len
  * is how many bytes from there are actually valid. Every byte access goes
@@ -96,11 +98,11 @@ extern uint8_t platform_text_output_line;
  * many opcodes/table entries at once. script_len is the resource's total
  * size (platform_resource_last_size()), the upper bound exec_block and the
  * table scanners loop against - not how much is currently cached. */
-static uint8_t* script_buf;
-static uint16_t script_cap;
-static uint16_t window_base;
-static uint16_t window_len;
-static uint16_t script_len;
+#define script_buf  script_workspace.buffer
+#define script_cap  script_workspace.capacity
+#define window_base script_workspace.window_base
+#define window_len  script_workspace.window_length
+#define script_len  script_workspace.resource_length
 
 /* Unconditionally re-centers the window at `pos`, even if `pos` was already
  * covered by the current window - used by say() so a string gets the full
@@ -143,17 +145,15 @@ static uint16_t read_u16(uint16_t pos) {
  * Otherwise, ensure_window_at(offset) re-centers script_buf so the string
  * starts at script_buf[0] with the window's full remaining capacity behind
  * it (same trick say() uses), then hands that contiguous pointer straight
- * to game_transition_show_message() - a resident function, not another
- * banked overlay, so this is safe to call directly, the same way this file
- * already calls game_transition_request(). Must happen now, synchronously,
- * before this overlay returns and script_buf's window is gone. */
+ * through the explicit RAM host gate. Must happen now, synchronously, before
+ * the service returns and script_buf's window is reused. */
 static void set_transition_message(uint16_t offset) {
     if (offset == TRANSITION_MSG_NONE) {
         game_transition_pending_message = 0u;
         return;
     }
     ensure_window_at(offset);
-    game_transition_show_message((const char*)script_buf);
+    script_host_transition_show_message((const char*)script_buf);
 }
 
 /* Written as explicit if/return, not `return (a == b);` - a bare comparison
@@ -249,7 +249,7 @@ static void say(uint16_t str_offset) {
     platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
     platform_text_output_color = 1u;
     platform_text_output_native((const char*)script_buf);
-    /* Tell run_loaded_overlay() (src/script_runtime.c) there is text on
+    /* Tell run_banked_script() (src/script_runtime.c) there is text on
      * screen worth pausing for before its cleanup wipes it - except for a
      * conversation's own topic answers, which that function's comment
      * explains are already paced by the conversation loop itself. */
@@ -277,11 +277,11 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 3u;
                 break;
             case OP_PORTRAIT_SHOW:
-                (void)platform_portrait_show(read_byte(pos + 1u), read_byte(pos + 2u));
+                (void)script_host_portrait_show(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             case OP_PORTRAIT_HIDE:
-                platform_portrait_hide();
+                script_host_portrait_hide();
                 pos += 1u;
                 break;
             case OP_SET_FLAG:
@@ -318,9 +318,9 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * The optional message string must be copied out now too,
                  * for the same reason - see set_transition_message(). */
                 set_transition_message(read_u16(pos + 4u));
-                (void)game_transition_request(read_byte(pos + 1u),
-                                              read_byte(pos + 2u),
-                                              read_byte(pos + 3u));
+                (void)script_host_transition_request(read_byte(pos + 1u),
+                                                     read_byte(pos + 2u),
+                                                     read_byte(pos + 3u));
                 pos += 6u;
                 break;
             case OP_SOUND:
@@ -328,7 +328,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 2u;
                 break;
             case OP_GIVE_OBJECT:
-                (void)game_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
+                (void)script_host_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             case OP_ROOM_TRANSITION_HERE:
@@ -338,9 +338,9 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * the character-cell grid) - the same unit game_state.
                  * player_x/y already use, so no conversion is needed. */
                 set_transition_message(read_u16(pos + 2u));
-                (void)game_transition_request(read_byte(pos + 1u),
-                                              game_state.player_x,
-                                              game_state.player_y);
+                (void)script_host_transition_request(read_byte(pos + 1u),
+                                                     game_state.player_x,
+                                                     game_state.player_y);
                 pos += 4u;
                 break;
             case OP_SET_BIT:
@@ -352,7 +352,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 3u;
                 break;
             case OP_LIGHTNING:
-                platform_lightning();
+                script_host_lightning();
                 pos += 1u;
                 break;
             default:

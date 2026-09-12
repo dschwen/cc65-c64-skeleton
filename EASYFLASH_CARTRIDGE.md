@@ -453,6 +453,16 @@ LH to `$9F80` in the same bank. Collision can touch hot types beneath I/O, so
 rather than assuming gameplay `$35`. PAL and NTSC traces exercise type 106,
 the nested Type Info call, frame IRQ progress, and final bank/map restoration.
 
+The script interpreter (`SC`) runs at `$8800-$9248`, between RH and LH. Its
+code/RODATA image is 2,633 bytes and owns no writable linked segment. Script
+content still streams through the `$2400` room-staging buffer; ten bytes at
+`$27E9-$27F2` hold its sliding-window descriptor. Opcodes that need upper RAM
+code or `$B000` data call six small public gates backed by one shared resident
+dispatcher. The dispatcher uses the reentrant far-call trampoline with
+cartridge-off `$35/$04`; nested cartridge fetches therefore unwind to RAM
+mode, and the outer call finally restores bank 47 ROML `$37/$06`. PAL and NTSC
+traces cover all gates, including the portrait gate's nested resource fetch.
+
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
 `bank = first_bank + id / per_bank` formula as rooms. Each 256-byte portrait
@@ -703,9 +713,9 @@ lines 227-311 as a bottom event, rather than waiting almost a complete frame.
 The executable image also contains an independently linked resident helper and
 bottom-text module after the main payload in bank 2. The RAM-resident bootstrap
 copies it to `$3A00-$3BEF` before disabling EasyFlash; the pager's fixed entry
-remains `$3A73`. Disk builds load the same `build/text.prg` as a second file,
-so neither format requires zero padding from the end of resident code to
-`$3A00`.
+remains `$3A73`. `build/text.prg` is retained as an intermediate/module
+artifact; the supported runtime obtains the same bytes from EasyFlash, so the
+resident image needs no zero padding from the end of resident code to `$3A00`.
 
 VICE can persist EasyFlash modifications back into the attached CRT on exit.
 Do not leave an emulator attached to `build/game.crt` while rebuilding it: a
@@ -816,7 +826,7 @@ space. This was the cause of the first black-screen cartridge build.
 
 - Runtime room banks are fixed at 3-45; type pages are banks 46-47 (46 ROML
   holds zones A+B, 46 ROMH the cold name/flags table, 47 ROML zone C plus the
-  in-place RH/LH/Type Info services and the script overlay);
+  in-place RH/SC/LH/Type Info services);
   portraits are banks 49-56; the generic resource directory reserves
   banks 57-63, the last banks the hardware supports -- no banks remain
   free after it.

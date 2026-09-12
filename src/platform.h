@@ -307,15 +307,6 @@ void platform_lighting_set_global(uint8_t level);
 void platform_lighting_rebuild(const PlatformRoom* room,
                                const PlatformObject* player);
 
-/* Repairs platform_base_colors/platform_brightness for the current room
- * (platform_room/platform_player) after a `$B000` overlay load has
- * overwritten them with its own code - see run_loaded_overlay()
- * (src/script_runtime.c) and this function's own comment in src/platform.c.
- * Unlike platform_room_draw(), never clears or visibly redraws the screen:
- * only call this when nothing about the room's actual appearance needs to
- * change, just these two caches. */
-void platform_lighting_repair(void);
-
 /* Flash white, blank map colors, then restore the current lighting in assembly. */
 void platform_lightning(void);
 

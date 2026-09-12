@@ -7,8 +7,7 @@ assets/00  <->  rooms/00.c  <->  build/rooms/C00
 assets/7F  <->  rooms/7F.c  <->  build/rooms/C7F
 ```
 
-`make d64` writes each `CXX` file beside its `XX` room. `make cartridge`
-packs the same bytes into EasyFlash ROMH and writes an eight-byte directory
+`make cartridge` packs each `CXX` file into EasyFlash ROMH and writes an eight-byte directory
 entry for every room. A room asset without a matching source fails the build.
 
 ## Required handlers
@@ -359,7 +358,7 @@ activates the overlay before the normal room draw rebuilds those buffers.
 2. Copy `rooms/template.c` to `rooms/XX.c` and implement the four handlers,
    or write `rooms/XX.rc` in the DSL above if the room's logic is one of
    the three mechanical shapes it covers.
-3. Run `make d64 cartridge`.
+3. Run `make cartridge`.
 4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
    cannot be resolved.
 

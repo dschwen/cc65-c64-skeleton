@@ -353,14 +353,13 @@ KERNAL, copies the PRG to its linked RAM layout, copies the helper/text module
 from the unused tail of executable bank 2 to `$3A00`, and disables the cartridge before
 entering the cc65 startup at `$080D`.
 
-### Split disk load
+### Split text module
 
 The native/text module is linked separately from the resident engine.
 `build/text.prg` is a normal fixed-address PRG with a `$3A00` load header.
-`build/disk-boot.prg` is stored first on the D64 as `GAME`; it relocates its
-81-byte loader body to `$0200`, loads `ENGINE`, loads `TEXT`, and jumps to the
-resident cc65 entry point. This leaves the pager replaceable without relinking
-the engine ABI.
+The EasyFlash bootstrap copies that module from the executable cartridge
+banks before entering the resident cc65 startup. This leaves the pager
+replaceable without relinking the engine ABI. Disk is used only for save files.
 
 The pager is linked after the resident label file exists. Its calls to
 `platform_wait_frame()` and `platform_input_poll()`, and its references to the
@@ -425,7 +424,7 @@ See `PLATFORM_API.md` for room/object binary formats and the public C API for
 map drawing, object movement, transitions, bottom text, lighting, and the Look
 cursor.
 Editor-authored room text and object names remain ASCII in `assets/`; the build
-stages PETSCII copies in `build/assets/` for the PRG, D64, and EasyFlash image.
+stages PETSCII copies in `build/assets/` for the EasyFlash image.
 See `ROOM_CODE_API.md` for `GameState`, per-room hooks, and room-code overlay
 constraints.
 See `SAVE_GAME.md` for the room-delta invariants and versioned save record.

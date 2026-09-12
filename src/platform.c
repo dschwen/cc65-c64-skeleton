@@ -1315,31 +1315,6 @@ static void redraw_map_and_objects(const PlatformRoom* room,
     object_draw_base(player);
 }
 
-/* Repairs platform_base_colors/platform_brightness (WORKBSS) after loading
- * a `$B000` overlay has silently overwritten them with the overlay's own
- * code - see run_loaded_overlay() (src/script_runtime.c), the only caller.
- * Deliberately not platform_room_draw(): nothing about the room's actual
- * appearance needs to change here (the map, its objects, and visibility are
- * all still exactly what they were before the overlay ran), only these two
- * caches - so this skips platform_room_draw()'s screen/Color RAM clear (the
- * visible "blank" a full redraw costs) and its view_rebuild() (platform_
- * view_tiles is plain resident BSS, untouched by the overlay, so it's still
- * correct). What's left - redraw_map_and_objects() plus
- * platform_lighting_rebuild() - never touches Color RAM until the lighting
- * rebuild's own final pass, so there is no intermediate wrong-color state
- * for the VIC to ever scan out; the first and only paint is already
- * correct. Earlier attempt at this got it wrong: calling
- * platform_lighting_rebuild() alone (skipping redraw_map_and_objects())
- * left platform_base_colors holding the overlay's leftover bytes -
- * light_source_apply()/wall_cache_apply() only ever touch platform_
- * brightness, never platform_base_colors, so the final lighting-apply pass
- * combined fresh brightness with still-garbage base colors - reproduced
- * live as scattered rainbow corruption across the whole map. */
-void platform_lighting_repair(void) {
-    redraw_map_and_objects(&platform_room, platform_player);
-    platform_lighting_rebuild(&platform_room, platform_player);
-}
-
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {
     if (room == 0) return;
     platform_look_cursor_hide();

@@ -40,6 +40,7 @@ def main() -> None:
     parser.add_argument("--inventory-map", type=Path, required=True)
     parser.add_argument("--look-helpers-map", type=Path, required=True)
     parser.add_argument("--room-helpers-map", type=Path, required=True)
+    parser.add_argument("--script-map", type=Path, required=True)
     parser.add_argument("--typeinfo-map", type=Path, required=True)
     for name in (
         "inventory", "saveload", "saveload-save", "room-helpers",
@@ -94,6 +95,7 @@ def main() -> None:
         "inventory": args.inventory_map,
         "look_helpers": args.look_helpers_map,
         "room_helpers": args.room_helpers_map,
+        "script": args.script_map,
         "typeinfo": args.typeinfo_map,
     }
     in_place = {name for name, placement in modules.items()

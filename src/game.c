@@ -118,8 +118,8 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {
  * idiom as src/text.s's wait_for_fresh_key(), duplicated here (small and
  * resident) since that one is a private label inside the banked TEXTCODE
  * overlay, not callable from here. Not static: src/script_runtime.c also
- * calls this (to pace dismissing room-script/Look text before its own
- * cleanup redraw - see run_loaded_overlay()) - same resident HIGHCODE
+ * calls this (to pace dismissing room-script text before clearing its status
+ * rows - see run_banked_script()) - same resident HIGHCODE
  * binary, so exporting it costs nothing extra, unlike duplicating the loop
  * a third time would. */
 void game_wait_fresh_key(void) {

@@ -26,6 +26,7 @@ happen in. Update it as steps land.
 | Atomic VIC/layout migration | VIC bank 3 now owns `$E800-$FDFF`; room/staging/journal/BSS moved below `$3000`; the text module moved to `$3A00`; all copied overlays and rebuildable work data use `$B000-$BFFF`. PAL and NTSC VICE traces cover the new paths. |
 | Room Helpers -> in-place bank 47 ROML | Removed RH's copy/header/checksum/BSS path. Its 452 read-only bytes run at `$84C0-$8683`; the seven-byte ABI remains below `$2000`. Hot-type lookup and dirty marking moved before the far call so their `$34` -> `$35` mapping cycle cannot unmap the executing ROML service. PAL and NTSC tests cover neighbor lookup and a synthetic take/removal using type 106 under I/O RAM. |
 | Look Helpers -> in-place bank 47 ROML | Removed LH's copy/header/checksum/BSS path. Its 2,017 read-only bytes run at `$9300-$9AE0`; 595 mutable bytes borrow `$2400` room-staging scratch, including a hit cache that halves collision lookups. `platform_object_type_get()` now restores the caller's exact `$01`, making type-106 collision safe from ROML. Type Info moved to `$9F80-$9FBA`. PAL/NTSC traces cover both Look operations, nested Type Info, Take/RH/LH sequencing, IRQ progress, and map restoration. |
+| Script interpreter -> in-place bank 47 ROML | Removed SC's copy/header/checksum/BSS path. Its 2,633 read-only bytes run at `$8800-$9248`; its 10-byte window descriptor occupies `$27E9-$27F2`, and script content continues to use `$2400` as a sliding window. Six potentially hidden/transitively unsafe engine actions use one shared RAM-call dispatcher, which selects cartridge-off `$35/$04` through the reentrant far-call trampoline and restores `$37/$06` afterward. PAL/NTSC traces cover text, lightning, portrait fetch/show/hide, inventory mutation, transition message/request, IRQ progress, and exact map restoration. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -212,7 +213,7 @@ is set: that path already gets its own wait, later, in
 `game_transition_reveal()` - waiting twice would demand two keypresses for
 one message.
 
-Verified via clean `make`/`make d64`/`make cartridge` rebuilds (adds one BSS
+Verified via clean `make`/`make cartridge` rebuilds (adds one BSS
 byte, `script_text_shown`, into the 19 bytes `MEMORY_MAP.md` records as free
 there - now 18 remaining). Not verified via a live interactive playtest in
 this session - see [[project-vice-headless-keywait-limitation]] on why a
@@ -439,7 +440,7 @@ script text):
 Moving `platform_room_object_remove()` into `UPPERCODE` (it and
 `platform_look_tile_check()`'s prefetch both grew `HIGHCODE` past its
 margin - see `platform_room_object_remove()`'s own comment) was needed to
-make room; verified via clean `make`/`make d64`/`make cartridge` (HIGH now
+make room; verified via clean `make`/`make cartridge` (HIGH now
 has ~156 bytes free, UPPER ~76).
 
 **Live-verified**: the original fix reproduced a clean, uncorrupted room 01.
@@ -462,6 +463,10 @@ would be worth doing before extending any overlay's responsibilities
 further.
 
 ## Removing the unnecessary "after text" redraw (2026-09-08, same day)
+
+> Historical note: the repair described in this section was correct while SC
+> was copied over WORKBSS. SC now executes in place, so it no longer corrupts
+> those caches; `platform_lighting_repair()` and its cleanup call were removed.
 
 Asked directly: why does dismissing a Look/room-script description blank the
 screen before *and* after, and could the "after" one just go away, since the
@@ -515,7 +520,7 @@ description now shows the room with no flash at all (`noblank2.png`,
 correct colors, no leftover corruption), and a full room transition through
 `platform_room_draw()`'s unchanged path still renders room 01 correctly
 (`room01_full.png`) - confirming the refactor didn't change its behavior.
-Verified via clean `make`/`make d64`/`make cartridge` throughout (`HIGH` and
+Verified via clean `make`/`make cartridge` throughout (`HIGH` and
 `UPPER` both still have margin - see `build/game.map` after any future
 change here).
 
@@ -587,16 +592,15 @@ gameplay - see `_raster_irq_suspend`'s own logic) for that whole duration,
 because nothing was expected to need the split *during* a transition before
 now. Room 01's `enter_room()` shows its one-time arrival text from exactly
 inside that window (via `game_room_script_entry()` →
-`run_loaded_overlay()`, `src/script_runtime.c`) - so the text renders
+`run_banked_script()`, `src/script_runtime.c`) - so the text renders
 through the wrong (tile) charset the entire time it's up, readable-but-wrong
 becoming actually-unreadable. This was already flagged as a known, lower-
 severity follow-up in the "Transition hang" section above; asked to fix it
 properly this time.
 
-**Fix**: `run_loaded_overlay()` now checks `platform_raster_irq_active`
-(the same C-visible alias added for the transition-hang fix) right after
-loading the overlay, and calls `raster_irq_resume()` if it finds the IRQ
-still suspended - before running the overlay (so the pager's own text
+**Fix**: the script runtime checks `platform_raster_irq_active` and calls
+`raster_irq_resume()` if it finds the IRQ still suspended - before running
+the interpreter (so the pager's own text
 output, and this function's own `game_wait_fresh_key()` dismiss-wait, both
 render/operate with a working split) - and deliberately does **not**
 re-suspend afterward. This is safe specifically because, by the time any
@@ -605,20 +609,20 @@ EasyFlash work and the environment module's checksum-race-sensitive fetch
 (`game_enter_room()`, `src/game.c` - the hazard the whole-transition
 suspend bracket exists to prevent in the first place) are both already
 fully complete - confirmed by reading `game_enter_room()`'s actual sequence
-(environment fetch, then `env_init()`, then the room hook that can reach
-`run_loaded_overlay()` - never the other order). Not re-suspending is
+(environment fetch, then `env_init()`, then the room hook that can reach the
+script runtime - never the other order). Not re-suspending is
 deliberate, not an oversight: `game_process_pending_transition()`'s own
 later `raster_irq_resume()` call simply becomes a harmless no-op once this
 has already run, and the screen stays correctly split for as long as text
 might still be up (including the pager's between-pages waits, which happen
-inside `platform_overlay_run_native()`, already covered).
+inside the banked interpreter, already covered).
 
 Live-verified both fixes together in one repro: the arrival narration's two
 pages both rendered as clean readable text (screenshots showing "Suddenly a
 mysterious inn appears..." and "...or a cursed mirage?" correctly, map
 background still the old room as expected/harmless since it hasn't been
 redrawn yet), and the final room 01 view rendered correctly with no
-corruption. Verified via clean `make`/`make d64`/`make cartridge` throughout.
+corruption. Verified via clean `make`/`make cartridge` throughout.
 
 ## The rule everything is constrained by
 
@@ -671,7 +675,7 @@ The VIC still reads RAM beneath KERNAL, while IRQ water animation reads its
 source from an eight-byte low-RAM shadow so CPU-side KERNAL mapping is safe.
 
 PAL VICE has exercised Inventory in bank 48 ROMH, Type Info's nested 8 KiB
-far call, `LH`, `SC`, the relocated text pager, both save overlays with an
+far call, in-place `RH`/`SC`/`LH`, the relocated text pager, both save overlays with an
 actual named save/load round trip, RH at `$84C0`, and LH at `$9300` in bank 47
 ROML. RH neighbor/removal and LH Look/Take paths using a type-106 hot record
 pass on PAL and NTSC while the frame counter advances. The tests inspect `$01`, `$DD00`, `$D018`,
@@ -690,15 +694,15 @@ upper routine, or follow a pointer into hidden RAM.
 | `RH` | All imports below `$8000`; no BSS/initialized writable data | Hot type IDs 106-222 originally made `platform_object_type_get()` restore `$35`; RH kept lookup/dirty marking in its resident wrapper | Converted |
 | `LH` | All resolver imports are visible; no module-owned writable segment | A 595-byte workspace (former BSS plus collision-hit cache) borrows room staging; hot-type access restores the exact caller map instead of `$35` | Converted; PAL/NTSC high-type and nested-call tests pass |
 | `SL` | Direct imports are below `$8000` | Its record/index workspace is hard-coded at `$A000`, which ROML sees as BASIC and ROMH sees as cartridge; it explicitly calls `platform_memory_game()` and then continues, which would unmap an in-place caller | Requires I/O/workspace redesign, not a relink |
-| `SC` | Several imports are above `$8000` (`game_inventory_add`, transition and portrait routines) | Its sliding script buffer borrows `$B000`, hidden in either in-place mode | Keep copied until APIs and scratch ownership change |
+| `SC` | Direct imports are now visible; six action imports terminate at explicit RAM-call gates | The resource window was already `$2400`, not `$B000`; 10 bytes of mutable metadata moved to ROOMSTAGE's tail. RAM gates cover upper-code and WORKBSS closures, including nested portrait fetches | Converted; PAL/NTSC text/action/IRQ tests pass |
 | `SV` | Several imports are above `$8000` (`game_world_capture_current`, IRQ suspend/resume) | Same `$A000` save workspace and `$35` restoration as SL; near the complete 4 KiB overlay budget already | Last candidate; split disk transaction from UI/encode first |
 
 ## Remaining redesign order
 
-1. Keep Inventory, Type Info, RH, and LH as the in-place reference
-   implementations and retain copied overlays as the compatibility path. RH
-   demonstrates moving side effects across the boundary; LH demonstrates
-   exact map restoration and explicit temporary workspace ownership.
+1. Keep Inventory, Type Info, RH, LH, and SC as the in-place reference
+   implementations. RH demonstrates moving side effects across the boundary;
+   LH demonstrates exact map restoration and temporary workspace ownership;
+   SC demonstrates an explicit cartridge-to-resident host-action gate.
 2. Do not stage 256 collision results in resident code: the attempted version
    overflowed `HIGH` by 45 bytes. Fixing the shared hot-type accessor at its
    map-restoration boundary both removed that staging and made every collision
@@ -710,21 +714,15 @@ upper routine, or follow a pointer into hidden RAM.
 4. Split disk transactions from SL/SV UI and encoding before considering
    in-place execution; their `$A000` buffers and explicit `$35` restoration
    violate both cartridge modes today.
-5. Remove `$B000-$BFFF` as an overlay window only after `SC` and `SL`/`SV` no
-   longer use it. Until then its temporal ownership contract is
+5. Remove `$B000-$BFFF` as an overlay window only after `SL`/`SV` no longer
+   use it. Until then its temporal ownership contract is
    simpler and safer than fine-grained bank switches or hidden copies.
 
-## Build-system limitation: D64 is not cartridge-equivalent
+## Cartridge-only runtime
 
-`make d64` builds successfully, but the runtime resource layer is EasyFlash
-only. The disk image packages rooms, object types, portraits, and room code,
-yet `platform_resource_fetch()`, copied-overlay loading, and room-code loading
-do not have disk backends. Static charsets/tiles are BSS destinations populated
-only when the EasyFlash boot marker is present. A headless D64 smoke run returns
-to BASIC rather than reaching a playable room. Treat `make cartridge` as the
-complete build until a disk resource directory/loader and banked-service
-substitutes are designed; merely adding the missing `RA` files to the D64 does
-not make the engine consume them.
+The obsolete game D64 build/run path has been removed. Runtime resources,
+room code, and banked services are EasyFlash-only; disk unit 8 is reserved for
+the save image created and attached by `make run`/`make run-cartridge`.
 
 ## Dead ends, recorded so they are not retried
 

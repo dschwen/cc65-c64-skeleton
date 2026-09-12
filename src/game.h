@@ -67,8 +67,8 @@ extern uint8_t game_transition_pending_message;
 void game_wait_fresh_key(void);
 
 /* Resident (unlike platform_text_output_native, not a banked overlay - the
- * script interpreter overlay calls this directly on its own windowed string
- * data, the same way it already calls game_transition_request()). Blanks,
+ * script interpreter reaches this through its resident-RAM host gate using
+ * its own windowed string data). Blanks,
  * clears the map area (rows 0-22; game_text_write clears the status rows
  * itself), writes text into the top status row, unblanks, and sets
  * game_transition_pending_message - all synchronously, right when the
@@ -165,8 +165,8 @@ void game_conversation_play(uint8_t resource_id);
 /* Runs the current room's own script entry keyed `key`, if it has one - see
  * tools/compile_script.py's `room` declaration. Returns 1 if an entry was
  * found and run, 0 otherwise (the common case: no matching entry). Always
- * pays the interpreter overlay's load cost, same as game_script_play() -
- * see src/script_runtime.c's doc comment for why that's fine given current
+ * pays the interpreter's banked-call cost, same as game_script_play() - see
+ * src/script_runtime.c's doc comment for why that's fine given current
  * usage. Room code calls this from enter_room(), enter_tile(), look_at(),
  * use_at() wherever it used to read the room's text pool directly; the
  * entry key is whatever numbering convention the room's own script/DSL

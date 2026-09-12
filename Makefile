@@ -16,12 +16,9 @@ CFG    := cfg/myc64.cfg
 VICE   ?= x64sc
 C1541  ?= c1541
 CARTCONV ?= cartconv
-DISK_NAME ?= GAME
-PRG_NAME  ?= GAME
 CART_NAME ?= GAME
 SAVE_DISK ?= $(OUTDIR)/saves.d64
 SAVE_DISK_NAME ?= SAVES
-RES_DIR ?= res
 ROOM_ASSETS := $(wildcard assets/[0-9A-F][0-9A-F])
 ROOM_SOURCES := $(wildcard rooms/[0-9A-F][0-9A-F].c)
 ROOM_IDS := $(notdir $(ROOM_ASSETS))
@@ -72,8 +69,6 @@ C64_STATIC_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RA,00 01 02)
 C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS) \
 	$(C64_ENV_ASSETS) $(C64_STATIC_ASSETS)
 ROOM_CFG := cfg/room_overlay.cfg
-DISK_EXTRA_FILES ?= $(wildcard $(RES_DIR)/*) $(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(ROOM_CODES)
-DISK_EXTRA_DEPS = $(DISK_EXTRA_FILES)
 ASSET_EDITOR_HOST ?= 127.0.0.1
 ASSET_EDITOR_PORT ?= 8000
 
@@ -92,7 +87,6 @@ OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
 OUT_PRG := $(OUTDIR)/game.prg
 OUT_MAP := $(OUTDIR)/game.map
 OUT_LBL := $(OUTDIR)/game.lbl
-OUT_D64 := $(OUTDIR)/game.d64
 OUT_EF_BIN := $(OUTDIR)/game-ef.bin
 OUT_EF_BASE := $(OUTDIR)/game-ef-base.bin
 OUT_CRT := $(OUTDIR)/game.crt
@@ -142,7 +136,7 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/banked_room_helpers.cfg
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
 # Banked type-info module executed in place from its EasyFlash bank (never
-# copied into RAM, like Inventory/RH/LH and unlike the SC/SL/SV overlays)
+# copied into RAM, like Inventory/RH/LH/SC and unlike the SL/SV overlays)
 # - see the banked module linker configurations.
 TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
 TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
@@ -160,14 +154,9 @@ SCRIPT_C_OBJ := $(OUTDIR)/script-module.o
 SCRIPT_HEADER_OBJ := $(OUTDIR)/script-header.o
 SCRIPT_RESOLVER_SRC := $(OUTDIR)/script-resolver.s
 SCRIPT_RESOLVER_OBJ := $(OUTDIR)/script-resolver.o
-SCRIPT_MODULE_CFG := cfg/script_overlay.cfg
-SCRIPT_MODULE_RAW := $(OUTDIR)/script.raw
+SCRIPT_MODULE_CFG := cfg/banked_script.cfg
 SCRIPT_MODULE := $(OUTDIR)/SC
-DISK_BOOT_OBJ := $(OUTDIR)/disk-boot.o
-DISK_BOOT_CFG := cfg/disk_boot.cfg
-DISK_BOOT_PRG := $(OUTDIR)/disk-boot.prg
-
-.PHONY: all clean d64 cartridge run run-d64 run-cartridge asset-editor
+.PHONY: all clean cartridge run run-cartridge asset-editor
 
 # Dependency files are emitted by every cc65 compilation. Wildcards are
 # intentional: a clean build has none to include, while every subsequent
@@ -194,8 +183,7 @@ $(EF_LAYOUT_HEADER) $(EF_LAYOUT_INCLUDE) &: $(EF_LAYOUT) \
 	python3 tools/generate_easyflash_layout.py --layout $(EF_LAYOUT) \
 		--header $(EF_LAYOUT_HEADER) --include $(EF_LAYOUT_INCLUDE)
 
-$(OUTDIR)/platform.o $(OUTDIR)/script_runtime.o \
-		$(OUTDIR)/saveload_runtime.o: $(EF_LAYOUT_HEADER)
+$(OUTDIR)/platform.o $(OUTDIR)/saveload_runtime.o: $(EF_LAYOUT_HEADER)
 $(OUTDIR)/banked_api.o: $(EF_LAYOUT_INCLUDE)
 
 $(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
@@ -448,7 +436,7 @@ $(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
 		--module look_helpers --map $(OUTDIR)/look-helpers.map \
 		--resolver $(LOOK_HELPERS_RESOLVER_SRC)
 
-$(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h | $(OUTDIR)
+$(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h src/script_abi.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SCRIPT_HEADER_OBJ): modules/script_header.s | $(OUTDIR)
@@ -462,22 +450,14 @@ $(SCRIPT_RESOLVER_SRC): $(OUT_PRG) $(SCRIPT_C_OBJ) \
 $(SCRIPT_RESOLVER_OBJ): $(SCRIPT_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(SCRIPT_MODULE_RAW): $(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
+$(SCRIPT_MODULE): $(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
 		$(SCRIPT_RESOLVER_OBJ) $(SCRIPT_MODULE_CFG)
 	$(LD65) -C $(SCRIPT_MODULE_CFG) -m $(OUTDIR)/script.map -o $@ \
 		$(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
 		$(SCRIPT_RESOLVER_OBJ)
-
-$(SCRIPT_MODULE): $(SCRIPT_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/script.map --magic SC --output $@
-
-$(DISK_BOOT_OBJ): disk/boot.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(DISK_BOOT_PRG): $(DISK_BOOT_OBJ) $(DISK_BOOT_CFG)
-	$(LD65) -C $(DISK_BOOT_CFG) -m $(OUTDIR)/disk-boot.map -o $@ $<
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module script --map $(OUTDIR)/script.map \
+		--resolver $(SCRIPT_RESOLVER_SRC)
 
 $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROOM_OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
@@ -574,6 +554,7 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--typeinfo $(TYPEINFO_MODULE) --inventory-map $(OUTDIR)/inventory.map \
 		--look-helpers-map $(OUTDIR)/look-helpers.map \
 		--room-helpers-map $(OUTDIR)/room-helpers.map \
+		--script-map $(OUTDIR)/script.map \
 		--typeinfo-map $(OUTDIR)/typeinfo.map
 
 $(OUT_CRT): $(OUT_EF_BIN)
@@ -581,26 +562,7 @@ $(OUT_CRT): $(OUT_EF_BIN)
 
 cartridge: $(OUT_CRT)
 
-d64: $(OUT_D64)
-
-$(OUT_D64): $(OUT_PRG) $(TEXT_MODULE_PRG) $(DISK_BOOT_PRG) \
-		$(DISK_EXTRA_DEPS) | $(OUTDIR)
-	rm -f $@
-	$(C1541) -format "$(DISK_NAME),00" d64 $@
-	$(C1541) $@ -write $(DISK_BOOT_PRG) "$(PRG_NAME)"
-	$(C1541) $@ -write $(OUT_PRG) "ENGINE"
-	$(C1541) $@ -write $(TEXT_MODULE_PRG) "TEXT"
-	for f in $(DISK_EXTRA_FILES); do \
-		[ -f "$$f" ] || continue; \
-		name=$$(basename "$$f"); \
-		$(C1541) $@ -write "$$f" "$$name"; \
-	done
-
-run: $(OUT_D64)
-	$(VICE) -autostart $(OUT_D64)
-
-run-d64: $(OUT_D64)
-	$(VICE) -autostart $(OUT_D64)
+run: run-cartridge
 
 $(SAVE_DISK): | $(OUTDIR)
 	$(C1541) -format "$(SAVE_DISK_NAME),00" d64 $@

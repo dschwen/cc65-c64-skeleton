@@ -12,7 +12,7 @@ This is a minimal cc65-based C64 repository skeleton with:
 
 ## Requirements
 - cc65 toolchain installed (`cl65`, `ca65`, `ld65` available on PATH)
-- VICE tools for optional run/disk workflows:
+- VICE tools for cartridge runs and the save-disk workflow:
   - emulator (`x64sc` by default)
   - disk utility (`c1541`) for `.d64` creation
   - `cartconv` for EasyFlash `.crt` creation
@@ -27,31 +27,15 @@ Outputs:
 - `build/text.prg`
 - `build/IV` (inventory UI and story-specific in-place cartridge service)
 - `build/RH` (in-place room-neighbor/object-removal service)
+- `build/SC` (in-place script/conversation/room interpreter)
 - `build/LH` (in-place Look/Take text service)
+- `build/BT` (in-place cold object-type information service)
 - `build/game.map`
 - `build/game.lbl`
 
 `game.prg` is the resident engine and `text.prg` is the independently loaded
-bottom-text pager. The cartridge target is the complete runtime. The D64 target
-currently exercises the legacy disk bootstrap/fallback path; it packages room
-files but the engine does not yet provide a disk-backed replacement for the
-EasyFlash resource and banked-service APIs.
-
-Build disk image:
-```bash
-make d64
-```
-
-Output:
-- `build/game.d64`
-- `build/disk-boot.prg` (the first-file loader stored as `GAME`)
-- plus `res/*` and build-prepared PETSCII copies of the hexadecimal room and
-  object-type assets
-
-The disk loader relocates itself to `$0200`, loads `ENGINE` at its normal PRG
-address, loads the helper/text module `TEXT` at `$3A00`, and then enters cc65
-startup at `$080D`. This packaging path is not currently playable without the
-EasyFlash-only resource and service backends described above.
+bottom-text pager. The EasyFlash cartridge target is the complete runtime.
+Disk is used only for the save image attached to unit 8.
 
 Build an EasyFlash cartridge image:
 ```bash
@@ -73,18 +57,14 @@ Output:
 ## Run
 Run via Makefile targets:
 ```bash
-make run      # builds and autostarts the legacy D64 fallback
-make run-d64  # same explicit disk workflow
-make run-cartridge # attaches game.crt and persistent build/saves.d64
+make run           # cartridge run with persistent build/saves.d64
+make run-cartridge # explicit form of the same workflow
 ```
 
 Useful overrides:
 ```bash
 make VICE=x64
-make DISK_NAME=MYGAME PRG_NAME=MYGAME d64
 make SAVE_DISK=/path/to/saves.d64 run-cartridge
-make RES_DIR=assets d64
-make DISK_EXTRA_FILES= d64
 ```
 
 ## Notes

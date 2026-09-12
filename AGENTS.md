@@ -7,9 +7,9 @@ Use this file for quick operational rules. For platform details, memory map note
 
 ## Build and run
 - Build PRG: `make`
-- Build D64: `make d64`
-- Run PRG in VICE: `make run`
-- Run D64 in VICE: `make run-d64`
+- Build EasyFlash CRT: `make cartridge`
+- Run cartridge in VICE: `make run`
+- Run EasyFlash in VICE: `make run-cartridge`
 - This is a headless environment. Run VICE through Xvfb, using
   `xvfb-run -a x64sc ...` for direct emulator/debugging commands.
 
@@ -17,29 +17,25 @@ Build outputs are in `build/`:
 - `game.prg`
 - `game.map`
 - `game.lbl`
-- `game.d64` (when using `make d64`)
+- `game.crt` (when using `make cartridge`)
 
-## Disk image extras
-`make d64` writes the main program, room/type assets, and optional files from
-`res/`.
+## Save disk
+The game runtime is EasyFlash-only. Disk is used only for save games.
+`make run`/`make run-cartridge` creates `build/saves.d64` when needed and
+attaches it as unit 8.
 
 Configurable variables:
-- `RES_DIR` (default: `res`)
-- `DISK_EXTRA_FILES` (default: `$(RES_DIR)/*`, hexadecimal room assets, and
-  `assets/objects.cobj`)
-- `DISK_NAME` (default disk label: `GAME`)
-- `PRG_NAME` (default program filename on disk: `GAME`)
+- `SAVE_DISK` (default: `build/saves.d64`)
+- `SAVE_DISK_NAME` (default disk label: `SAVES`)
 
 Examples:
-- `make d64`
-- `make RES_DIR=assets d64`
-- `make DISK_EXTRA_FILES= d64`
+- `make run`
+- `make SAVE_DISK=/path/to/saves.d64 run-cartridge`
 
 ## Project structure
 - `src/`: C and assembly source files
 - `cfg/`: linker configuration (`myc64.cfg`)
 - `assets/`: optional binary assets
-- `res/`: optional files copied into disk images
 
 ## Change guidance
 - Keep the Makefile simple and override-friendly via variables.

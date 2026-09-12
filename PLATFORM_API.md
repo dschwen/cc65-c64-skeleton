@@ -49,7 +49,7 @@ room-transition logic even when a graphic extends in several directions.
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
 | `$A000-$A479` | save-record/index scratch |
-| `$B000-$BFFF` | rebuildable work RAM, staging, or one copied overlay |
+| `$B000-$BFFF` | rebuildable work RAM, staging, or one SL/SV copied overlay |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | persistent `GameState` |
 | `$C174-$C178` | in-place Inventory service state |
@@ -997,7 +997,7 @@ banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
 
 The byte copy is still expensive - roughly 50 cycles per byte - but it no
 longer freezes the raster split, frame counter, rain, or environment tick.
-Existing screen-blank brackets around the largest overlay loads remain as
+Existing screen-blank brackets around the SL/SV overlay loads remain as
 conservative loading presentation and can be reevaluated after visual testing.
 
 ### Banked code
@@ -1044,14 +1044,22 @@ should not be used for inner-loop helpers. Long banked operations no longer
 stop the raster IRQ, but they still block foreground gameplay until they
 return.
 
-`platform_object_type_info_get()`, the complete Inventory UI, and the Room
-Helpers service run this way; see `modules/typeinfo.c`, `modules/inventory.c`,
-`modules/room_helpers.c`, their linker files under `cfg/`, and the resident
-stubs in `src/banked_api.s` for the pattern. RH deliberately performs its
+`platform_object_type_info_get()`, the complete Inventory UI, Room Helpers,
+Look Helpers, and the script interpreter run this way; see their modules,
+linker files under `cfg/`, and the resident stubs in `src/banked_api.s` for
+the pattern. RH deliberately performs its
 hot-type lookup before entry to keep the cartridge operation mutation-only.
 LH can call collision directly because `platform_object_type_get()` now
 restores the exact caller map after exposing RAM under I/O, rather than
 hard-coding `$01=$35` and unmapping a ROML caller.
+
+SC also demonstrates the reverse boundary. Its shared host-action dispatcher
+uses the far-call trampoline to select cartridge-off `$01=$35`/`$DE02=$04`
+while calling resident engine code hidden by ROML or dependent on `$B000`
+WORKBSS. Because the trampoline updates the readable bank/control shadows,
+nested EasyFlash operations (notably portrait fetch) restore cartridge-off
+state until the host action returns; the outer unwind then restores SC's bank
+47 `$37/$06` state. Interrupts remain enabled during both sides of the call.
 `EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
 
 Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with

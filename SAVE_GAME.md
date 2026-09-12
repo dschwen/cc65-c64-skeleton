@@ -207,9 +207,9 @@ records, an IRQ-independent program/erase path in RAM) for a benefit that
 does not hold up: EasyFlash cartridge storage is otherwise read-only for this
 game, and some emulators require an extra explicit step to persist cartridge
 RAM/flash writes back to the `.crt`, which is exactly the failure mode a save
-system must not have. A cartridge build still writes saves through ordinary
-disk KERNAL I/O, same as a disk build, using a disk device attached at
-runtime purely for save storage.
+system must not have. The cartridge runtime writes saves through ordinary
+disk KERNAL I/O, using a disk device attached at runtime purely for save
+storage.
 
 ## Capacity policy
 

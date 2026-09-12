@@ -30,8 +30,7 @@
       "bank": 47,
       "half": "roml",
       "offset": 2048,
-      "kind": "overlay",
-      "magic": "SC"
+      "kind": "in_place"
     },
     "look_helpers": {
       "bank": 47,

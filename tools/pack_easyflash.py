@@ -311,9 +311,7 @@ def pack_resources(image: bytearray, asset_dir: Path) -> None:
 
 
 def load_overlay(path: Path, magic: bytes) -> bytes:
-    """Load and validate an independently linked $B000-window overlay
-    (script and save-load helpers); see tools/finalize_inventory_overlay.py,
-    which patches the size/BSS/checksum fields this function checks."""
+    """Load and validate a legacy independently linked $B000 overlay."""
     raw = path.read_bytes()
     if len(raw) < 2 or int.from_bytes(raw[:2], "little") != LOADED_OVERLAY_ADDRESS:
         raise ValueError(f"{path}: invalid overlay load address")

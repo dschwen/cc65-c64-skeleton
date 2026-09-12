@@ -121,7 +121,7 @@ The server has no third-party dependencies and only exposes file operations unde
     binary format to document here - this editor only edits DSL source text,
     never compiled bytecode. That format (opcodes, string table, topic
     table) is documented in `tools/compile_script.py`'s module docstring and
-    kept in sync by hand with the interpreter overlay (`modules/script.c`) -
+    kept in sync by hand with the banked interpreter (`modules/script.c`) -
     there is no shared source of truth between them.
 
 ## Binary formats

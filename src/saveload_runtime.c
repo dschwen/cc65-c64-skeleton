@@ -1,18 +1,16 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "easyflash_layout.h"
 #include "game.h"
+#include "saveload_abi.h"
 #include "world.h"
 
-/* Save-detail overlay ("SV": name entry + encode + disk write), separate
- * from the browse/load overlay above because both together would not fit
- * the shared 4 KiB $B000 window. Stored in bank 47 ROMH, otherwise
- * unused (bank 47 ROML holds the object-type cold table). */
+/* Resident orchestration for the in-place SL/SV services. Both execute from
+ * bank 48 ROML and use only explicitly resident mutable state. */
 #define SAVELOAD_SCREEN     ((uint8_t*)0xf800)
 #define SAVELOAD_COLOR      ((uint8_t*)0xd800)
 #define SAVELOAD_VIC_CTRL1  (*(volatile uint8_t*)0xd011)
-#define SAVE_RECORD_RAM     ((const uint8_t*)0xa000)
+#define SAVE_RECORD_RAM     ((const uint8_t*)SAVELOAD_RECORD_ADDRESS)
 #define SAVE_HEADER_BYTES   16u
 #define SAVE_PREFIX_BYTES   130u
 #define SAVE_DELTA_BYTES    5u
@@ -20,14 +18,13 @@
 
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
-void platform_overlay_run_native(void);
-uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                                           uint16_t offset, uint8_t magic0,
-                                           uint8_t magic1);
-
-uint8_t saveload_overlay_mode;
+uint8_t saveload_mode;
 uint8_t saveload_selected_slot;
 uint8_t saveload_load_pending;
+
+#pragma bss-name (push, "SAVEWORK")
+uint8_t saveload_workspace[SAVELOAD_WORKSPACE_BYTES];
+#pragma bss-name (pop)
 
 #pragma code-name (push, "HIGHCODE")
 
@@ -38,9 +35,18 @@ static uint16_t save_get16(const uint8_t* p) {
 #pragma code-name (pop)
 #pragma code-name (push, "LOWCODE")
 
-/* Apply only after the browse overlay has returned. platform_room_enter()
- * stages room code at $B000 and room data at $2400, so calling it from the
- * overlay would overwrite the executing code. */
+static uint8_t saveload_restore_tiles(void) {
+    return platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
+                                   PLATFORM_ASSET_TILES,
+                                   (uint8_t*)SAVELOAD_RECORD_ADDRESS,
+                                   2048u + 256u) == 2048u + 256u
+               ? PLATFORM_OK
+               : PLATFORM_ERR_FORMAT;
+}
+
+/* Apply only after the banked browser has returned. The record temporarily
+ * occupies tile-source RAM, so every exit restores that asset before normal
+ * drawing resumes. */
 static uint8_t saveload_apply_pending(void) {
     const uint8_t* p;
     uint16_t delta_count;
@@ -59,7 +65,10 @@ static uint8_t saveload_apply_pending(void) {
     if (delta_count > SAVE_MAX_DELTAS ||
         SAVE_PREFIX_BYTES + delta_bytes !=
             save_get16(SAVE_RECORD_RAM + 10u) ||
-        p[28] > p[29] || p[30] > p[31]) return PLATFORM_ERR_FORMAT;
+        p[28] > p[29] || p[30] > p[31]) {
+        (void)saveload_restore_tiles();
+        return PLATFORM_ERR_FORMAT;
+    }
 
     room = p[24];
     type = p[25];
@@ -73,10 +82,12 @@ static uint8_t saveload_apply_pending(void) {
            sizeof(game_state.inventory));
     memcpy(game_state.flags, p + 96u, sizeof(game_state.flags));
 
-    game_world_disable_store_hook();
     game_world_delta_count = 0u;
     memcpy(game_world_deltas, p + SAVE_PREFIX_BYTES, delta_bytes);
     game_world_delta_count = delta_count;
+
+    if (saveload_restore_tiles() != PLATFORM_OK) return PLATFORM_ERR_FORMAT;
+    game_world_disable_store_hook();
 
     /* One screen-blanked, interrupt-suspended bracket for the whole switch,
      * same as game_process_pending_transition() - see platform_room_enter()'s
@@ -105,7 +116,10 @@ static uint8_t saveload_apply_pending(void) {
 
 #pragma code-name (push, "HIGHCODE")
 
-static void saveload_cleanup(uint8_t result) {
+static void saveload_cleanup(uint8_t result, uint8_t tiles_restored) {
+    if (!tiles_restored && saveload_restore_tiles() != PLATFORM_OK) {
+        result = PLATFORM_ERR_FORMAT;
+    }
     SAVELOAD_VIC_CTRL1 &= 0xefu;
     raster_irq_suspend();
     memset(SAVELOAD_SCREEN, platform_text_screen_code(' '), 1000u);
@@ -121,21 +135,20 @@ static void saveload_cleanup(uint8_t result) {
 
 void game_load_show(void) {
     uint8_t result;
+    uint8_t tiles_restored;
 
     platform_look_cursor_hide();
     SAVELOAD_VIC_CTRL1 &= 0xefu;
-    saveload_overlay_mode = SAVELOAD_MODE_LOAD;
+    saveload_mode = SAVELOAD_MODE_LOAD;
     saveload_load_pending = 0u;
-    result = platform_overlay_load(EF_LAYOUT_SAVELOAD_BANK,
-                                   EF_LAYOUT_SAVELOAD_USE_ROMH,
-                                   EF_LAYOUT_SAVELOAD_OFFSET,
-                                   EF_LAYOUT_SAVELOAD_MAGIC_0,
-                                   EF_LAYOUT_SAVELOAD_MAGIC_1);
-    if (result == PLATFORM_OK) platform_overlay_run_native();
-    if (result == PLATFORM_OK && saveload_load_pending) {
+    platform_saveload_run_banked();
+    result = PLATFORM_OK;
+    tiles_restored = 0u;
+    if (saveload_load_pending) {
         result = saveload_apply_pending();
+        tiles_restored = 1u;
     }
-    saveload_cleanup(result);
+    saveload_cleanup(result, tiles_restored);
 }
 
 void game_save_show(void) {
@@ -143,24 +156,15 @@ void game_save_show(void) {
 
     platform_look_cursor_hide();
     SAVELOAD_VIC_CTRL1 &= 0xefu;
-    saveload_overlay_mode = SAVELOAD_MODE_SAVE;
+    saveload_mode = SAVELOAD_MODE_SAVE;
     saveload_selected_slot = SAVELOAD_SLOT_NONE;
-    result = platform_overlay_load(EF_LAYOUT_SAVELOAD_BANK,
-                                   EF_LAYOUT_SAVELOAD_USE_ROMH,
-                                   EF_LAYOUT_SAVELOAD_OFFSET,
-                                   EF_LAYOUT_SAVELOAD_MAGIC_0,
-                                   EF_LAYOUT_SAVELOAD_MAGIC_1);
-    if (result == PLATFORM_OK) platform_overlay_run_native();
+    platform_saveload_run_banked();
+    result = PLATFORM_OK;
 
-    if (result == PLATFORM_OK && saveload_selected_slot != SAVELOAD_SLOT_NONE) {
-        result = platform_overlay_load(EF_LAYOUT_SAVELOAD_SAVE_BANK,
-                                       EF_LAYOUT_SAVELOAD_SAVE_USE_ROMH,
-                                       EF_LAYOUT_SAVELOAD_SAVE_OFFSET,
-                                       EF_LAYOUT_SAVELOAD_SAVE_MAGIC_0,
-                                       EF_LAYOUT_SAVELOAD_SAVE_MAGIC_1);
-        if (result == PLATFORM_OK) platform_overlay_run_native();
+    if (saveload_selected_slot != SAVELOAD_SLOT_NONE) {
+        platform_saveload_save_run_banked();
     }
-    saveload_cleanup(result);
+    saveload_cleanup(result, 0u);
 }
 
 #pragma code-name (pop)

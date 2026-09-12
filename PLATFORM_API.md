@@ -34,22 +34,24 @@ room-transition logic even when a graphic extends in several directions.
 
 | Address/range | Owner |
 |---|---|
+| `$0400-$0491` | shared resident SL/SV workspace |
 | `$2000-$23FF` | current-room RAM |
 | `$2400-$27FF` | destination-room staging |
 | `$2800-$2BFF` | sparse world-delta journal |
 | `$2C00-$2EFF` | ordinary resident BSS |
 | `$2F00-$2FFF` | compact resident helpers and rain/water setup code |
-| `$3000-$38FF` | tiles and tile properties |
+| `$3000-$38FF` | tiles and tile properties; save/load temporarily borrows the first 1,146 bytes and restores the full resource |
 | `$3900-$39FF` | compact read-only lookup tables |
-| `$3A00-$3BFF` | independently loaded native/SID/text/validator module |
+| `$3A00-$3BFF` | independently loaded native/SID/text module |
 | `$3C00-$7FFF` | platform code and read-only tables |
 | `$8000-$85FF` | file-backed fill; hidden by cartridge ROM during banked calls |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A479` | save-record/index scratch |
-| `$B000-$BFFF` | rebuildable work RAM, staging, or one SL/SV copied overlay |
+| `$A000-$AFFF` | free underlying RAM, hidden during all current banked calls |
+| `$B000-$B7BE` | rebuildable work RAM and bounded room/type staging |
+| `$B800-$BA0E` | resident KERNAL save-disk driver |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | persistent `GameState` |
 | `$C174-$C178` | in-place Inventory service state |
@@ -997,8 +999,7 @@ banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
 
 The byte copy is still expensive - roughly 50 cycles per byte - but it no
 longer freezes the raster split, frame counter, rain, or environment tick.
-Existing screen-blank brackets around the SL/SV overlay loads remain as
-conservative loading presentation and can be reevaluated after visual testing.
+SL/SV no longer require a byte copy: their UI code runs directly from ROM.
 
 ### Banked code
 
@@ -1045,9 +1046,9 @@ stop the raster IRQ, but they still block foreground gameplay until they
 return.
 
 `platform_object_type_info_get()`, the complete Inventory UI, Room Helpers,
-Look Helpers, and the script interpreter run this way; see their modules,
-linker files under `cfg/`, and the resident stubs in `src/banked_api.s` for
-the pattern. RH deliberately performs its
+Look Helpers, script interpreter, and both save/load services run this way;
+see their modules, linker files under `cfg/`, and resident stubs in
+`src/banked_api.s` for the pattern. RH deliberately performs its
 hot-type lookup before entry to keep the cartridge operation mutation-only.
 LH can call collision directly because `platform_object_type_get()` now
 restores the exact caller map after exposing RAM under I/O, rather than
@@ -1061,6 +1062,15 @@ nested EasyFlash operations (notably portrait fetch) restore cartridge-off
 state until the host action returns; the outer unwind then restores SC's bank
 47 `$37/$06` state. Interrupts remain enabled during both sides of the call.
 `EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
+
+SL/SV use the same reverse boundary for disk I/O. Their shared mutable
+workspace is `$0400-$0491`, and their maximum record borrows `$3000-$3479`.
+Four explicit gates unmap EasyFlash, select KERNAL map `$36`, and call one
+resident assembly driver at `$B800`; a fifth selects gameplay map `$35` for
+`game_world_capture_current()`. The disk driver suspends the VIC raster source
+for each complete IEC transaction, then resynchronizes it. The outer far call
+restores bank 48 ROML before banked code resumes. Resident cleanup restores
+the tile asset on every exit before normal drawing can read `$3000`.
 
 Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with
 `$DE02=$06`, not `$36/$06`. `$01=$36` disables ROML along with BASIC. The

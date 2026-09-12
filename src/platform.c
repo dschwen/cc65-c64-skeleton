@@ -47,6 +47,7 @@
 #define OBJECT_TYPE_ZONE_AB_COUNT    (OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT)
 #define OBJECT_TYPE_ZONE_C_COUNT     (PLATFORM_OBJECT_TYPE_COUNT - OBJECT_TYPE_ZONE_AB_COUNT)
 #define OBJECT_TYPE_COLD_BYTES       15u
+#define OBJECT_TYPE_STAGE_BYTES      0x0800u
 /* Offset within EF_TYPE_BANK_0's ROMH half, which holds nothing else. */
 #define OBJECT_TYPE_COLD_BASE        0u
 
@@ -138,8 +139,6 @@ PlatformObjectType platform_object_type_scratch;
 PlatformObjectTypeInfo platform_object_type_info_scratch;
 #pragma bss-name (pop)
 static uint8_t resource_directory_entry[RESOURCE_DIRECTORY_ENTRY_BYTES];
-uint8_t platform_overlay_magic0;
-uint8_t platform_overlay_magic1;
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
 #pragma bss-name (push, "ZEROPAGE")
@@ -319,7 +318,8 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
  * place - see modules/typeinfo.c for the implementation and src/banked_api.s
  * for the resident FAR_CALL stub that forwards to it. Cold records themselves
  * live alone in EF_TYPE_BANK_0's ROMH half; they used to trail the Zone C hot
- * table in EF_TYPE_BANK_1's ROML half, where the overlays overwrote them. */
+ * table in EF_TYPE_BANK_1's ROML half, where later banked modules overwrote
+ * them. */
 #pragma code-name (pop)
 
 /*
@@ -455,50 +455,6 @@ uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
 uint16_t platform_resource_last_size(void) {
     return (uint16_t)resource_directory_entry[4] |
            ((uint16_t)resource_directory_entry[5] << 8);
-}
-#pragma code-name (pop)
-
-/*
- * Generic loaded-overlay fetch, shared by the remaining `$B000-$BFFF`
- * script and save/load overlays: copy the fixed
- * 16-byte header from the given EasyFlash bank/half, read its declared
- * size, copy the complete payload, then hand off to the native validator
- * (src/inventory_api.s) with the requested magic bytes. Resident code
- * budget is too tight to duplicate this loader/validator per overlay.
- */
-#define OVERLAY_BASE          ((uint8_t*)0xb000)
-#define OVERLAY_HEADER_BYTES  16u
-#define OVERLAY_MAX_BYTES     0x1000u
-
-uint8_t platform_overlay_validate_native(uint16_t loaded_size);
-
-#pragma code-name (push, "HIGHCODE")
-uint8_t __fastcall__ platform_overlay_load(uint8_t bank, uint8_t use_romh,
-                                           uint16_t offset, uint8_t magic0,
-                                           uint8_t magic1) {
-    uint16_t size;
-
-    platform_overlay_magic0 = magic0;
-    platform_overlay_magic1 = magic1;
-
-    platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = offset;
-    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
-    platform_ef_copy_size = OVERLAY_HEADER_BYTES;
-    if (use_romh) platform_easyflash_copy_romh();
-    else platform_easyflash_copy_roml();
-    size = (uint16_t)OVERLAY_BASE[6] | ((uint16_t)OVERLAY_BASE[7] << 8);
-    if (size < OVERLAY_HEADER_BYTES || size > OVERLAY_MAX_BYTES) {
-        return PLATFORM_ERR_FORMAT;
-    }
-
-    platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = offset;
-    platform_ef_copy_destination = (uint16_t)OVERLAY_BASE;
-    platform_ef_copy_size = size;
-    if (use_romh) platform_easyflash_copy_romh();
-    else platform_easyflash_copy_roml();
-    return platform_overlay_validate_native(size);
 }
 #pragma code-name (pop)
 
@@ -951,15 +907,31 @@ uint8_t platform_object_types_load(void) {
     platform_ef_copy_size = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_easyflash_copy_roml();
 
-    /* Zone B: types 106-222, bank 46 offset 3710, staged via `$B000` then to $D000. */
+    /* Zone B: types 106-222, bank 46 offset 3710. Stage it in two pieces
+     * through renderer WORKBSS at `$B000-$B7FF`; `$B800-$B9EA` is the
+     * persistent KERNAL disk driver and must never be overwritten. */
     platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
     platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
-    platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES;
+    platform_ef_copy_size = OBJECT_TYPE_STAGE_BYTES;
     platform_easyflash_copy_roml();
     irq_status = platform_irq_save_disable();
     platform_memory_all_ram();
-    memcpy(object_types_b, P_OBJECT_TYPE_STAGE,
-           OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES);
+    memcpy(object_types_b, P_OBJECT_TYPE_STAGE, OBJECT_TYPE_STAGE_BYTES);
+    platform_memory_game();
+    platform_irq_restore(irq_status);
+
+    platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES +
+                              OBJECT_TYPE_STAGE_BYTES;
+    platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
+    platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES -
+                            OBJECT_TYPE_STAGE_BYTES;
+    platform_easyflash_copy_roml();
+    irq_status = platform_irq_save_disable();
+    platform_memory_all_ram();
+    memcpy((uint8_t*)object_types_b + OBJECT_TYPE_STAGE_BYTES,
+           P_OBJECT_TYPE_STAGE,
+           OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES -
+               OBJECT_TYPE_STAGE_BYTES);
     platform_memory_game();
     platform_irq_restore(irq_status);
 
@@ -1542,7 +1514,7 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
  * the transition completed - matching this exact mechanism (an ~18% chance
  * per call, so a several-call transition sequence has good odds of hitting
  * it at least once, and this session added several new calls to these two
- * functions around overlay loads, mechanically raising that chance further
+ * functions around banked services, mechanically raising that chance further
  * without changing the underlying, pre-existing bug). raster_irq_install()
  * and _raster_irq_resync() (src/irq.s) already know to force bit 7 back to
  * 0 on every $D011 write for exactly this reason - these two functions are
@@ -1706,8 +1678,7 @@ void platform_text_write_line(uint8_t line, uint8_t column,
  * new room) - true for every current borrower, since they all run from
  * resident code between transitions, never from inside one. Nothing
  * resident reads it between borrows (each borrower fetches whatever it
- * needs, fresh), so unlike `$B000` overlays there's no "restore it before
- * returning" contract to honor. */
+ * needs, fresh), so there is no "restore it before returning" contract. */
 uint8_t* platform_room_scratch(void) {
     return PLATFORM_ROOM_SCRATCH_BUFFER;
 }

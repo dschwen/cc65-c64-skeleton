@@ -26,6 +26,8 @@ Outputs:
 - `build/game.prg`
 - `build/text.prg`
 - `build/IV` (inventory UI and story-specific in-place cartridge service)
+- `build/SL` (in-place save/load slot browser and load service)
+- `build/SV` (in-place save name/encode/write service)
 - `build/RH` (in-place room-neighbor/object-removal service)
 - `build/SC` (in-place script/conversation/room interpreter)
 - `build/LH` (in-place Look/Take text service)

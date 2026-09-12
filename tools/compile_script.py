@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compile a cutscene/conversation/room script (a small text DSL) into the
-binary bytecode format the script-interpreter overlay (modules/script.c)
+binary bytecode format the in-place script interpreter (modules/script.c)
 executes.
 
 One format serves cutscenes (a single linear script), conversations (a
@@ -854,7 +854,7 @@ def link_strings(bytecode: bytearray, patches: list[Patch]) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compile a cutscene/conversation script into the "
-                     "binary format the script-interpreter overlay executes."
+                     "binary format the in-place script interpreter executes."
     )
     parser.add_argument("--input", type=Path, required=True)
     output_group = parser.add_mutually_exclusive_group(required=True)

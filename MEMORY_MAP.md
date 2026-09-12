@@ -25,8 +25,8 @@ KERNAL is mapped.
 | CPU range | Normal `$35` view | Banked-call `$37` view | Underlying RAM owner |
 |---|---|---|---|
 | `$8000-$9FFF` | RAM | EasyFlash ROML | fill, resident code, room code/baseline |
-| `$A000-$AFFF` | RAM | BASIC or ROMH | save/index scratch |
-| `$B000-$BFFF` | RAM | BASIC or ROMH | work RAM / copied-overlay window |
+| `$A000-$AFFF` | RAM | BASIC or ROMH | currently free |
+| `$B000-$BFFF` | RAM | BASIC or ROMH | renderer/staging and resident disk driver |
 | `$D000-$DFFF` | I/O | I/O | object-type records beneath I/O |
 | `$E000-$FFFF` | RAM | KERNAL | object types, VIC data, vectors beneath KERNAL |
 
@@ -42,27 +42,28 @@ interrupts because I/O, including VIC and EasyFlash registers, is hidden.
 | `$0002-$001F` | cc65 zero page plus hot render/lighting scalars |
 | `$0020-$00FF` | KERNAL/cc65 machine state; not free |
 | `$0100-$01FF` | hardware stack |
-| `$0200-$07FF` | KERNAL workspace, vectors, disk-loader relocation; no display data |
+| `$0200-$03FF` | KERNAL workspace and vectors; no display data |
+| `$0400-$0491` | shared 146-byte `SL`/`SV` workspace; `$0492-$07FF` free of game ownership |
 | `$0801-$1FFF` | startup, low resident code/data, and bank-safe `LOWBSS` |
 | `$2000-$23E8` | current `PlatformRoom` (1,001 bytes); `$23E9-$23FF` free |
 | `$2400-$27F3` | destination room plus SC's 11-byte workspace/control tail; `$27F4-$27FF` free |
 | `$2800-$2BE7` | 200-record sparse world-delta journal; `$2BE8-$2BFF` free |
-| `$2C00-$2EDD` | ordinary resident BSS; `$2EDE-$2EFF` free |
-| `$2F00-$2F8F` | compact resident helpers/state; `$2F90-$2F9F` free |
+| `$2C00-$2EED` | ordinary resident BSS; `$2EEE-$2EFF` free |
+| `$2F00-$2F03` | compact resident state; `$2F04-$2F9F` free |
 | `$2FA0-$2FE1` | compact rain/water setup code; `$2FE2-$2FFF` free |
-| `$3000-$38FF` | tile definitions and property bytes |
-| `$3900-$39F9` | compact resident lookup/code; `$39FA-$39FF` free |
-| `$3A00-$3BEF` | separately loaded native/SID/text/overlay-validator module; `$3BF0-$3BFF` free |
-| `$3C00-$7D42` | resident platform code and read-only tables; `$7D43-$7DFF` free |
+| `$3000-$38FF` | tile definitions and property bytes; save/load temporarily borrows `$3000-$3479`, then restores all 2,304 bytes from EasyFlash before drawing |
+| `$3900-$39F6` | compact resident lookup/code; `$39F7-$39FF` free |
+| `$3A00-$3BBC` | separately loaded native/SID/text module; `$3BBD-$3BFF` free |
+| `$3C00-$7D09` | resident platform code and read-only tables; `$7D0A-$7DFF` free |
 | `$7E00-$7FFF` | current room's resident environment module |
 | `$8000-$85FF` | file-backed fill needed by the contiguous PRG; hidden by ROML in banked calls |
 | `$8600-$8B43` | resident save/world code; `$8B44-$8B47` free |
-| `$8B48-$98DD` | resident game/main/shared room API; `$98DE-$98FF` free |
+| `$8B48-$9849` | resident game/main/shared room API; `$984A-$98FF` free |
 | `$9900-$9CFF` | active 1 KiB room-code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A479` | maximum 1,146-byte save record, or 146-byte index; `$A47A-$AFFF` free |
-| `$B000-$B7BE` | renderer work buffers in normal play |
-| `$B000-$BFFF` | temporally exclusive copied-overlay / room-code / type staging window |
+| `$A000-$AFFF` | free RAM beneath BASIC/ROMH; not usable by in-place ROML code |
+| `$B000-$B7BE` | renderer work buffers in normal play; room-code staging and object-type bootstrap use only bounded prefixes/chunks and are followed by reconstruction |
+| `$B800-$BA0E` | resident KERNAL save-disk driver; `$BA0F-$BFFF` free |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C178` | `GameState` and in-place Inventory service state |
 | `$C180-$CFFD` | hot object-type records 0-105; `$CFFE-$CFFF` free |
@@ -81,11 +82,11 @@ interrupts because I/O, including VIC and EasyFlash registers, is hidden.
 | `$FFFA-$FFFF` | direct NMI/reset/IRQ RAM vectors |
 
 The tightest fixed regions are deliberate and build-checked. Current margins
-include 51 bytes in `PROGRAM`, 189 in `HIGH`, 34 in `UPPER`, 34 in `BSS`, 30
-in `RAINMEM`, 24 in `WORLDDELTA`, and 16 in both the text-module range and
-`STATEEXT`. The save-detail overlay has a separately enforced 4,064-byte
-ceiling and currently uses 4,001 bytes including BSS, leaving 95 bytes in the
-physical 4 KiB page.
+include 40 bytes in `PROGRAM`, 246 in `HIGH`, 182 in `UPPER`, 18 in `BSS`,
+4 in `SAVEUPPER`, 30 in `RAINMEM`, 24 in `WORLDDELTA`, 14 in `SAVEWORK`,
+65 before the resident disk driver, and 49 after it. `SL` occupies
+`$8000-$894D`; `SV` occupies `$8A00-$96EE`, leaving 2,321 bytes before the end
+of bank 48 ROML.
 
 ## Display and interrupt ownership
 
@@ -117,21 +118,20 @@ the KERNAL jiffy clock and its keyboard scan do not run. Foreground code calls
 rules: no C calls, no software-stack use, no cartridge-window reads, no
 KERNAL-hidden reads, and bounded work before the row-22 badline.
 
-## Resident, copied-overlay, and in-place cartridge code
+## Resident, staged, and in-place cartridge code
 
-The system now has three execution classes:
+The system has three relevant execution classes:
 
 1. **Resident code** is ordinary writable RAM code. IRQ entry points, banking
    machinery, frame waits, and anything callable under arbitrary mappings
    must be resident in an always-visible range.
-2. **Copied overlays** (`SL`, `SV`) are copied from cartridge
-   into `$B000-$BFFF`, validated, run synchronously, and discarded. They may
-   use writable code and normal RAM semantics, but cannot call another owner
-   of that same window or read renderer `WORKBSS` while they occupy it.
-   Resident wrappers stage arguments/results and repair or redraw after return.
-3. **In-place cartridge services** are Inventory in bank 48 ROMH, Room Helpers
-   at `$84C0` in bank 47 ROML, SC at `$8800`, Look Helpers at `$9300`, and
-   Type Info at `$9F80`. Their
+2. **Copied room/environment modules** are independently linked code copied
+   to stable RAM: active room hooks at `$9900` and the IRQ-callable environment
+   at `$7E00`. `$B000` is only transient staging during room preparation; no
+   general-purpose executable service runs there anymore.
+3. **In-place cartridge services** are SL at `$8000`, SV at `$8A00`, and
+   Inventory in bank 48; Room Helpers at `$84C0`, SC at `$8800`, Look Helpers
+   at `$9300`, and Type Info at `$9F80` in bank 47. Their
    code is immutable and any read from `$8000-$BFFF` sees ROM/BASIC rather than
    RAM. Their stack and persistent state therefore live outside that window,
    and every imported callee/data address is checked against the effective
@@ -139,9 +139,17 @@ The system now has three execution classes:
    LH borrows 595 bytes of otherwise-idle room staging RAM for hit/count/text
    scratch, avoiding a second mapping-sensitive collision pass. SC uses the
    same staging room as its resource window and owns 10 bytes at `$27E9-$27F2`
-   for window metadata. Its six unsafe engine actions cross a shared RAM-call
+   for window metadata. SC's six unsafe engine actions cross a shared RAM-call
    gate: the far-call trampoline selects cartridge-off `$35/$04`, allows nested
    EasyFlash fetches to restore that state, then restores SC's `$37/$06`.
+
+SL/SV share a resident 146-byte workspace at `$0400`, and borrow `$3000` for
+the maximum 1,146-byte record. That buffer aliases immutable tile source data,
+so the resident wrapper restores the complete tile resource on every exit
+before a draw or room transition. Their KERNAL calls cross explicit low-RAM
+gates to the one resident driver at `$B800`. Those gates select cartridge-off
+`$01=$36/$DE02=$04`; the driver suspends the raster source for each complete
+IEC transaction and the far-call trampoline restores bank 48 ROML afterward.
 
 The in-place model removes copy latency and saves overlay RAM only when the
 entire service's mutable-data closure is accessible. It is not a general
@@ -152,17 +160,16 @@ was rejected in testing because 16 KiB ROMH replaced the VIC's charset even
 though the CPU-side RAM contents were correct. Bank 3 solves VIC visibility,
 but its data remains CPU-invisible whenever KERNAL is mapped.
 
-The two remaining copied overlays are intentionally retained as a compatibility
-boundary. Converting one requires a map-derived dependency closure, explicit
-value-oriented inputs/outputs, no self-modifying code, PAL and NTSC IRQ tests,
-and tests while the relevant cartridge half is actually selected. Coarse
-service calls are preferred; bank-switching inner helpers would increase both
-latency and the number of interrupt-visible transition points.
+There is no longer a generic copied-overlay ABI, run-time overlay header, or
+checksum validator. Any new in-place service still requires a map-derived
+dependency closure, explicit value-oriented inputs/outputs, no self-modifying
+code, and PAL/NTSC tests while its cartridge half is actually selected.
+Coarse service calls remain preferable to fine-grained bank switching.
 
 ## Build-time and emulator checks
 
-`make cartridge` validates the resident PRG holes, fixed module addresses,
-overlay headers/checksums/BSS bounds, generated bank placements, and the CRT.
+`make cartridge` validates resident PRG holes, fixed module addresses,
+read-only banked segments/import visibility, generated placements, and the CRT.
 Use the linker maps as the source of truth:
 
 ```sh
@@ -173,6 +180,7 @@ sed -n '/Segment list:/,/Exports list by name:/p' build/inventory.map
 ```
 
 VICE regressions must inspect structured state as well as screenshots: `$01`,
-`$DD00`, `$D018`, `$DE00/$DE02`, the frame counter, SL/SV overlay headers at `$B000`,
-and the relevant screen/charset bytes. A clean screenshot alone cannot prove
-that a nested far call restored its bank or that an IRQ ran safely.
+`$DD00`, `$D018`, `$DE00/$DE02`, the frame counter, SL/SV entry and disk-gate
+maps, restored tile bytes at `$3000`, and relevant screen/charset bytes. A
+clean screenshot alone cannot prove that a nested far call restored its bank
+or that an IRQ ran safely.

@@ -381,10 +381,12 @@ underlying RAM visible at `$8000-$9FFF`; using it silently copies the current
 room or `GameState` instead of cartridge assets. With `$37`, BASIC ROM hides
 the C stack and BSS at `$A000-$BFFF`, so runtime ROML copying is a stackless
 assembly operation using only the hardware stack, zero page, and low DATA.
-Writes through BASIC or KERNAL ROM reach underlying RAM. The `$D000-$DFFF`
-object-type middle zone is first staged at `$B000-$BFFE`, then copied with all
-RAM mapped so I/O registers are not written. Gameplay mapping `$35` is restored after
-the cartridge is disabled. The copy path:
+Writes through BASIC or KERNAL ROM reach underlying RAM. The 4,095-byte
+`$D000-$DFFE` object-type middle zone is staged in two chunks of at most
+2,048 bytes through `$B000-$B7FF`, then copied with all RAM mapped so I/O
+registers are not written. This bound is essential: `$B800` starts the
+resident disk driver. Gameplay mapping `$35` is restored after the cartridge
+is disabled. The copy path:
 
 1. disable IRQs and remember the previous interrupt state;
 2. write the asset bank to `$DE00`;
@@ -410,13 +412,13 @@ Active room code does **not** run from `$B000`. `game_room_code_prepare()`
 `$B000` only as scratch; `game_room_code_activate()` then `memcpy`s the
 validated bytes to `$9900` (`ROOM_CODE_BASE`), where the room's
 `enter_room()`/`enter_tile()`/`look()`/`use()` handlers actually live and run
-for as long as that room stays current. `$B000` is only unsafe for another
-overlay to load into during the few instructions inside
-`platform_room_enter()` between `prepare()` and `activate()` - that's the
-window `platform_room_object_add()` runs in, which is why it stays resident.
-It is *not* unsafe for anything called from a room's own already-active
-`$9900` code, since by the time that code runs, `activate()` has already
-freed `$B000`. (`platform_room_clear()`/`object_transfer()`/
+for as long as that room stays current. `$B000` is unavailable as renderer
+workspace only during the few instructions inside `platform_room_enter()`
+between `prepare()` and `activate()` - that's the window
+`platform_room_object_add()` runs in, which is why it stays resident. It is
+safe for anything called from a room's own already-active `$9900` code, since
+by then `activate()` has released the staging prefix.
+(`platform_room_clear()`/`object_transfer()`/
 `transition_check()` still have no real callers to verify against, so
 they're undecided, not confirmed-unsafe - don't assume "might be called from
 room code" alone rules them out.)
@@ -432,8 +434,8 @@ bank 46 and then unwinds to bank 48. On return, resident code restores the
 charset split and redraws the room. See `STORY_CODE_API.md` for the callable
 contract and restrictions.
 
-Room Helpers (`RH`) is the second gameplay service converted from a copied
-overlay to this model. Its 452-byte read-only image runs at `$84C0-$8683` in
+Room Helpers (`RH`) is a gameplay service converted to this model. Its
+452-byte read-only image runs at `$84C0-$8683` in
 bank 47 ROML. The resident wrapper stages a seven-byte argument/result block
 at `$1F40-$1F46`, then enters through `platform_room_helpers_run_banked()`.
 Object-type lookup and dirty-cell discovery deliberately happen before the
@@ -462,6 +464,17 @@ dispatcher. The dispatcher uses the reentrant far-call trampoline with
 cartridge-off `$35/$04`; nested cartridge fetches therefore unwind to RAM
 mode, and the outer call finally restores bank 47 ROML `$37/$06`. PAL and NTSC
 traces cover all gates, including the portrait gate's nested resource fetch.
+
+Save/Load (`SL`) and Save Detail (`SV`) execute from bank 48 ROML at
+`$8000-$894D` and `$8A00-$96EE`. They share 146 bytes of low resident RAM at
+`$0400-$0491`; the maximum 1,146-byte record borrows tile source RAM at
+`$3000-$3479`. The resident wrapper restores the complete tile/property asset
+on every exit before gameplay draws. Disk I/O crosses explicit host gates to
+a single resident `$B800-$BA0E` assembly driver under cartridge-off KERNAL map
+`$36/$04`; world capture uses a separate gameplay-map `$35/$04` gate. The
+outer far-call unwind restores bank 48 `$37/$06` before either service resumes.
+This removes the former copy/validate delay and prevents save code from
+aliasing renderer buffers, while making every map transition explicit.
 
 Character portraits (`platform_portrait_show()`, see `PLATFORM_API.md`) use
 banks 49-56 in 8 KiB ROML mode, the same mode and fixed
@@ -547,10 +560,9 @@ bank-switch routine and its copy loop must therefore execute from stable RAM.
 
 ### Modules executed in place
 
-Distinct from the loaded overlays above, a module can be linked inside ROML or
-ROMH and **executed straight out of its bank**, never copied into RAM.
-`modules/typeinfo.c`, `modules/inventory.c`, `modules/room_helpers.c`, and
-`modules/look_helpers.c` use this model.
+A module can be linked inside ROML or ROMH and **executed straight out of its
+bank**, never copied into RAM. Type Info, Inventory, Room Helpers, Look
+Helpers, the script interpreter, and both save/load services use this model.
 
 The rules such a module follows:
 
@@ -582,8 +594,8 @@ ROML is not asserted with `$01=$36`; that map exposes underlying RAM at
 execution prevents accidental ROMH selection but does not grant direct access
 to upper RAM.
 
-Unlike an overlay it needs no header, magic, or run-time checksum, because
-nothing copies it. Build-time validators check its read-only segments, imported
+It needs no header, magic, or run-time checksum because nothing copies it.
+Build-time validators check its read-only segments, imported
 addresses, linked entry point, packed bytes, and overlap bounds. A banked
 routine may itself bank-switch only through a nesting-safe far/copy primitive:
 Inventory enters bank 47 for type-info while running from bank 48, and
@@ -664,11 +676,11 @@ straight from EasyFlash into a small scratch buffer whenever
 
 It lives alone in **bank 46's ROMH half**, which nothing else uses, and is read
 with a ROMH copy. It previously trailed the zone-C hot records in bank 47's
-ROML half - but that half also hosts room-helpers, script and look-helpers
-modules at fixed offsets, and those are packed afterwards, so they silently
-overwrote it. Zone C + the cold table + those three overlays need roughly
+ROML half - but that half also hosts Room Helpers, Script, and Look Helpers
+at fixed offsets, and those were packed afterwards, so they silently
+overwrote it. Zone C + the cold table + those three modules need roughly
 9.5 KiB in an 8 KiB half, so the overlap was unavoidable rather than a tuning
-mistake: every type from the room-helpers offset upward read overlay code
+mistake: every type from the Room Helpers offset upward read module code
 instead of its name and flags. Giving the cold table its own half fixed it and
 freed bank 47's ROML layout to grow zone C.
 
@@ -679,15 +691,17 @@ at `$FFFA-$FFFF`; type-table loaders restore them after writing the table.
 
 Gameplay enters the raster handler directly through the RAM vector at
 `$FFFE/$FFFF`. It saves A/X/Y, acknowledges the VIC source, and returns with
-`RTI`. A second `$0314` entry uses the KERNAL restore path while disk code has
-temporarily selected `$37`. IRQ code, stack, frame counter, and charset data
-remain visible in both mappings.
+`RTI`. A second `$0314` entry uses the KERNAL restore path while KERNAL is
+mapped. IRQ code, stack, frame counter, and the water-glyph shadow remain
+visible in both mappings.
 
-Short keyboard calls can use `SEI`, map KERNAL in, call the routine, restore the
-gameplay mapping, and `CLI`. Disk loading can be long enough that it needs a
-separate loading-state design: blank or simplify the display and suspend the
-custom raster IRQ, or provide both a direct RAM-vector entry and a KERNAL
-`$0314` entry with the correct, different register-save/exit conventions.
+Short keyboard calls use `SEI`, map KERNAL in, call the routine, restore the
+gameplay mapping, and `CLI`. Save-disk I/O uses a stricter boundary: SL/SV call
+low-resident gates that disable EasyFlash, select `$01=$36`, and enter the one
+resident driver at `$B800-$BA0E`. Each driver operation suspends the VIC
+raster source across the complete IEC transaction and resynchronizes it on
+return. This is intentional synchronization: leaving raster work active was
+observed to hang writes.
 
 EasyFlash wrappers use `SEI` only for the short map/register transition. The
 raster IRQ's complete per-frame code and state are below `$8000`, never touch
@@ -710,9 +724,9 @@ from `$E800-$FFFF` still see KERNAL during disk calls.
 The IRQ itself also treats late entry on lines 1-225 as a missed top event and
 lines 227-311 as a bottom event, rather than waiting almost a complete frame.
 
-The executable image also contains an independently linked resident helper and
-bottom-text module after the main payload in bank 2. The RAM-resident bootstrap
-copies it to `$3A00-$3BEF` before disabling EasyFlash; the pager's fixed entry
+The executable image also contains an independently linked native/SID/text
+module after the main payload in bank 2. The RAM-resident bootstrap copies it
+to `$3A00-$3BBC` before disabling EasyFlash; the pager's fixed entry
 remains `$3A73`. `build/text.prg` is retained as an intermediate/module
 artifact; the supported runtime obtains the same bytes from EasyFlash, so the
 resident image needs no zero padding from the end of resident code to `$3A00`.

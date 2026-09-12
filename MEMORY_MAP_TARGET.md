@@ -17,16 +17,20 @@ happen in. Update it as steps land.
 | Software stack -> `$C000` | 256 bytes against a measured peak of 37. Prerequisite for banked C: cc65 code touches its stack constantly, and `$BA00` was inside the banking window. |
 | `GameState` -> `$C100` | Banked code can read game state directly. |
 | Raster IRQ closure -> below `$8000` | Frame/rain state and every per-frame callee are bank-visible; bank wrappers now mask only the map/register transition and leave the IRQ running during copies/far calls. |
-| Cold object-type table -> bank 46 ROMH | Fixed a real pre-existing bug: the overlays were overwriting it, so every type above the room-helpers offset returned overlay code instead of its name and flags. |
+| Cold object-type table -> bank 46 ROMH | Fixed a real pre-existing bug: later bank-47 modules were overwriting it, so every type above the room-helpers offset returned module code instead of its name and flags. |
 | First in-place banked module | `platform_object_type_info_get()` runs from bank 47, and itself fetches from bank 46 while doing so. |
 | Generated fixed-module layout | `cfg/easyflash_layout.json` generates runtime/ca65 constants; the final image validator checks every payload and the in-place linked entry. |
 | Inventory -> in-place bank 48 ROMH | Removed its copy/validate cycle and 32-byte selected-slot cache. Five mutable bytes live at `$C174-$C178`; the 1,315-byte code/RODATA image runs at `$A000-$A522` and nests through bank 47/46 for cold type names. |
 | Mode-aware far calls | The generated descriptor now carries CPU map and EasyFlash control separately. Type Info runs as bank 47 ROML with `$01=$37`/`$DE02=$06`; Inventory remains bank 48 ROMH with `$37`/`$07`. The validator applies the effective visibility contract. |
-| `SV` reduced below one page | Save-name editing now reuses the selected `SINDEX` entry. Header + code + RODATA + BSS fell from 4,107 to 4,001 bytes, leaving 95 bytes in a 4 KiB page; the build enforces a 4,064-byte ceiling (32-byte minimum reserve). A named save/readback/load round-trip passed in VICE. |
-| Atomic VIC/layout migration | VIC bank 3 now owns `$E800-$FDFF`; room/staging/journal/BSS moved below `$3000`; the text module moved to `$3A00`; all copied overlays and rebuildable work data use `$B000-$BFFF`. PAL and NTSC VICE traces cover the new paths. |
+| Former `SV` overlay reduced below one page | Before conversion, Save-name editing reused the selected `SINDEX` entry and shrank the copy-to-RAM image enough to stabilize it. That compatibility step is now superseded by in-place SV. |
+| Atomic VIC/layout migration | VIC bank 3 now owns `$E800-$FDFF`; room/staging/journal/BSS moved below `$3000`; the text module moved to `$3A00`; rebuildable work/staging moved to `$B000`. PAL and NTSC VICE traces cover the new paths. |
 | Room Helpers -> in-place bank 47 ROML | Removed RH's copy/header/checksum/BSS path. Its 452 read-only bytes run at `$84C0-$8683`; the seven-byte ABI remains below `$2000`. Hot-type lookup and dirty marking moved before the far call so their `$34` -> `$35` mapping cycle cannot unmap the executing ROML service. PAL and NTSC tests cover neighbor lookup and a synthetic take/removal using type 106 under I/O RAM. |
 | Look Helpers -> in-place bank 47 ROML | Removed LH's copy/header/checksum/BSS path. Its 2,017 read-only bytes run at `$9300-$9AE0`; 595 mutable bytes borrow `$2400` room-staging scratch, including a hit cache that halves collision lookups. `platform_object_type_get()` now restores the caller's exact `$01`, making type-106 collision safe from ROML. Type Info moved to `$9F80-$9FBA`. PAL/NTSC traces cover both Look operations, nested Type Info, Take/RH/LH sequencing, IRQ progress, and map restoration. |
 | Script interpreter -> in-place bank 47 ROML | Removed SC's copy/header/checksum/BSS path. Its 2,633 read-only bytes run at `$8800-$9248`; its 10-byte window descriptor occupies `$27E9-$27F2`, and script content continues to use `$2400` as a sliding window. Six potentially hidden/transitively unsafe engine actions use one shared RAM-call dispatcher, which selects cartridge-off `$35/$04` through the reentrant far-call trampoline and restores `$37/$06` afterward. PAL/NTSC traces cover text, lightning, portrait fetch/show/hide, inventory mutation, transition message/request, IRQ progress, and exact map restoration. |
+| SL/SV -> in-place bank 48 ROML | SL runs at `$8000-$894D`; SV runs at `$8A00-$96EE`. They share `$0400-$0491`, borrow `$3000-$3479` for the record, and restore all tile data before drawing. Disk and world-capture calls use explicit host gates. PAL save and PAL/NTSC load round trips verify exact maps and restored tile bytes. |
+| Resident disk boundary | One `$B800-$BA0E` KERNAL driver runs under cartridge-off `$36/$04`. Each IEC transaction suspends/resynchronizes the raster source. Zone-B object bootstrap staging is split through `$B000-$B7FF`, so it cannot overwrite the driver. |
+| Copied-service ABI removed | The generic `$B000` loader, run-time header/checksum validator, text-module validator tail, and obsolete finalizer are gone. `$B000` remains only rebuildable renderer RAM and bounded staging. |
+| Cartridge-only runtime | The game D64 build/run path is gone. Disk device 8 exists only for `saves.d64`. |
 
 ## Interrupt/banking safety audit (2026-09-07)
 
@@ -661,11 +665,11 @@ The blocked relocation is now implemented as one atomic map change:
 - VIC bank 3 owns `$E800-$FDFF` (charsets, screen, pointers, sprites).
 - `PlatformRoom`, room staging, `WORLDDELTA`, BSS, and compact helpers moved
   into the freed `$2000-$2FFF` space.
-- the native/text/validator module moved to `$3A00-$3BEF`;
-- renderer `WORKBSS`, object-type staging, room-code staging, and every copied
-  overlay now share the page-aligned `$B000-$BFFF` window;
-- the 4,001-byte `SV` image leaves 95 bytes in that page, with a stricter
-  4,064-byte build ceiling retaining 32 bytes of policy reserve.
+- the native/SID/text module moved to `$3A00-$3BBC`;
+- renderer `WORKBSS` and bounded staging share `$B000-$B7FF`;
+- the resident save-disk driver occupies `$B800-$BA0E` and cannot be touched
+  by staging;
+- the generic copied-overlay window and validator no longer exist.
 
 An intermediate bank-2 design put the screen at `$8000` and charsets at
 `$A000`. It linked and the underlying RAM tested correctly, but Inventory's
@@ -675,12 +679,11 @@ The VIC still reads RAM beneath KERNAL, while IRQ water animation reads its
 source from an eight-byte low-RAM shadow so CPU-side KERNAL mapping is safe.
 
 PAL VICE has exercised Inventory in bank 48 ROMH, Type Info's nested 8 KiB
-far call, in-place `RH`/`SC`/`LH`, the relocated text pager, both save overlays with an
-actual named save/load round trip, RH at `$84C0`, and LH at `$9300` in bank 47
-ROML. RH neighbor/removal and LH Look/Take paths using a type-106 hot record
-pass on PAL and NTSC while the frame counter advances. The tests inspect `$01`, `$DD00`, `$D018`,
-`$DE00/$DE02`, overlay entries, screen/charset bytes, and saved state rather
-than relying only on screenshots.
+far call, in-place `RH`/`SC`/`LH`, the relocated text pager, and an actual
+named save/readback/load round trip through in-place SL/SV. NTSC load also
+passes. The tests inspect `$01`, `$DD00`, `$D018`, `$DE00/$DE02`, service and
+disk-gate entry maps, screen/charset/tile bytes, frame progress, and saved
+state rather than relying only on screenshots.
 
 ## Next-candidate dependency audit
 
@@ -693,30 +696,29 @@ upper routine, or follow a pointer into hidden RAM.
 |---|---|---|---|
 | `RH` | All imports below `$8000`; no BSS/initialized writable data | Hot type IDs 106-222 originally made `platform_object_type_get()` restore `$35`; RH kept lookup/dirty marking in its resident wrapper | Converted |
 | `LH` | All resolver imports are visible; no module-owned writable segment | A 595-byte workspace (former BSS plus collision-hit cache) borrows room staging; hot-type access restores the exact caller map instead of `$35` | Converted; PAL/NTSC high-type and nested-call tests pass |
-| `SL` | Direct imports are below `$8000` | Its record/index workspace is hard-coded at `$A000`, which ROML sees as BASIC and ROMH sees as cartridge; it explicitly calls `platform_memory_game()` and then continues, which would unmap an in-place caller | Requires I/O/workspace redesign, not a relink |
+| `SL` | Direct imports are visible or terminate at explicit KERNAL gates | Record moved from hidden `$A000` to temporary tile RAM; decoded list uses `$0400`; direct map changes removed | Converted; PAL/NTSC load tests pass |
 | `SC` | Direct imports are now visible; six action imports terminate at explicit RAM-call gates | The resource window was already `$2400`, not `$B000`; 10 bytes of mutable metadata moved to ROOMSTAGE's tail. RAM gates cover upper-code and WORKBSS closures, including nested portrait fetches | Converted; PAL/NTSC text/action/IRQ tests pass |
-| `SV` | Several imports are above `$8000` (`game_world_capture_current`, IRQ suspend/resume) | Same `$A000` save workspace and `$35` restoration as SL; near the complete 4 KiB overlay budget already | Last candidate; split disk transaction from UI/encode first |
+| `SV` | Direct imports are visible or terminate at explicit gameplay/KERNAL gates | Record moved to `$3000`; raw index uses `$0400`; disk driver split resident; tile asset restored by resident wrapper | Converted; named PAL save/readback/load passes |
 
-## Remaining redesign order
+## Redesign outcome
 
-1. Keep Inventory, Type Info, RH, LH, and SC as the in-place reference
-   implementations. RH demonstrates moving side effects across the boundary;
-   LH demonstrates exact map restoration and temporary workspace ownership;
-   SC demonstrates an explicit cartridge-to-resident host-action gate.
-2. Do not stage 256 collision results in resident code: the attempted version
-   overflowed `HIGH` by 45 bytes. Fixing the shared hot-type accessor at its
-   map-restoration boundary both removed that staging and made every collision
-   caller safe under the map it entered with.
-3. Convert only coarse, value-oriented services. A candidate must include its
-   C stack, globals, literals, runtime helpers, nested callees, and IRQ-visible
-   state. Validate PAL and NTSC and force at least one IRQ during its banked
-   execution.
-4. Split disk transactions from SL/SV UI and encoding before considering
-   in-place execution; their `$A000` buffers and explicit `$35` restoration
-   violate both cartridge modes today.
-5. Remove `$B000-$BFFF` as an overlay window only after `SL`/`SV` no longer
-   use it. Until then its temporal ownership contract is
-   simpler and safer than fine-grained bank switches or hidden copies.
+The planned service conversions are complete. Inventory and Type Info show
+nested bank calls; RH moves mapping-sensitive side effects to its resident
+wrapper; LH demonstrates exact-map restoration and temporary workspace; SC
+demonstrates gameplay host-action gates; SL/SV demonstrate separate gameplay
+and KERNAL host gates plus resident cleanup of aliased data.
+
+Future work should preserve these rules:
+
+1. Bank coarse, value-oriented services, never inner-loop helpers.
+2. Treat the complete C closure as part of the banked ABI: software stack,
+   globals, literals, runtime helpers, nested callees, and IRQ-visible state.
+3. Any routine that changes `$01` or `$DE02` must restore the exact caller
+   state, not a presumed gameplay state.
+4. Keep `$B800-$BA0E` outside every staging bound and restore borrowed
+   `$3000` tile data before drawing.
+5. Validate PAL and NTSC with structured monitor state, including at least one
+   interrupt during long banked work and exact bank/map restoration.
 
 ## Cartridge-only runtime
 

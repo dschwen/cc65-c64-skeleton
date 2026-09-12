@@ -1,12 +1,12 @@
 #include <stdint.h>
 
 #include "game.h"
+#include "saveload_abi.h"
 #include "world.h"
 
-/* Independently linked save-detail overlay ("SV"): name entry, record
- * encode, and the disk write for the slot chosen by the browse overlay
- * (modules/saveload.c, "SL") -- a separate overlay because the two
- * together do not fit the shared 4 KiB `$B000` RAM window. See
+/* Independently linked in-place save-detail service ("SV"): name entry,
+ * record encode, and disk write for the slot chosen by the browser
+ * (modules/saveload.c, "SL"). Both execute from bank 48 ROML. See
  * SAVE_GAME.md. Same constraints as modules/saveload.c: no runtime
  * library, so no memcpy/memset, no library string/number formatting, no
  * division/modulo by a non-power-of-two, and no storing a 16-bit value
@@ -27,8 +27,8 @@
 #define SAVE_INDEX_ENTRY_BYTES  17u
 #define SAVE_INDEX_BYTES \
     (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
-#define SAVE_INDEX_RAM       ((uint8_t*)0xa000)
-#define SAVE_RECORD_RAM      ((uint8_t*)0xa000)
+#define SAVE_INDEX_RAM       SAVELOAD_RECORD_RAM
+#define SAVE_RECORD_RAM      SAVELOAD_RECORD_RAM
 
 #define FILE_C 0x43u
 #define FILE_I 0x49u
@@ -41,25 +41,16 @@
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 #define NAME_SCREEN   ((uint8_t*)0xf99f)
 
-void platform_memory_kernal(void);
-void platform_memory_game(void);
-void raster_irq_suspend(void);
-void raster_irq_resume(void);
-
 extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
 extern uint16_t platform_disk_got;
-void platform_disk_read_block(void);
-void platform_disk_write_block(void);
-void platform_disk_index_write_block(void);
-
-/* The full 1,146-byte record uses save scratch RAM at $A000. Preserve the
+/* The full 1,146-byte record borrows tile-source RAM at $3000. Preserve the
  * browser's 146-byte index here before record encoding overwrites it. Name
  * entry edits the selected index entry directly; keeping a second 16-byte
- * name copy wastes scarce overlay RAM and would only need copying back. */
+ * name copy wastes scarce workspace and would only need copying back. */
 #define record_buffer SAVE_RECORD_RAM
-static uint8_t index_buffer[SAVE_INDEX_BYTES];
+#define index_buffer saveload_workspace
 
 static uint16_t get16(const uint8_t* p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -252,23 +243,19 @@ static uint8_t save_slot(uint8_t slot) {
     uint8_t status;
     uint8_t* entry;
 
-    status = game_world_capture_current();
+    status = saveload_host_capture_current();
     if (status != PLATFORM_OK) return 0u;
     if (game_world_delta_count > SAVE_MAX_DELTAS) return 0u;
     entry = index_entry(slot);
     total = encode_record(entry + 1u);
 
-    platform_memory_kernal();
     ok = disk_write_bytes(slot, total);
     if (ok) ok = load_full(slot);
-    platform_memory_game();
     if (!ok) return 0u;
 
     entry[0] = 1u;
     put16(index_buffer + 8, index_checksum(index_buffer));
-    platform_memory_kernal();
     ok = disk_index_write();
-    platform_memory_game();
     return ok;
 }
 
@@ -321,7 +308,7 @@ static uint8_t enter_name(uint8_t* name) {
     }
 }
 
-void saveload_save_overlay_run(void) {
+void saveload_save_banked_run(void) {
     uint8_t slot;
     uint8_t i;
     uint8_t* entry;
@@ -344,9 +331,7 @@ void saveload_save_overlay_run(void) {
     }
 
     clear_screen();
-    raster_irq_suspend();
     i = save_slot(slot);
-    raster_irq_resume();
 
     clear_screen();
     put_string(2u, 10u, i ? "Saved." : "Save failed.", i ? 5u : 2u);

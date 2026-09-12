@@ -19,7 +19,7 @@ investigation.
 `platform_room_enter()`:
 
 - `$9D00-$9FFF` holds the pristine 768-byte object list for the current room;
-- `$BC00-$BFE7` holds up to 200 five-byte `GameWorldDelta` records;
+- `$2800-$2BE7` holds up to 200 five-byte `GameWorldDelta` records;
 - each record contains room ID, exact object slot, and the three-byte object;
 - a type-0 object is a deletion record, so taken items stay removed;
 - returning to a room loads its immutable asset, captures that object list as
@@ -103,8 +103,9 @@ must finish or reject a pending room transition, then call
 ## Disk backend
 
 8 numbered slots (`0`-`7`) are offered; F1 opens the Save menu, F3 opens the
-Load menu (both resident keys, wired in `src/main.c`, dispatching into an
-EasyFlash overlay -- see "Save/load overlay" below). Storage is device 8.
+Load menu (both resident keys, wired in `src/main.c`, dispatching into
+in-place EasyFlash services -- see "Save/load banked services" below).
+Storage is device 8.
 Each slot has one sequential file named `S0` through `S7`.
 
 `SINDEX` is a 146-byte, one-disk-block directory cache. Opening Save or Load
@@ -146,58 +147,54 @@ and new caret cells. The in-place Inventory service uses the same incremental-ca
 approach; it redraws the list only after `use` because story code may have
 changed inventory contents.
 
-Loading reads and validates the complete `Sn` record into `$A000-$A479`.
-The browse overlay then returns before the room transition starts. This order
-is mandatory: `platform_room_enter()` uses `$2400` for room staging and
-`$B000` for room-code staging, so calling it while the save/load overlay was
-still executing at `$B000` would overwrite its code. Resident code in
-`src/saveload_runtime.c` now copies the decoded game state and journal to
-their permanent locations, disables the leaving-room capture hook, enters
-the saved room, restores the hook, sets `GAME_ENTRY_LOAD`, and invokes the
-room's `enter_room()` and `enter_tile()` hooks.
+Loading reads and validates the complete `Sn` record into `$3000-$3479`,
+temporarily replacing the immutable tile-definition source data. The banked
+browser then returns. Resident code in `src/saveload_runtime.c` copies the
+decoded game state and journal to their permanent locations and restores the
+entire 2,304-byte tile/property resource before any room draw or transition.
+It then disables the leaving-room capture hook, enters the saved room,
+restores the hook, sets `GAME_ENTRY_LOAD`, and invokes the room's
+`enter_room()` and `enter_tile()` hooks.
 
-## Save/load overlay
+## Save/load banked services
 
-The implementation uses two independently linked overlays because their
-combined UI and disk code does not fit the shared 4 KiB window:
+The implementation uses two independently linked, execute-in-place services
+because their combined UI and encoding code does not fit one contiguous area:
 
 - `modules/saveload.c` (`SL`) provides the slot browser and full Load read;
 - `modules/saveload_save.c` (`SV`) provides name entry, encoding, Save,
   readback verification, and index update.
 
-They temporarily own `$B000-$BFFF`, the rebuildable render/lighting RAM, and
-never run together. `SL` is stored in
-EasyFlash bank 48 ROML. `SV` is stored in bank 47 ROMH. Each has a 16-byte
-header (ABI 1) validated by the generic resident overlay loader
-(`platform_overlay_load()`,
-`platform_overlay_validate_native()` in `src/platform.c`/`src/inventory_api.s`,
-parameterized by bank, ROML/ROMH half, and expected magic bytes -- resident
-code budget is too tight to duplicate that validator per overlay).
+Both live in EasyFlash bank 48 ROML: `SL` at `$8000-$894D` and `SV` at
+`$8A00-$96EE`. They are immutable ROM and have no linked BSS or writable data.
+The build validates their entry vectors, read-only segments, imported symbol
+visibility, packed addresses, and lack of overlap. There is no run-time copy,
+overlay header, or checksum validator.
 
 `src/main.c` maps `PLATFORM_KEY_SAVE` (F1) and `PLATFORM_KEY_LOAD` (F3) to
-resident wrappers `game_save_show()`/`game_load_show()` (in
-`src/saveload_runtime.c`): load and
-validate the overlay, run it in the requested mode, then restore the split
-charset and redraw exactly like Inventory's resident wrapper.
+resident wrappers `game_save_show()`/`game_load_show()`. Those wrappers (in
+`src/saveload_runtime.c`) enter `SL` in the requested mode, optionally enter
+`SV`, then restore the tile resource, charset split, and room display.
 
-`SV` preserves the 146-byte browser index in its own BSS before record
-encoding reuses `$A000`. Name entry edits the selected 17-byte index entry
-in place, so no second 16-byte name buffer or copy-back loop is needed. Its
-measured header/code/RODATA/BSS footprint is 4,001 bytes. The build passes
-`SAVELOAD_SAVE_MAX_FOOTPRINT` (default `$0FE0`, 4,064 bytes) to the overlay
-finalizer, which counts BSS as well as file-backed bytes and fails the build
-if `SV` consumes the 32-byte reserve in the `$B000-$BFFF` window.
+The services share a 146-byte resident workspace at `$0400-$0491`. SL uses it
+for decoded names/presence flags; SV preserves the raw `SINDEX` there before
+record encoding reuses `$3000`. Name entry edits the selected 17-byte index
+entry in place, avoiding a second name buffer. The maximum record deliberately
+borrows tile RAM because `$A000-$BFFF` reads are BASIC ROM while bank 48 ROML
+is active; treating that range as ordinary RAM was the central incompatibility
+in the old design.
 
-Inside the overlays, KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/
-`CHKOUT`/`CHRIN`/`CHROUT`/`CLOSE`/`READST`) bracket each open file with
-`platform_memory_kernal()`/`platform_memory_game()` (already resident,
-previously unused) rather than a global `SEI`: KERNAL disk I/O needs
-interrupts enabled for its own timing, and the raster IRQ already has a
-`$0314`-vector entry point for exactly this "KERNAL mapped in" period (see
-`EASYFLASH_CARTRIDGE.md`'s IRQ/KERNAL independence section). All save
-storage uses device 8. Assembly reloads cc65's `ptr1` after KERNAL calls;
-low zero page belongs to the KERNAL during those calls and cannot safely hold
-a live C pointer.
+KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/`CHKOUT`/`CHRIN`/
+`CHROUT`/`CLOSE`/`READST`) live once in a resident assembly driver at
+`$B800-$BA0E`. SL/SV reach four block operations through explicit resident
+gates. Each gate temporarily disables EasyFlash and selects `$01=$36`, calls
+the driver, and restores the exact bank-48 ROML mapping before returning. The
+driver suspends the VIC raster source around each complete IEC transaction
+and resynchronizes it afterward; this prevents raster work from disrupting a
+write while leaving the CPU interrupt state suitable for KERNAL serial I/O.
+Assembly reloads cc65's `ptr1` after every KERNAL call because KERNAL owns low
+zero page. `SV` similarly calls `game_world_capture_current()` through a
+cartridge-off `$35` host gate rather than importing upper RAM code directly.
 
 ## No EasyFlash-flash save backend
 
@@ -214,8 +211,9 @@ storage.
 ## Capacity policy
 
 The global journal and v1 file format both support 200 changed object slots.
-The maximum record is 1,146 bytes and fits at `$A000-$A479`. Type 0 slots cost
-a record just like additions or movement.
+The maximum record is 1,146 bytes and fits at `$3000-$3479` while save/load
+temporarily owns tile source RAM. Type 0 slots cost a record just like
+additions or movement.
 When the journal is full, save-aware mutations and room transitions fail
 without discarding prior state. Future formats can compact known one-shot
 items into game flags while retaining v1 load compatibility.

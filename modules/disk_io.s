@@ -1,11 +1,11 @@
 .setcpu "6502"
 
-; Block-oriented KERNAL sequential-file I/O for the save/load overlay,
+; Resident block-oriented KERNAL sequential-file I/O for save/load,
 ; hand-written in assembly because the C equivalent (a byte loop calling
-; small CHRIN/CHROUT wrappers) was too large for the overlay's 4 KiB
-; window. Callers must map KERNAL in (platform_memory_kernal()) before
-; using either block routine and restore gameplay mapping
-; (platform_memory_game()) afterward.
+; small CHRIN/CHROUT wrappers) was too large. It is linked once at $B800,
+; outside renderer WORKBSS, and entered
+; only through low-resident gates that unmap EasyFlash and select the KERNAL
+; memory map for the duration of the call.
 ;
 ; Parameters/results pass through shared globals (matching the
 ; platform_ef_copy_* convention), not the C stack:
@@ -25,12 +25,14 @@
 .export _platform_disk_buffer
 .export _platform_disk_want
 .export _platform_disk_got
-.export _platform_disk_read_block
-.export _platform_disk_write_block
-.export _platform_disk_index_read_block
-.export _platform_disk_index_write_block
+.export _platform_disk_read_block_native
+.export _platform_disk_write_block_native
+.export _platform_disk_index_read_block_native
+.export _platform_disk_index_write_block_native
 
 .importzp ptr1
+.import _raster_irq_resume
+.import _raster_irq_suspend
 
 SETLFS = $ffba
 SETNAM = $ffbd
@@ -54,7 +56,7 @@ _platform_disk_got:     .res 2
 ; "S0:Sn" / "Sn,W" at the same offsets.
 filename: .res 11
 
-.segment "CODE"
+.segment "DISKCODE"
 
 build_slot_filename:
     ; CBM DOS command/type/mode letters must use low PETSCII. cl65's C64
@@ -123,12 +125,22 @@ scratch_named:
 ; Reads up to platform_disk_want bytes into platform_disk_buffer, stopping
 ; early at EOF/error. platform_disk_got is the actual count (0 if the file
 ; could not be opened at all).
-_platform_disk_read_block:
+_platform_disk_read_block_native:
+    jsr _raster_irq_suspend
+    jsr read_slot_block
+    jmp _raster_irq_resume
+
+_platform_disk_index_read_block_native:
+    jsr _raster_irq_suspend
+    jsr read_index_block
+    jmp _raster_irq_resume
+
+read_slot_block:
     jsr build_slot_filename
     lda #2
     bne read_named
 
-_platform_disk_index_read_block:
+read_index_block:
     jsr build_index_filename
     lda #6
 
@@ -204,13 +216,23 @@ read_named:
 ; compare it to platform_disk_want for success. The routine also drains the
 ; drive command channel after CLOSE: a 1541 can still be writing the final
 ; data block and directory entry after the KERNAL CLOSE call has returned.
-_platform_disk_write_block:
+_platform_disk_write_block_native:
+    jsr _raster_irq_suspend
+    jsr write_slot_block
+    jmp _raster_irq_resume
+
+_platform_disk_index_write_block_native:
+    jsr _raster_irq_suspend
+    jsr write_index_block
+    jmp _raster_irq_resume
+
+write_slot_block:
     jsr scratch_slot
     jsr build_slot_filename
     lda #4
     bne write_named
 
-_platform_disk_index_write_block:
+write_index_block:
     jsr scratch_index
     jsr build_index_filename
     lda #8

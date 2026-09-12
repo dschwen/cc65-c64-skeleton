@@ -469,7 +469,7 @@ static void run_conversation(uint8_t topic_count) {
     }
 }
 
-void script_overlay_run(void) {
+void script_banked_run(void) {
     uint8_t kind;
 
     script_buf = platform_room_scratch();

@@ -10,15 +10,13 @@
       "bank": 48,
       "half": "roml",
       "offset": 0,
-      "kind": "overlay",
-      "magic": "SL"
+      "kind": "in_place"
     },
     "saveload_save": {
-      "bank": 47,
-      "half": "romh",
-      "offset": 0,
-      "kind": "overlay",
-      "magic": "SV"
+      "bank": 48,
+      "half": "roml",
+      "offset": 2560,
+      "kind": "in_place"
     },
     "room_helpers": {
       "bank": 47,

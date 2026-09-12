@@ -129,22 +129,20 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
 /* Show all inventory slots on a temporary full-screen text display. */
 void game_inventory_show(void);
 
-/* Save/load overlay (src/saveload_runtime.c, modules/saveload.c). Opens a
- * temporary full-screen slot-select display; see SAVE_GAME.md. */
+/* In-place save/load services (src/saveload_runtime.c, modules/saveload.c).
+ * Opens a temporary full-screen slot-select display; see SAVE_GAME.md. */
 #define SAVELOAD_MODE_SAVE 0u
 #define SAVELOAD_MODE_LOAD 1u
 #define SAVELOAD_SLOT_NONE 0xffu
-extern uint8_t saveload_overlay_mode;
-/* Hand-off between the two save-flow overlays (SAVELOAD_SLOT_NONE = no
- * slot chosen / cancelled): the "SL" browse overlay sets this and returns
- * when the user picks a slot to save into, then the resident wrapper loads
- * the separate "SV" overlay (modules/saveload_save.c) to do name entry and
- * the actual write. Kept resident because loading a new overlay blob
- * overwrites the previous one's own static variables. */
+extern uint8_t saveload_mode;
+/* Hand-off between the two save-flow services (SAVELOAD_SLOT_NONE = no
+ * slot chosen / cancelled): banked "SL" sets this and returns when the user
+ * picks a slot, then the resident wrapper enters banked "SV" for name entry
+ * and the write. It must remain resident across the two separate calls. */
 extern uint8_t saveload_selected_slot;
-/* The load overlay sets this after placing a validated record at $A000.
- * Resident code consumes the record only after the overlay has returned;
- * room loading reuses and overwrites the overlay/staging memory. */
+/* SL sets this after placing a validated record in temporary tile RAM at
+ * $3000. Resident code consumes it after SL returns, restores the tile asset,
+ * and only then performs any room redraw or transition. */
 extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);

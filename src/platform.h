@@ -210,8 +210,8 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
 /* The current room's own script resource's backing buffer/size (resource ID
- * == room ID; see game_room_script_entry() in game.h), for a one-shot
- * overlay (the script interpreter, modules/script.c) to borrow as scratch
+ * == room ID; see game_room_script_entry() in game.h), for the one-shot
+ * in-place script interpreter (modules/script.c) to borrow as scratch
  * RAM while it runs. Nothing resident reads it between borrows, so there's
  * no "restore before returning" contract. */
 uint8_t* platform_room_scratch(void);

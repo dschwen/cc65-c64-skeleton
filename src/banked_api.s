@@ -21,6 +21,13 @@
 .export _platform_look_helpers_run_banked
 .export _platform_room_helpers_run_banked
 .export _platform_script_run_banked
+.export _platform_saveload_run_banked
+.export _platform_saveload_save_run_banked
+.export _platform_disk_read_block
+.export _platform_disk_write_block
+.export _platform_disk_index_read_block
+.export _platform_disk_index_write_block
+.export _saveload_host_capture_current
 .export _script_host_inventory_add
 .export _script_host_lightning
 .export _script_host_portrait_hide
@@ -31,16 +38,22 @@
 .import _game_inventory_add
 .import _game_transition_request
 .import _game_transition_show_message
+.import _game_world_capture_current
+.import _platform_disk_index_read_block_native
+.import _platform_disk_index_write_block_native
+.import _platform_disk_read_block_native
+.import _platform_disk_write_block_native
 .import _platform_lightning
 .import _platform_portrait_hide
 .import _platform_portrait_show
 
 ; Run resident RAM hidden by ROML/BASIC while preserving the outer banked
-; caller. The six public gates select a target in Y, then tail-call this
+; caller. Public gates select a target in Y, then tail-call this
 ; shared dispatcher. A/X are saved while the descriptor is patched because
 ; they carry cc65's fastcall argument; the far-call trampoline returns
 ; directly to the original C caller and preserves its A/X result.
-script_host_ram_call:
+.segment "HIGHCODE"
+host_ram_call:
     pha
     txa
     pha
@@ -48,11 +61,11 @@ script_host_ram_call:
     tax
     lda #0
     sta far_call_bank_operand
-    lda script_host_target_lo,x
+    lda host_target_lo,x
     sta far_call_target_operand
-    lda script_host_target_hi,x
+    lda host_target_hi,x
     sta far_call_target_operand+1
-    lda #CPU_MAP_GAME
+    lda host_cpu_map,x
     sta far_call_cpu_map_operand
     lda #EASYFLASH_OFF
     sta far_call_control_operand
@@ -61,20 +74,34 @@ script_host_ram_call:
     pla
     jmp _platform_far_call
 
-script_host_target_lo:
+host_target_lo:
     .byte <_platform_portrait_show
     .byte <_platform_portrait_hide
     .byte <_game_inventory_add
     .byte <_game_transition_request
     .byte <_game_transition_show_message
     .byte <_platform_lightning
-script_host_target_hi:
+    .byte <_game_world_capture_current
+    .byte <_platform_disk_read_block_native
+    .byte <_platform_disk_write_block_native
+    .byte <_platform_disk_index_read_block_native
+    .byte <_platform_disk_index_write_block_native
+host_target_hi:
     .byte >_platform_portrait_show
     .byte >_platform_portrait_hide
     .byte >_game_inventory_add
     .byte >_game_transition_request
     .byte >_game_transition_show_message
     .byte >_platform_lightning
+    .byte >_game_world_capture_current
+    .byte >_platform_disk_read_block_native
+    .byte >_platform_disk_write_block_native
+    .byte >_platform_disk_index_read_block_native
+    .byte >_platform_disk_index_write_block_native
+host_cpu_map:
+    .byte CPU_MAP_GAME, CPU_MAP_GAME, CPU_MAP_GAME, CPU_MAP_GAME
+    .byte CPU_MAP_GAME, CPU_MAP_GAME, CPU_MAP_GAME
+    .byte CPU_MAP_KERNAL, CPU_MAP_KERNAL, CPU_MAP_KERNAL, CPU_MAP_KERNAL
 
 ; Bank and CPU entry come from the same generated layout consumed by the
 ; packer. tools/validate_easyflash_layout.py additionally checks the linked
@@ -83,8 +110,6 @@ script_host_target_hi:
 ; HIGHCODE is equally visible to both execution modes and has more margin than
 ; PROGRAM. Keeping these generated-mode stubs out of LOWCODE avoids spending
 ; the final bytes below $2000 merely to patch a far-call descriptor.
-.segment "HIGHCODE"
-
 ; const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id)
 ; fastcall: type_id in A, returns the scratch record's address in A/X.
 _platform_object_type_info_get:
@@ -119,24 +144,54 @@ _platform_script_run_banked:
 
 _script_host_portrait_show:
     ldy #0
-    jmp script_host_ram_call
+    jmp host_ram_call
 
 _script_host_portrait_hide:
     ldy #1
-    jmp script_host_ram_call
+    jmp host_ram_call
 
 _script_host_inventory_add:
     ldy #2
-    jmp script_host_ram_call
+    jmp host_ram_call
 
 _script_host_transition_request:
     ldy #3
-    jmp script_host_ram_call
+    jmp host_ram_call
 
 _script_host_transition_show_message:
     ldy #4
-    jmp script_host_ram_call
+    jmp host_ram_call
 
 _script_host_lightning:
     ldy #5
-    jmp script_host_ram_call
+    jmp host_ram_call
+
+; Save/load UI services share bank 48 ROML. Disk calls and world capture use
+; the explicit RAM gates below; no service code is copied to WORKBSS.
+_platform_saveload_run_banked:
+    FAR_CALL EF_LAYOUT_SAVELOAD_BANK, EF_LAYOUT_SAVELOAD_ENTRY, EF_LAYOUT_SAVELOAD_CPU_MAP, EF_LAYOUT_SAVELOAD_CONTROL
+    rts
+
+_platform_saveload_save_run_banked:
+    FAR_CALL EF_LAYOUT_SAVELOAD_SAVE_BANK, EF_LAYOUT_SAVELOAD_SAVE_ENTRY, EF_LAYOUT_SAVELOAD_SAVE_CPU_MAP, EF_LAYOUT_SAVELOAD_SAVE_CONTROL
+    rts
+
+_saveload_host_capture_current:
+    ldy #6
+    jmp host_ram_call
+
+_platform_disk_read_block:
+    ldy #7
+    jmp host_ram_call
+
+_platform_disk_write_block:
+    ldy #8
+    jmp host_ram_call
+
+_platform_disk_index_read_block:
+    ldy #9
+    jmp host_ram_call
+
+_platform_disk_index_write_block:
+    ldy #10
+    jmp host_ram_call

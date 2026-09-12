@@ -97,7 +97,6 @@ EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
 EF_CFG := cfg/easyflash.cfg
 TEXT_MODULE_OBJ := $(OUTDIR)/text-module.o
 TEXT_SID_OBJ := $(OUTDIR)/text-sid.o
-TEXT_VALIDATOR_OBJ := $(OUTDIR)/text-validator.o
 TEXT_HEADER_OBJ := $(OUTDIR)/text-header.o
 TEXT_RESOLVER_SRC := $(OUTDIR)/text-resolver.s
 TEXT_RESOLVER_OBJ := $(OUTDIR)/text-resolver.o
@@ -116,19 +115,17 @@ SAVELOAD_DISK_OBJ := $(OUTDIR)/saveload-disk.o
 SAVELOAD_HEADER_OBJ := $(OUTDIR)/saveload-header.o
 SAVELOAD_RESOLVER_SRC := $(OUTDIR)/saveload-resolver.s
 SAVELOAD_RESOLVER_OBJ := $(OUTDIR)/saveload-resolver.o
-SAVELOAD_MODULE_CFG := cfg/saveload_overlay.cfg
-SAVELOAD_MODULE_RAW := $(OUTDIR)/saveload.raw
+SAVELOAD_MODULE_CFG := cfg/banked_saveload.cfg
 SAVELOAD_MODULE := $(OUTDIR)/SL
 SAVELOAD_SAVE_MODULE_C_OBJ := $(OUTDIR)/saveload-save-module.o
 SAVELOAD_SAVE_HEADER_OBJ := $(OUTDIR)/saveload-save-header.o
 SAVELOAD_SAVE_RESOLVER_SRC := $(OUTDIR)/saveload-save-resolver.s
 SAVELOAD_SAVE_RESOLVER_OBJ := $(OUTDIR)/saveload-save-resolver.o
-SAVELOAD_SAVE_MODULE_CFG := cfg/saveload_save_overlay.cfg
-SAVELOAD_SAVE_MODULE_RAW := $(OUTDIR)/saveload-save.raw
+SAVELOAD_SAVE_MODULE_CFG := cfg/banked_saveload_save.cfg
 SAVELOAD_SAVE_MODULE := $(OUTDIR)/SV
-# Keep SV small enough to relocate into one 4 KiB page with useful growth
-# room. The finalizer includes BSS when enforcing this footprint.
-SAVELOAD_SAVE_MAX_FOOTPRINT ?= 0x0fe0
+# The disk driver is resident at $B800; SL/SV reach it through cartridge-off
+# gates rather than linking a private copy into either banked service.
+OBJECTS += $(SAVELOAD_DISK_OBJ)
 ROOM_HELPERS_C_OBJ := $(OUTDIR)/room-helpers-module.o
 ROOM_HELPERS_HEADER_OBJ := $(OUTDIR)/room-helpers-header.o
 ROOM_HELPERS_RESOLVER_SRC := $(OUTDIR)/room-helpers-resolver.s
@@ -136,7 +133,7 @@ ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
 ROOM_HELPERS_MODULE_CFG := cfg/banked_room_helpers.cfg
 ROOM_HELPERS_MODULE := $(OUTDIR)/RH
 # Banked type-info module executed in place from its EasyFlash bank (never
-# copied into RAM, like Inventory/RH/LH/SC and unlike the SL/SV overlays)
+# copied into RAM, like Inventory/RH/LH/SC/SL/SV)
 # - see the banked module linker configurations.
 TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
 TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
@@ -251,27 +248,22 @@ $(TEXT_MODULE_OBJ): src/text.s src/platform.inc | $(OUTDIR)
 $(TEXT_SID_OBJ): src/sid.c src/sid.h | $(OUTDIR)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(TEXT_VALIDATOR_OBJ): modules/inventory_validate_post.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
 $(TEXT_HEADER_OBJ): modules/text_header.s | $(OUTDIR)
 	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		$(TEXT_VALIDATOR_OBJ) \
 		tools/generate_room_resolver.py | $(OUTDIR)
 	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) $(TEXT_VALIDATOR_OBJ)
+		$(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ)
 
 $(TEXT_RESOLVER_OBJ): $(TEXT_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
 $(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		$(TEXT_VALIDATOR_OBJ) \
 		$(TEXT_RESOLVER_OBJ) $(TEXT_MODULE_CFG)
 	$(LD65) -C $(TEXT_MODULE_CFG) -m $(OUTDIR)/text.map -o $@ \
 		$(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		$(TEXT_VALIDATOR_OBJ) $(TEXT_RESOLVER_OBJ)
+		$(TEXT_RESOLVER_OBJ)
 
 $(INVENTORY_MODULE_C_OBJ): modules/inventory.c src/game.h src/platform.h \
 		src/story.h | $(OUTDIR)
@@ -308,7 +300,7 @@ $(INVENTORY_MODULE): $(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
 		--module inventory --map $(OUTDIR)/inventory.map \
 		--resolver $(INVENTORY_RESOLVER_SRC)
 
-$(SAVELOAD_MODULE_C_OBJ): modules/saveload.c src/game.h src/platform.h src/world.h | $(OUTDIR)
+$(SAVELOAD_MODULE_C_OBJ): modules/saveload.c src/game.h src/platform.h src/saveload_abi.h src/world.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SAVELOAD_DISK_OBJ): modules/disk_io.s | $(OUTDIR)
@@ -317,50 +309,47 @@ $(SAVELOAD_DISK_OBJ): modules/disk_io.s | $(OUTDIR)
 $(SAVELOAD_HEADER_OBJ): modules/saveload_header.s | $(OUTDIR)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
+$(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) \
 		$(SAVELOAD_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
 	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_HEADER_OBJ)
+		$(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_HEADER_OBJ)
 
 $(SAVELOAD_RESOLVER_OBJ): $(SAVELOAD_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(SAVELOAD_MODULE_RAW): $(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
-		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_RESOLVER_OBJ) $(SAVELOAD_MODULE_CFG)
+$(SAVELOAD_MODULE): $(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
+		$(SAVELOAD_RESOLVER_OBJ) $(SAVELOAD_MODULE_CFG) $(EF_LAYOUT) \
+		tools/easyflash_layout.py tools/validate_banked_module.py
 	$(LD65) -C $(SAVELOAD_MODULE_CFG) -m $(OUTDIR)/saveload.map -o $@ \
 		$(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
-		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_RESOLVER_OBJ)
+		$(SAVELOAD_RESOLVER_OBJ)
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module saveload --map $(OUTDIR)/saveload.map \
+		--resolver $(SAVELOAD_RESOLVER_SRC)
 
-$(SAVELOAD_MODULE): $(SAVELOAD_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/saveload.map --magic SL --output $@
-
-$(SAVELOAD_SAVE_MODULE_C_OBJ): modules/saveload_save.c src/game.h src/platform.h src/world.h | $(OUTDIR)
+$(SAVELOAD_SAVE_MODULE_C_OBJ): modules/saveload_save.c src/game.h src/platform.h src/saveload_abi.h src/world.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
 
 $(SAVELOAD_SAVE_HEADER_OBJ): modules/saveload_save_header.s | $(OUTDIR)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) \
+$(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
 		$(SAVELOAD_SAVE_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
 	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_HEADER_OBJ)
+		$(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_SAVE_HEADER_OBJ)
 
 $(SAVELOAD_SAVE_RESOLVER_OBJ): $(SAVELOAD_SAVE_RESOLVER_SRC)
 	$(CL65_COMPILE) -c -o $@ $<
 
-$(SAVELOAD_SAVE_MODULE_RAW): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
-		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_RESOLVER_OBJ) $(SAVELOAD_SAVE_MODULE_CFG)
+$(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
+		$(SAVELOAD_SAVE_RESOLVER_OBJ) $(SAVELOAD_SAVE_MODULE_CFG) $(EF_LAYOUT) \
+		tools/easyflash_layout.py tools/validate_banked_module.py
 	$(LD65) -C $(SAVELOAD_SAVE_MODULE_CFG) -m $(OUTDIR)/saveload-save.map -o $@ \
 		$(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
-		$(SAVELOAD_DISK_OBJ) $(SAVELOAD_SAVE_RESOLVER_OBJ)
-
-$(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_MODULE_RAW) \
-		tools/finalize_inventory_overlay.py
-	python3 tools/finalize_inventory_overlay.py --input $< \
-		--map $(OUTDIR)/saveload-save.map --magic SV \
-		--max-footprint $(SAVELOAD_SAVE_MAX_FOOTPRINT) --output $@
+		$(SAVELOAD_SAVE_RESOLVER_OBJ)
+	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
+		--module saveload_save --map $(OUTDIR)/saveload-save.map \
+		--resolver $(SAVELOAD_SAVE_RESOLVER_SRC)
 
 $(ROOM_HELPERS_C_OBJ): modules/room_helpers.c src/platform.h | $(OUTDIR)
 	$(CL65_COMPILE) -Isrc -c -o $@ $<
@@ -555,6 +544,8 @@ $(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_
 		--look-helpers-map $(OUTDIR)/look-helpers.map \
 		--room-helpers-map $(OUTDIR)/room-helpers.map \
 		--script-map $(OUTDIR)/script.map \
+		--saveload-map $(OUTDIR)/saveload.map \
+		--saveload-save-map $(OUTDIR)/saveload-save.map \
 		--typeinfo-map $(OUTDIR)/typeinfo.map
 
 $(OUT_CRT): $(OUT_EF_BIN)

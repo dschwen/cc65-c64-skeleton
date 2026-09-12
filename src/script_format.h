@@ -6,8 +6,8 @@
  * as a tiny shared header (unlike the opcode set) because both resident
  * code and modules/script.c need to agree on it: resident code
  * (game_room_script_entry() in src/script_runtime.c) reads a room's
- * KIND_ROOM entry table directly, without loading the interpreter overlay,
- * to decide whether an overlay load is even worth paying for. */
+ * KIND_ROOM entry table directly, without entering the interpreter service,
+ * to decide whether a banked call is worth paying for. */
 #define SCRIPT_KIND_SCRIPT       0u
 #define SCRIPT_KIND_CONVERSATION 1u
 #define SCRIPT_KIND_ROOM         2u

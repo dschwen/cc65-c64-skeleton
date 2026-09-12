@@ -1,15 +1,15 @@
 #include <stdint.h>
 
 #include "game.h"
+#include "saveload_abi.h"
 #include "world.h"
 
-/* Independently linked save/load browse overlay ("SL"): slot list, cursor
+/* Independently linked in-place save/load browser ("SL"): slot list, cursor
  * navigation, and the complete Load flow. See SAVE_GAME.md for the on-disk
- * record format and the "Save/load overlay" architecture section, and
+ * record format and save/load architecture section, and
  * modules/saveload_save.c for the Save flow (name entry + encode + write),
- * a separate overlay because the two together do not fit this overlay's
- * shared 4 KiB `$B000` RAM window. This file does not link against the cc65
- * runtime library (same constraint as modules/inventory.c): no
+ * a second service in the same cartridge half. This file does not link
+ * against the cc65 runtime library (same constraint as modules/inventory.c): no
  * memcpy/memset, no library string/number formatting, no division/modulo
  * by a non-power-of-two.
  */
@@ -28,8 +28,8 @@
 #define SAVE_INDEX_ENTRY_BYTES  17u
 #define SAVE_INDEX_BYTES \
     (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
-#define SAVE_INDEX_RAM       ((uint8_t*)0xa000)
-#define SAVE_RECORD_RAM      ((uint8_t*)0xa000)
+#define SAVE_INDEX_RAM       SAVELOAD_RECORD_RAM
+#define SAVE_RECORD_RAM      SAVELOAD_RECORD_RAM
 
 #define FILE_C 0x43u
 #define FILE_I 0x49u
@@ -41,23 +41,14 @@
 #define SCREEN_ROWS   25u
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 
-void platform_memory_kernal(void);
-void platform_memory_game(void);
-void raster_irq_suspend(void);
-void raster_irq_resume(void);
-
 /* modules/disk_io.s: hand-written block I/O, not a byte-loop over small C
- * wrappers -- the C version was too large for this overlay's 4 KiB
- * window. See that file for the parameter/result convention. */
+ * wrappers. The four functions below are resident gates: each temporarily
+ * disables the cartridge, selects the KERNAL map, calls the driver at $B800,
+ * and restores this service's bank before returning. */
 extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
 extern uint16_t platform_disk_got;
-void platform_disk_read_block(void);
-void platform_disk_write_block(void);
-void platform_disk_index_read_block(void);
-void platform_disk_index_write_block(void);
-
 typedef union SaveWorkspace {
     uint8_t record[SAVE_PEEK_BYTES];
     struct {
@@ -66,7 +57,7 @@ typedef union SaveWorkspace {
     } slots;
 } SaveWorkspace;
 
-static SaveWorkspace save_workspace;
+#define save_workspace (*(SaveWorkspace*)saveload_workspace)
 #define record_buffer     save_workspace.record
 #define slot_display_name save_workspace.slots.names
 #define slot_present      save_workspace.slots.present
@@ -84,7 +75,7 @@ static void put16(uint8_t* p, uint16_t v) {
     p[1] = (uint8_t)(v >> 8);
 }
 
-/* No 32-bit helpers here: the overlay link does not include the cc65
+/* No 32-bit helpers here: the banked link does not include the cc65
  * runtime library, and any `uint32_t` shift/OR pulls in unresolved eax-*
  * helpers from it. game_state.turn is the only 32-bit field this format
  * carries; copy_bytes() below moves it as raw bytes instead -- valid only
@@ -124,8 +115,7 @@ static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     }
 }
 
-/* ---- disk I/O (device fixed at 8 in modules/disk_io.s; caller brackets
- * with platform_memory_kernal()/platform_memory_game()) */
+/* ---- disk I/O (device fixed at 8 in modules/disk_io.s) */
 
 static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
@@ -220,14 +210,12 @@ static void build_slot_list(void) {
     uint8_t entry;
     uint16_t got;
 
-    platform_memory_kernal();
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
     platform_disk_index_read_block();
     got = platform_disk_got;
     if (index_valid(got)) {
         decode_index();
-        platform_memory_game();
         return;
     }
 
@@ -252,7 +240,6 @@ static void build_slot_list(void) {
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
     platform_disk_index_write_block();
-    platform_memory_game();
 }
 
 /* ---- full record load + validate (does not touch game state) */
@@ -288,7 +275,7 @@ static void draw_slot_list(void) {
 
     clear_screen();
     put_string(13u, 1u,
-              saveload_overlay_mode == SAVELOAD_MODE_SAVE ? "SAVE GAME"
+              saveload_mode == SAVELOAD_MODE_SAVE ? "SAVE GAME"
                                                             : "LOAD GAME",
               1u);
     for (slot = 0u; slot < SAVE_SLOT_COUNT; ++slot) {
@@ -311,7 +298,7 @@ static void draw_slot_list(void) {
         }
     }
     put_string(2u, 20u,
-              saveload_overlay_mode == SAVELOAD_MODE_SAVE
+              saveload_mode == SAVELOAD_MODE_SAVE
                   ? "RETURN save   RUN/STOP cancel"
                   : "RETURN load   RUN/STOP cancel",
               1u);
@@ -331,7 +318,7 @@ static void wait_key_release(void) {
 
 /* ---- top-level dispatch -------------------------------------------- */
 
-void saveload_overlay_run(void) {
+void saveload_banked_run(void) {
     uint8_t key;
     uint8_t ok;
     uint8_t old_slot;
@@ -356,7 +343,7 @@ void saveload_overlay_run(void) {
         } else if (key == PLATFORM_KEY_CURSOR_DOWN) {
             if (selected_slot + 1u < SAVE_SLOT_COUNT) ++selected_slot;
         } else if (key == PLATFORM_KEY_ENTER) {
-            if (saveload_overlay_mode == SAVELOAD_MODE_SAVE) {
+            if (saveload_mode == SAVELOAD_MODE_SAVE) {
                 saveload_selected_slot = selected_slot;
                 VIC_CTRL1 &= 0xefu;
                 return;
@@ -366,9 +353,7 @@ void saveload_overlay_run(void) {
                 wait_key_release();
                 continue;
             }
-            platform_memory_kernal();
             ok = load_full(selected_slot);
-            platform_memory_game();
             if (ok) {
                 saveload_load_pending = 1u;
                 VIC_CTRL1 &= 0xefu;

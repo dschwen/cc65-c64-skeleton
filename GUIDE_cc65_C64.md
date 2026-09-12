@@ -284,21 +284,23 @@ linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
 
 | Address range | Use |
 |---|---|
+| `$0400-$0491` | shared resident SL/SV workspace |
 | `$2000-$23FF` | current room |
 | `$2400-$27FF` | destination-room staging |
 | `$2800-$2BFF` | sparse world-delta journal |
 | `$2C00-$2FFF` | resident BSS and compact helpers |
 | `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
 | `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
-| `$3A00-$3BFF` | independently loaded helpers and bottom-text pager |
+| `$3A00-$3BFF` | independently loaded native/SID/text module |
 | `$3C00-$7FFF` | resident platform code and read-only tables |
 | `$8000-$85FF` | file-backed load-image fill |
 | `$8600-$8B47` | resident world-state code |
 | `$8B48-$98FF` | resident game/main and shared room-API code |
 | `$9900-$9CFF` | active 1 KiB room-specific code overlay |
 | `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$A479` | save-record/index scratch |
-| `$B000-$BFFF` | rebuildable work RAM, staging, or one copied overlay |
+| `$A000-$AFFF` | free underlying RAM; hidden by BASIC/ROMH in banked calls |
+| `$B000-$B7BE` | rebuildable work RAM and bounded room/type staging |
+| `$B800-$BA0E` | resident KERNAL save-disk driver |
 | `$C000-$C0FF` | cc65 software stack |
 | `$C100-$C173` | fixed resident `GameState` |
 | `$C174-$C178` | mutable in-place Inventory service state |
@@ -395,17 +397,18 @@ mapping-changing hot-type access before entry and all `$B000` redraw work
 after return.
 
 `WORKBSS` currently uses `$B000-$B7BE` for base colors, tile brightness,
-visibility buffers, and caches. Room-code staging deliberately overwrites a prefix of this
-rebuildable data; a subsequent room draw reconstructs it. EasyFlash 16 KiB
-room-code copies are implemented in assembly because ROMH temporarily hides
-the destination. `$B7BF-$BFFF` is the normal-play WORKRAM tail; copied overlays
-may use the complete `$B000-$BFFF` page after the resident caller has staged
-arguments and accepted that renderer work data will be rebuilt.
-Check `HIGHCODE`, `UPPERCODE`, `BSS`, `WORKBSS`, and
-the overlay map files whenever adding fixed buffers or resident APIs.
+visibility buffers, and caches. Room-code staging deliberately overwrites a
+prefix of this rebuildable data; a subsequent room draw reconstructs it. The
+object-type Zone B bootstrap is split into two chunks no larger than `$0800`,
+so it never reaches the resident disk driver at `$B800-$BA0E`. EasyFlash
+16 KiB room-code copies are implemented in assembly because ROMH temporarily
+hides the destination. Check `HIGHCODE`, `UPPERCODE`, `SAVECODE`, `BSS`,
+`WORKBSS`, `DISKCODE`, and every banked-module map whenever adding fixed
+buffers or resident APIs.
 
-The current `HIGH` segment has 218 bytes of linker margin, `UPPER` has 34,
-and `PROGRAM` has 42. Inspect `build/game.map` before adding resident logic.
+The current `HIGH` segment has 246 bytes of linker margin, `UPPER` has 182,
+`PROGRAM` has 40, and `SAVECODE` has only 4. Inspect `build/game.map` before
+adding resident logic.
 The VIC display lives beneath KERNAL in bank 3: charsets at `$E800/$F000`,
 screen at `$F800`, and sprite data at `$FC00-$FDFF`.
 

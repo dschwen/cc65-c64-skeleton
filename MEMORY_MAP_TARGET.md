@@ -1009,3 +1009,67 @@ audible symptom on the user's real VICE audio setup is the one thing that
 still needs their live confirmation - this is fundamentally a real-SID-
 hardware-quirk class of bug this project has no way to verify without a
 human listening.
+
+## Rain sound didn't resume after leaving the tavern, take three - the actual fix (2026-09-12)
+
+The filter-warmup sweep above also didn't work (reported live, same day).
+At this point two attempted fixes - reseeding the noise LFSR, then trying
+to "wake" the filter with a multi-frame cutoff sweep - had both failed to
+resolve a bug that could not be reproduced or verified in any headless
+tool available here (ReSID doesn't model either hardware quirk being
+targeted, in either chip model). Continuing to iterate on theories that
+can't be locally verified was no longer a good use of cycles, so the fix
+changed strategy: stop trying to keep the rain-bed voice on the filter and
+guess at how to make the filter behave, and just take it off the filter
+entirely - the one change that sidesteps the whole unverifiable class of
+"real 6581 filter/LFSR quirk" bugs by construction rather than by theory.
+
+Per explicit instruction, both prior attempts were fully reverted first
+(back to the pre-2026-09-11 version of `rooms/env/00.s`/`01.s`, at commit
+`3c7f78f`) rather than layered on top of each other, since neither had
+been shown to help and both cost real bytes/instructions in an
+already-tight module - "every byte counts" here (`ENVCODE_SIZE` is a fixed
+512-byte budget). The actual fix:
+
+- `sound_init` no longer writes `CUTOFF_LO`/`CUTOFF_HI`/`RES_FILT` at all
+  for the rain-bed voice - the `clrsid` loop at the top already zeroes
+  them, so voice 1 is simply never routed through the filter, and
+  `MODE_VOL` is `$0f` (volume only, no filter mode bit) instead of `$1f`.
+  This matches the tavern's own env module's convention (it never uses the
+  filter either).
+- The `env_tick` cutoff random-walk block (the ambient "filter drift" this
+  voice's filtering existed to produce) is deleted outright, along with
+  its `cutofftmp`/`cutstep` persistent bytes - it modulated a register
+  nothing reads anymore, so keeping it would only cost bytes and cycles
+  for no audible effect.
+- `env_enable` (the portrait/conversation-resume unmute) now also writes
+  `$0f` instead of `$1f`, to match.
+
+Net effect on the module's own size (not counting either reverted attempt):
+399 bytes before any of this (2026-09-11 baseline) → 319 bytes now
+(`build/env/env-01.map`), i.e. this fix *shrinks* the module by removing
+dead modulation code, not just by skipping the two experiments that didn't
+pan out.
+
+The audible trade-off: the rain-bed hiss loses the slow ambient
+"muffled/bright" drift the filter gave it and is now a flat, constant-
+timbre noise hiss throughout. Sound design accepted this trade-off in
+exchange for a fix that doesn't depend on unverifiable real-SID-chip
+behavior.
+
+Verified the same way as the two prior attempts (functional only, not
+audible - real hardware/VICE audio, not headless, is required to confirm
+the actual fix): a full room 01 → room 02 → room 01 round trip in VICE
+shows `V1_CTRL=$81` (noise, gated on), `RES_FILT=$00`, `MODE_VOL=$0f`
+identically before entering the tavern and after returning from it - the
+register state that was already "correct-looking" throughout every
+previous attempt, now simply with nothing left in the signal path that a
+real chip's filter/LFRS quirks could still be silently breaking.
+
+General lesson for this bug specifically: two rounds of "plausible SID
+hardware quirk, register state looks right, can't verify audibly" theories
+in a row is a sign to stop theorizing about how to keep a feature working
+around an unverifiable quirk, and instead remove the code path that
+depends on the quirk in the first place - especially when, as here, the
+feature (the filter's ambient drift) is a "nice to have" layered on top of
+a "must work" primary signal (the hiss itself).

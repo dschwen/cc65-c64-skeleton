@@ -56,8 +56,11 @@ uint8_t script_text_shown;
 
 #pragma code-name (push, "LOWCODE")
 static void run_banked_script(void) {
+    uint8_t was_suspended;
+
     platform_look_cursor_hide();
     script_text_shown = 0u;
+    was_suspended = !platform_raster_irq_active;
     /* If we got here with the raster IRQ still suspended, the caller is a
      * room's enter_room()/enter_tile() hook, itself called from inside
      * game_process_pending_transition()'s whole-switch suspend bracket
@@ -81,8 +84,39 @@ static void run_banked_script(void) {
      * harmless no-op once this has already run. Found live: room 01's
      * arrival narration was unreadable (tile-charset garbage) the entire
      * time it was shown, precisely because it runs from here while still
-     * suspended. */
-    if (!platform_raster_irq_active) raster_irq_resume();
+     * suspended.
+     *
+     * The same "still mid-transition" window is also still screen-blanked
+     * (DEN off): game_process_pending_transition()'s bracket
+     * (src/game.c) calls game_transition_message_show() - which blanks
+     * whenever no transition message is pending, i.e. the ordinary case -
+     * *before* platform_room_enter()/game_enter_room(), and nothing
+     * unblanks again until game_transition_reveal() at the very end of that
+     * same bracket. Before the in-place redesign, the old copy-to-RAM
+     * overlay loader unblanked around its own EasyFlash copy (to hide that
+     * copy's charset-split glitch - see MEMORY_MAP_TARGET.md's "Overlay-
+     * load visual glitch"), and that unblank was incidentally the only
+     * thing that ever made a mid-transition narration visible at all. The
+     * in-place redesign correctly dropped the now-unnecessary copy and its
+     * blank/unblank pair, but nothing replaced the unblank side effect it
+     * was also providing - so room-entry/tile-entry narration shown here
+     * during a transition went from "readable" to "invisible": the pager's
+     * between-pages waits and game_wait_fresh_key() below still ran and
+     * still needed real keypresses, just with DEN off the entire time.
+     * Found live: lightning visible (it runs before the transition is even
+     * queued, on the same keypress, screen still normal), then the screen
+     * going solid black and staying black - needing several blind
+     * keypresses to get through the invisible narration - until
+     * game_transition_reveal() finally unblanks on the new room. Unblank
+     * here for the same reason resume happens here, and leave it unblanked
+     * for the same reason interrupts are left resumed: game_transition_
+     * reveal()'s own blank()-draw-unblank() cycle, later, still runs
+     * unconditionally and will blank again right before it draws the new
+     * room regardless of what state this leaves the screen in. */
+    if (was_suspended) {
+        raster_irq_resume();
+        platform_screen_unblank();
+    }
     platform_script_run_banked();
 
     /* The banked interpreter borrowed the room-staging scratch buffer (see

@@ -811,3 +811,52 @@ tidying up if this area gets touched again, but not urgent. The same
 `P_COLOR_RAM[offset] != visible_color` check right next to it is unaffected
 - Color RAM is a real I/O register, visible under both ambient mappings
 observed (`$35`/`$37`), not inside the KERNAL shadow.
+
+## The in-place redesign dropped an unblank it didn't know it depended on (2026-09-11, same day)
+
+Reported live: triggering a room transition shows lightning (correctly),
+then the screen goes solid black and stays black - several blind keypresses
+are needed before the new room finally appears, and no transition text is
+ever visible.
+
+**Root cause**: `game_process_pending_transition()`'s whole-switch bracket
+(`src/game.c`) calls `game_transition_message_show()` - which blanks the
+screen whenever no transition message is pending, the ordinary case - then
+does not unblank again until `game_transition_reveal()` at the very end of
+that same bracket. Room 01's `enter_room()` shows its one-time arrival
+narration from *inside* that blanked window (via `game_room_script_entry()`
+→ `run_banked_script()`, `src/script_runtime.c`). Before the in-place
+redesign, `run_loaded_overlay()` (this function's previous name) unblanked
+the screen around its own EasyFlash copy of the script overlay - purely to
+hide *that copy's* charset-split glitch (see "Overlay-load visual glitch"
+above) - and that unblank was, incidentally, also the only thing that ever
+made a mid-transition narration visible at all. The redesign correctly
+removed the now-unnecessary copy (the interpreter runs in place; there is
+nothing to copy, so nothing to hide), but nothing replaced the unblank side
+effect it happened to also be providing. The narration's own pacing (the
+pager's between-pages waits, `game_wait_fresh_key()` at the end - both
+already fixed once this session to correctly resume the raster IRQ so the
+charset split works, see the "Two charset bugs" section above) still ran
+exactly as before and still consumed real keypresses; they just did so with
+`DEN` off the entire time, so nothing was ever visible to read.
+
+This is the second bug in a row where a redesign correctly removed
+now-dead code but didn't notice a second, unrelated job that same code
+happened to be doing. Worth remembering as a general lesson for reviewing
+any future removal of a "this copy step also blanks/unblanks the screen"
+or similar dual-purpose bracket.
+
+**Fix**: `run_banked_script()` now unblanks the screen at the same point it
+already resumes the raster IRQ (both gated on the same "was the caller
+still inside a suspended transition when we got here" check), and
+deliberately does not re-blank afterward - `game_transition_reveal()`'s own
+blank-draw-unblank cycle, later, already blanks unconditionally right
+before it draws the new room, regardless of what state this leaves the
+screen in.
+
+Live-verified: lightning visible (unchanged, runs before the transition is
+queued), then both pages of the arrival narration displaying as clean,
+readable text with the old room's background still visible behind them (the
+map hasn't been redrawn yet - expected, harmless), then a clean final view
+of the new room. Verified via clean `make cartridge`
+(`tools/validate_easyflash_layout.py` still passes).

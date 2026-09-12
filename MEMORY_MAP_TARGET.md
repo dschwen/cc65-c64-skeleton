@@ -1010,7 +1010,14 @@ still needs their live confirmation - this is fundamentally a real-SID-
 hardware-quirk class of bug this project has no way to verify without a
 human listening.
 
-## Rain sound didn't resume after leaving the tavern, take three - the actual fix (2026-09-12)
+## Rain sound didn't resume after leaving the tavern, take three - ALSO WRONG (2026-09-12)
+
+**This one didn't work either.** Taking voice 1 off the filter changed
+nothing audible; the rain bed was still silent after a tavern visit. The
+real root cause, found by finally measuring actual audio, is in the
+section after this one. The change described below was still kept (it
+removes dead modulation code and shrinks the module), but it was not the
+fix and its reasoning about 6581 filter quirks was wrong.
 
 The filter-warmup sweep above also didn't work (reported live, same day).
 At this point two attempted fixes - reseeding the noise LFSR, then trying
@@ -1073,3 +1080,87 @@ around an unverifiable quirk, and instead remove the code path that
 depends on the quirk in the first place - especially when, as here, the
 feature (the filter's ambient drift) is a "nice to have" layered on top of
 a "must work" primary signal (the hiss itself).
+
+## Rain sound after the tavern: the actual root cause (2026-09-12)
+
+Three fix attempts in a row missed, all for the same underlying reason: I
+never once measured the actual audio. The "audio captures" used to clear
+those attempts were run through VICE's `dump` sound device, which is **not
+a PCM dump at all - it is a human-readable SID register trace** (lines of
+`FREQ: ... CTRL: ... ADSR: ...` text). Computing RMS/variance over that
+file produces plausible-looking numbers that are statistics over ASCII
+bytes, which is why every phase always "measured the same" and why the bug
+appeared unreproducible. It was reproducible in reSID the whole time.
+
+**Working method for real audio from headless VICE** (use this, not
+`dump`):
+
+```
+x64sc -sounddev wav -soundarg out.wav -sidengine 1 -sidmodel 0 \
+      -remotemonitor -remotemonitoraddress ip4://127.0.0.1:PORT ...
+```
+
+`wav` is a real output device and produces a standard 16-bit mono 48 kHz
+RIFF file. Two techniques made the measurement decisive:
+
+- **Isolate one voice**: poke `ENVCODE_BASE+3` (the `jmp env_tick` slot in
+  the module's jump table) to `$60` (`rts`). The raster IRQ then calls a
+  no-op tick, so the environment module stops writing the SID and only the
+  continuously-gated rain-bed voice is left making sound.
+- **Zero-crossing rate, not amplitude**: a dead noise voice still carries a
+  DC level, so amplitude alone is ambiguous. Broadband noise measures
+  `zcr ≈ 0.32`; a stuck voice measures `zcr ≈ 0.00` with `std` ~25 against
+  ~790 when it is working. That is a 30x difference that no amount of
+  register inspection revealed.
+- Delimit measurement windows by poking `MODE_VOL` (`$D418`) to `$00` for a
+  moment on either side - the resulting true-silence gaps are trivial to
+  find in the WAV, which sidesteps the fact that headless VICE runs at a
+  wildly variable multiple of real time.
+
+**Root cause**: voice 1's *envelope generator*, not the filter and not the
+noise shift register. Room 02's tavern melody leaves voice 1 gated on and
+held at its sustain level for the whole visit. On return, `sound_init`
+takes the gate low (the `clrsid` loop writes `$00` to `$D404`) and then
+back high (`$81`) roughly 100 cycles later. That gate low/high pair is far
+too close together to restart an envelope in that state: the envelope
+stays at zero and the voice is silent for as long as the room lasts. The
+droplet voice escapes the same fate purely by accident - `env_tick`
+re-gates it every ~34 frames, so it always gets a gate transition with
+real time on either side. Hence the exact reported symptom: continuous
+hiss gone, droplet clicks fine.
+
+Proven by direct experiment in the broken state (each measured as an
+isolated window of real audio):
+
+| probe | result |
+|---|---|
+| baseline after tavern | std 24.8, zcr 0.00 - silent |
+| voice 1 switched to **triangle** (no noise LFSR involved) | still silent - rules out the shift register |
+| gate off→on **back to back**, as `sound_init` does | still silent - the gate pair itself is the problem |
+| gate off→on **with real time in between** | std 848, zcr 0.35 - hiss restored |
+
+The triangle probe is what ruled out every LFSR theory: triangle does not
+touch the noise shift register, and it was silent too. The back-to-back
+gate probe is what indicted `sound_init` specifically, since it left the
+TEST bit clear throughout and changed nothing but the gate.
+
+**Fix**: hold voice 1's gate low across a couple of frames before gating it
+on. `sound_init` now busy-waits ~40 ms (a nested `dex`/`dey` loop, 10
+bytes) immediately after the `clrsid` loop, which is where the gate has
+just gone low; everything else is unchanged. The wait costs nothing in
+practice - it runs once per room entry, inside the transition's existing
+interrupt-suspended, screen-blanked bracket.
+
+Verified with real audio, isolated voice, across two consecutive round
+trips including a long tavern dwell: the rain bed after returning measures
+`std 791 / zcr 0.321` and `std 790 / zcr 0.323`, against a
+never-left-the-room baseline of `std 791 / zcr 0.320`. Before the fix the
+same measurement was `std 24.8 / zcr 0.000`.
+
+**Lesson worth keeping**: three wrong root causes were all "plausible SID
+hardware quirk, registers read back correct, can't reproduce locally." The
+registers were correct every single time and were never going to explain
+this - the broken state is invisible at the register level, because it
+lives in the envelope generator. The moment real audio was measured, the
+cause fell out in three probes. When a symptom is audible and the
+registers look right, go get the audio; do not iterate on theories.

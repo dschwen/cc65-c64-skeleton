@@ -104,6 +104,26 @@ sound_init:
     dex
     bpl @clrsid
 
+    ; The clrsid loop above just took voice 1's gate low, and the rain bed's
+    ; gate goes high again at the end of this routine. Those two writes are
+    ; ~100 cycles apart, which is not enough: a SID voice whose envelope was
+    ; left gated on and held at sustain (as room 02's tavern melody leaves
+    ; this voice) does not restart from a gate low/high pair that close
+    ; together - the envelope stays at zero and the voice is silent for as
+    ; long as the room lasts. Hold the gate low across a couple of frames
+    ; first. Found live by isolating this voice and capturing real audio:
+    ; after a tavern visit the rain bed measured as flat DC (no zero
+    ; crossings) while the droplet voice still worked, because env_tick
+    ; re-gates *that* voice every ~34 frames with real time in between.
+    ldx #$20
+@gatelow:
+    ldy #$00
+@gatelow_inner:
+    dey
+    bne @gatelow_inner
+    dex
+    bne @gatelow
+
     lda #$80
     sta V3_CTRL
     lda #$ff

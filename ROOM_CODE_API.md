@@ -109,8 +109,9 @@ use_at:
 `enter_room`/`enter_tile` take one line: `default` (empty handler),
 `flag NAME increment`, `flag NAME set VALUE`, or `asm "path"` (see escape
 hatch below). `look_at`/`use_at` each start an indented block of zero or
-more `at X,Y -> script KEY` lines followed by a mandatory
-`default -> RETURN_CONST` line. `X`, `Y`, `KEY`, and `RETURN_CONST` may be
+more `at X,Y -> script KEY` lines followed by a mandatory default line -
+either `default -> RETURN_CONST` or `default -> asm "path"` (same escape
+hatch, see below). `X`, `Y`, `KEY`, and `RETURN_CONST` may be
 decimal/hex literals or `#define` symbols from `src/story.h`/`src/game.h`
 (or files passed via `--flags`).
 
@@ -127,11 +128,30 @@ output. The fragment supplies its own `.export _enter_room` (or
 `_enter_tile`), label, and body - nothing else is generated for that
 handler. Use this for logic no DSL statement covers, such as room 00's
 `enter_room()` poking VIC-II sprite registers directly for the rain
-effect (`rooms/asm/00_enter_room.s`, referenced from `rooms/00.rc`).
-Make can't see a `.rc` file's `asm "..."` reference through the Python
-compile step, so a room using the escape hatch needs an explicit extra
-Makefile prerequisite line (see the one for `room-00.s` in `Makefile`)
-so the fragment's own edits trigger a rebuild.
+effect (`rooms/asm/00_enter_room.s`, referenced from `rooms/00.rc`), or
+room 01's `enter_tile()` swapping the player's object type based on the
+tile underneath them (`rooms/asm/01_enter_tile.s`).
+
+`look_at`/`use_at` have the same escape hatch on their mandatory
+`default` line: `default -> asm "path/to/fragment.s"`. Unlike
+`enter_room`/`enter_tile` (which replace the whole handler), this only
+replaces the *fallback* - any `at X,Y -> script KEY` entries above it
+still run first. The fragment must `.export _look_at_fallback` (or
+`_use_at_fallback`) as an ordinary subroutine reached via `jsr`: the
+look/use target's `tile_x`/`tile_y` are on the software stack exactly as
+the generated dispatch's own `jsr pusha` left them at function entry
+(offset 1 = `tile_x`, offset 0 = `tile_y`), and the fragment must return
+its result in `A` (the caller zeroes `X` and pops the stack) using the
+same `GAME_LOOK`/`GAME_USE` `DEFAULT`/`HANDLED` convention a matched `at`
+entry would, ending every path in `rts`. See
+`rooms/asm/01_look_at.s`/`01_use_at.s` (room 01's water-tile search logic
+- neither a bare tile match nor the player's own position is expressible
+as a plain `at X,Y` entry) for a worked example.
+
+Every fragment referenced by a room's `.rc` file is picked up
+automatically: the room-code build rule depends on `rooms/asm/*.s` as a
+whole, so editing any fragment triggers a rebuild of every room that
+might reference it - no per-room Makefile prerequisite needed.
 
 ## Global game state
 

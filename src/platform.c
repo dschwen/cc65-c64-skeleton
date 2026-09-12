@@ -1351,6 +1351,22 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
     }
 }
 
+/* Change the player's own object type in place (e.g. a terrain-driven
+ * cosmetic swap, like room 01's water tiles) and repaint at the player's
+ * current position. Unlike platform_object_move(), this marks the OLD
+ * type's footprint before changing .type and the NEW type's footprint
+ * after, so the two types need not share dimensions, hotspot, or
+ * transparent-cell pattern - the new type's art is unconstrained. No-ops
+ * if the type is already type_id. */
+void __fastcall__ platform_player_set_type(uint8_t type_id) {
+    if (platform_player == 0 || platform_player->type == type_id) return;
+    dirty_clear();
+    mark_object_cells(platform_player);
+    platform_player->type = type_id;
+    mark_object_cells(platform_player);
+    redraw_dirty(&platform_room, platform_player);
+}
+
 uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     int16_t new_x;
     int16_t new_y;

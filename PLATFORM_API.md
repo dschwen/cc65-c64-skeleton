@@ -424,6 +424,8 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player);
 
+void __fastcall__ platform_player_set_type(uint8_t type_id);
+
 uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
                                  uint8_t x, uint8_t y, uint8_t* out_slot);
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
@@ -452,6 +454,14 @@ contains at most 32 cells because an object type has at most 16 cells at each
 of its old and new positions. Redraw iterates only that list, not all 880 map
 cells, and object composition stops at the rendered room's highest populated
 slot rather than testing all 256 slots for every cell.
+
+`platform_player_set_type()` changes the player's own object type in place
+(e.g. a terrain-driven cosmetic swap, like room 01's water tiles) and
+repaints at the player's current position. Unlike `platform_object_move()`,
+it marks the *old* type's footprint before changing `.type` and the *new*
+type's footprint after, so the two types need not share dimensions,
+hotspot, or transparent-cell pattern. No-op if the player is already
+`type_id`.
 
 `platform_room_object_add()` uses the first type-0 slot. It rejects the add
 when all 256 slots are occupied or when the room already has 200 non-actor

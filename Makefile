@@ -459,7 +459,7 @@ $(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROO
 # file exists selects which rule fires (the same "let Make pick by which
 # prerequisite exists" pattern already used for the R%/RS%/RC%/RR% resource
 # rules above). See ROOM_CODE_API.md's "Room-code DSL (.rc files)" section.
-$(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py | $(ROOM_OUTDIR)
+$(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py $(wildcard rooms/asm/*.s) | $(ROOM_OUTDIR)
 	python3 tools/compile_room.py --input $< --output $@
 
 $(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)

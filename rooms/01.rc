@@ -1,9 +1,9 @@
 enter_room: asm "rooms/asm/01_enter_room.s"
-enter_tile: flag STORY_STATE_ROOM_01_TILE_ENTRY_COUNT increment
+enter_tile: asm "rooms/asm/01_enter_tile.s"
 
 look_at:
-    default -> GAME_LOOK_DEFAULT
+    default -> asm "rooms/asm/01_look_at.s"
 
 use_at:
     at 10,1 -> script STORY_ROOM01_ENTER_INN
-    default -> GAME_USE_DEFAULT
+    default -> asm "rooms/asm/01_use_at.s"

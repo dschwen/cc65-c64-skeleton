@@ -46,10 +46,20 @@ verbatim, for logic no DSL statement covers - see rooms/asm/ for examples).
 `look_at`/`use_at` each start an indented block: zero or more `at X,Y ->
 script KEY` lines (tile-coordinate dispatch to game_room_script_entry(KEY),
 returning GAME_LOOK_HANDLED/GAME_USE_HANDLED on a match), followed by exactly
-one mandatory `default -> RETURN_CONST` line (what to return when nothing
-matched - normally GAME_LOOK_DEFAULT/GAME_USE_DEFAULT, matching the C
-handlers' own fallback). `#` starts a comment to end of line; blank lines are
-ignored.
+one mandatory default line - either `default -> RETURN_CONST` (what to
+return when nothing matched - normally GAME_LOOK_DEFAULT/GAME_USE_DEFAULT,
+matching the C handlers' own fallback), or `default -> asm "path"` (an
+escape hatch mirroring enter_room/enter_tile's own: splices in a
+hand-written .s fragment for logic no `at` line can express, e.g. a
+condition on the player's own position or a tile's ID rather than a bare
+coordinate match - see rooms/asm/ for examples). The asm form's fragment
+must export `_look_at_fallback`/`_use_at_fallback` (matching whichever
+block it's used in) as an ordinary subroutine: called via plain `jsr` with
+tile_x/tile_y still on the software stack exactly as documented in
+gen_dispatch()'s own ABI comment, returning its result in A (X is zeroed by
+the caller) using the same GAME_LOOK/USE DEFAULT/HANDLED convention a
+matched `at` entry would, ending every path in `rts`. `#` starts a comment
+to end of line; blank lines are ignored.
 
 X, Y, KEY, and RETURN_CONST may be decimal/hex literals or symbols resolved
 against #define NAME VALUE lines in --flags (default src/story.h/src/game.h
@@ -122,13 +132,15 @@ class AtEntry:
 
 class DispatchHandler:
     """look_at/use_at: a list of `at X,Y -> script KEY` entries plus the
-    mandatory trailing default return value."""
+    mandatory trailing default - either a literal return value or a spliced
+    asm fragment's fallback subroutine (see module docstring)."""
 
-    __slots__ = ("entries", "default_value")
+    __slots__ = ("entries", "default_value", "default_asm_path")
 
     def __init__(self) -> None:
         self.entries: list[AtEntry] = []
         self.default_value: int | None = None
+        self.default_asm_path: str | None = None
 
 
 class SimpleHandler:
@@ -184,20 +196,25 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                     key = resolve(m.group(3), symbols, inner_no)
                     handler.entries.append(AtEntry(x, y, key))
                 elif inner_line.startswith("default"):
-                    m = re.match(r"default\s*->\s*(\S+)$", inner_line)
-                    if not m:
-                        raise SystemExit(
-                            f"line {inner_no}: malformed 'default' line: {inner_line!r}"
-                        )
-                    handler.default_value = resolve(m.group(1), symbols, inner_no)
+                    am = re.match(r'default\s*->\s*asm\s+"([^"]+)"$', inner_line)
+                    if am:
+                        handler.default_asm_path = am.group(1)
+                    else:
+                        m = re.match(r"default\s*->\s*(\S+)$", inner_line)
+                        if not m:
+                            raise SystemExit(
+                                f"line {inner_no}: malformed 'default' line: {inner_line!r}"
+                            )
+                        handler.default_value = resolve(m.group(1), symbols, inner_no)
                 else:
                     raise SystemExit(
                         f"line {inner_no}: expected 'at X,Y -> script KEY' or "
                         f"'default -> VALUE', got {inner_line!r}"
                     )
-            if handler.default_value is None:
+            if handler.default_value is None and handler.default_asm_path is None:
                 raise SystemExit(
-                    f"{name}: missing mandatory 'default -> VALUE' line"
+                    f"{name}: missing mandatory 'default -> VALUE' or "
+                    "'default -> asm \"path\"' line"
                 )
             handlers[name] = handler
             continue
@@ -297,10 +314,24 @@ def gen_dispatch(
         out.append(f"    lda #{ret_handled}")
         out.append("    jmp incsp2")
         out.append(f"@miss{n}:")
-    out.append("    ldx #0")
-    out.append(f"    lda #{handler.default_value}")
-    out.append("    jmp incsp2")
-    out.append("")
+    if handler.default_asm_path:
+        fragment_path = Path(handler.default_asm_path)
+        if not fragment_path.exists():
+            raise SystemExit(
+                f"{name}: asm fragment not found: {handler.default_asm_path}"
+            )
+        out.append(f"    jsr _{name}_fallback")
+        out.append("    ldx #0")
+        out.append("    jmp incsp2")
+        out.append("")
+        out.append(f"; {name} fallback: spliced in verbatim from {handler.default_asm_path}")
+        out.append(fragment_path.read_text(encoding="utf-8").rstrip("\n"))
+        out.append("")
+    else:
+        out.append("    ldx #0")
+        out.append(f"    lda #{handler.default_value}")
+        out.append("    jmp incsp2")
+        out.append("")
 
 
 def generate(handlers: dict[str, object], symbols: dict[str, int]) -> str:

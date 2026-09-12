@@ -8,4 +8,16 @@ room 01 {
     entry STORY_ROOM01_ENTER_INN {
         room_transition 2 17 19
     }
+    entry STORY_ROOM01_FIND_SEAL {
+        check_flag QUEST_FLAGS & 1 {
+            text "There is nothing else in the muck."
+        } else {
+            text "Feeling around in the muddy water you find a blue seal!"
+            give_object 43 1
+            set_bit QUEST_FLAGS 1
+        }
+    }
+    entry STORY_ROOM01_SEARCH_FAR {
+        text "The water is too muddy, I have to get closer!"
+    }
 }

@@ -320,6 +320,15 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           const PlatformObject* player);
 
 /*
+ * Change the player's own object type in place (e.g. a terrain-driven
+ * cosmetic swap) and repaint at the player's current position. Unlike
+ * platform_object_move(), the new type need not share the old type's
+ * dimensions, hotspot, or transparent-cell pattern. No-op if the player is
+ * already type_id.
+ */
+void __fastcall__ platform_player_set_type(uint8_t type_id);
+
+/*
  * Move the global player one half-tile when the destination hotspot is inside
  * the room and its tile has PLATFORM_TILE_SOLID_LAND. Uses minimal redraw.
  *

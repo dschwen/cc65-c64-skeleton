@@ -9,6 +9,7 @@
 #define STORY_STATE_ROOM_00_MILESTONE_SEEN    2u
 #define STORY_STATE_ROOM_00_MYSTERY_TRIGGERED 3u
 #define STORY_STATE_ROOM_01_ARRIVAL_SHOWN     4u
+#define QUEST_FLAGS                           5u
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -23,6 +24,8 @@
 
 #define STORY_ROOM01_ARRIVAL     1u
 #define STORY_ROOM01_ENTER_INN   2u
+#define STORY_ROOM01_FIND_SEAL   3u
+#define STORY_ROOM01_SEARCH_FAR  4u
 
 #define STORY_ROOM02_LEAVE_INN   1u
 

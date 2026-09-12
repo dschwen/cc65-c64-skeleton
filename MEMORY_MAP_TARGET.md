@@ -861,7 +861,15 @@ map hasn't been redrawn yet - expected, harmless), then a clean final view
 of the new room. Verified via clean `make cartridge`
 (`tools/validate_easyflash_layout.py` still passes).
 
-## Rain sound didn't resume after leaving the tavern (2026-09-11)
+## Rain sound didn't resume after leaving the tavern (2026-09-11, revised 2026-09-12)
+
+**Update, live-tested on real VICE audio (not headless) the next day: the
+fix below (TEST-bit pulse) did NOT resolve the bug.** The correct root
+cause and fix are in the follow-up section immediately after this one,
+"Rain sound didn't resume after leaving the tavern, take two". The
+write-up below is kept for the record (the LFSR-reseed fix is real and
+harmless, just not what was actually silencing the rain here), but treat
+the *diagnosis* in this section as superseded.
 
 Reported live: leaving the inn (room 02) back to room 01 correctly stops
 the tavern music, but the rain ambient sound never comes back, even though
@@ -930,3 +938,74 @@ ran and left the final state correct, not that the audible bug is gone;
 that part rests on the SID's own well-documented behavior rather than on
 anything observable in this emulator session (`-sounddev dummy`, no audio
 output).
+
+## Rain sound didn't resume after leaving the tavern, take two (2026-09-12)
+
+The TEST-bit-pulse fix above didn't work - reported live, tested with real
+VICE audio (not headless): still reliably silent every time. Two follow-up
+facts, both supplied live by the user, immediately reframed the diagnosis:
+
+1. Only *part* of the rain sound is missing: the continuous background
+   hiss (the rain bed) is gone, but the intermittent droplet/footstep
+   clicks still play normally.
+2. This is *reliably* silent, every single time - not the intermittent
+   behavior a stochastic "LFSR happened to freeze at zero" bug would
+   produce.
+
+That pointed straight at the one concrete asymmetry between the two noise
+voices in `rooms/env/00.s`/`01.s`'s `sound_init`: the rain-bed voice (voice
+1) is the *only* one routed through the SID's programmable filter
+(`RES_FILT` bit 0 = `$1d`); the droplet voice (voice 2) is never filtered.
+"The filtered one is reliably dead, the unfiltered one is reliably fine"
+is a filter symptom, not a noise-waveform symptom.
+
+Reading `rooms/env/02.s` (the tavern) end to end confirmed why: its own
+`env_init` clears the whole SID (`$D400`-`$D418`, including `CUTOFF_LO`/
+`CUTOFF_HI`/`RES_FILT`) and then *never writes those three registers
+again* - only voice registers and `MODE_VOL` (`$0F`, no filter mode bits).
+For as long as the player stays in the tavern, the filter sits completely
+disconnected with its cutoff pinned at zero. Real 6581 SID chips are
+documented to have exactly this failure mode: the filter's cutoff is set
+by an analog integrator (an on-chip capacitor charged/discharged by a
+current source), and leaving it parked at an idle extreme for an extended
+period can leave it in a state where a single instant write of a new
+static cutoff value afterward does not reliably make it start passing
+signal again - while a voice that was never routed through the filter is
+completely unaffected. ReSID (VICE's SID emulation) does not model this;
+two separate raw-PCM captures of a full room 01 → room 02 → room 01 round
+trip (one with `-sidmodel 1` (8580), one with `-sidmodel 0` (6581)) both
+showed audio statistically indistinguishable before and after the tavern
+visit - this class of bug is invisible to headless verification here, in
+either chip model. The earlier "fix" only changed the noise-select LFSR
+seeding, which never touches the filter path at all - consistent with it
+doing nothing for this specific symptom.
+
+**Fix**: rather than removing voice 1 from the filter (which would work
+unconditionally but lose the ambient cutoff-drift character the filter
+gives the rain bed), `sound_init` now starts the cutoff at 0 with the
+voice already routed through the filter and the filter already enabled,
+and hands off to a new `filter_warmup_step` routine (called from
+`env_tick` for the first 32 frames after `env_init`, gated by a new
+persistent `filter_warmup` counter) that sweeps the cutoff through a wide
+excursion - up to `$ff`, then back down to the real starting value `$90`
+- over those real elapsed frames, before handing control back to the
+existing random-walk drift. The key difference from a same-frame register
+write is *elapsed real time*: an analog integrator needs actual time to
+move, not just a new target value; spreading the excursion over ~0.6
+seconds of real frames gives it that, where an instant write does not.
+`filter_warmup` reaching 0 hands off cleanly to the pre-existing drift
+logic, which then continues to clamp within its usual `$60`-`$c0` range as
+before.
+
+Verified functionally (not audibly - same headless limitation as above)
+over three live room 01 → room 02 → room 01 round trips in VICE: the
+module always assembles and runs without hanging or corrupting state,
+`filter_warmup` always counts down to exactly 0 and stays there afterward,
+and `cutofftmp`/`CUTOFF_HI` always land back inside the normal `$60`-`$c0`
+drift range once warmup completes - never stuck at `$00` or `$ff`. Module
+size after the addition: 467 of 512 available bytes (`ENVCODE_SIZE`),
+confirmed via `build/env/env-01.map`. Whether this actually fixes the
+audible symptom on the user's real VICE audio setup is the one thing that
+still needs their live confirmation - this is fundamentally a real-SID-
+hardware-quirk class of bug this project has no way to verify without a
+human listening.

@@ -153,8 +153,33 @@ next_text_line:
     bne text_scroll_needed
     inc _platform_text_output_line
     rts
+; TEXT_ROW_0/1 (SCREEN_RAM + 23/24*40) sit at $FB98/$FBC0 since the VIC-bank
+; move put the screen matrix at $F800 - inside $E000-$FFFF, the KERNAL ROM
+; shadow. Writes there always reach the underlying RAM regardless of the
+; CPU port (true on real 6510 hardware), which is why write_character()
+; above needs no special handling - but a READ of that range returns KERNAL
+; ROM, not the screen byte actually on display, whenever HIRAM is set. The
+; rest of this module never reads the screen, only writes it; this loop is
+; the one exception (it has to read the previous line's content to move it
+; up), so it's the one place that needs to briefly select a mapping with
+; HIRAM clear. CPU_MAP_GAME (LORAM=1, HIRAM=0, CHAREN=1) exposes RAM at
+; $E000-$FFFF while keeping Color RAM's I/O window visible, so the
+; COLOR_ROW_0/1 accesses in the same loop still reach the real VIC color
+; registers rather than the RAM underneath them. Found live: the *scrolled*
+; line (never the freshly-written one) rendered as garbled KERNAL-code
+; bytes on the second and later pages of any message long enough to need
+; scrolling - reproducible every time, not intermittent, since the ambient
+; gameplay CPU port here is $37 (KERNAL mapped in), not the $35 the pager
+; was originally written against.
 text_scroll_needed:
     jsr wait_for_fresh_key
+    php
+    sei
+    lda CPU_PORT
+    pha
+    and #<~CPU_PORT_MASK
+    ora #CPU_MAP_GAME
+    sta CPU_PORT
     ldx #0
 text_scroll:
     lda TEXT_ROW_1,x
@@ -168,6 +193,9 @@ text_scroll:
     inx
     cpx #MAP_WIDTH_CHARS
     bne text_scroll
+    pla
+    sta CPU_PORT
+    plp
     rts
 
 wait_for_fresh_key:

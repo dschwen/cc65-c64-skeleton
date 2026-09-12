@@ -745,3 +745,69 @@ everything after load at the wrong address; `tools/validate_prg_layout.py`
 catches it. The areas must keep reserving their place until the charsets
 physically leave low RAM, which is what the VIC move does. This is why the
 asset split is byte-neutral until step 3.
+
+## Bottom-pager scroll read KERNAL ROM instead of the screen (2026-09-11)
+
+Found after the VIC-bank move (bank 3, screen matrix at `$F800`): the second
+and later pages of any bottom-pager message longer than two lines displayed
+correctly on write, but the line carried over from the *previous* page (the
+one `next_text_line`'s scroll copies up, not the one freshly written)
+rendered as garbled bytes - reproducibly, every time, not intermittently.
+Live memory dump at the moment of corruption showed the "scrolled" row
+literally contained 6502 machine code (`STA $01`, `AND #$08`, `JSR $FBB1`,
+...) - unmistakably KERNAL ROM bytes, not screen RAM.
+
+**Root cause**: `TEXT_ROW_0`/`TEXT_ROW_1` (`src/text.s`, `SCREEN_RAM + 23/24
+* 40`) now sit at `$FB98`/`$FBC0` - inside `$E000-$FFFF`, the KERNAL ROM
+shadow. Writes there always reach the underlying RAM regardless of the CPU
+port (true 6510 behavior), which is why `write_character()` needed no
+change and every *freshly written* line, including the first page, always
+displayed correctly. But `next_text_line`'s scroll-up loop is the one place
+in this module that *reads* the screen (`LDA TEXT_ROW_1,x`, to move the
+previous line up before writing the next) - and a read of `$E000-$FFFF`
+returns KERNAL ROM whenever HIRAM is set, not the RAM the VIC is actually
+displaying. Confirmed live that gameplay's ambient `$01` value has HIRAM
+set (`$35`/`$37` depending on the moment sampled - both have HIRAM=1),
+unlike the pre-VIC-move layout where the screen lived at a plain low
+address unaffected by CPU bank state. `CHARSETS`/`VICDISPLAY`'s own comment
+in `cfg/myc64.cfg` already flags this general hazard ("CPU reads of this
+RAM disappear while KERNAL is mapped") and says the mitigation is "banked
+UI code only writes the screen" plus a LOWBSS shadow for the one IRQ read
+that needs one (rain/water) - the pager's scroll was the one remaining read
+site nobody had converted.
+
+**Fix**: `text_scroll` now saves `$01`, switches to `CPU_MAP_GAME`
+(LORAM=1, HIRAM=0, CHAREN=1 - RAM at `$E000-$FFFF` *and* Color RAM's I/O
+window still visible, since the same loop also copies `COLOR_ROW_1`→
+`COLOR_ROW_0`) for just the copy loop, then restores the exact saved value
+- the same save/restore discipline used elsewhere in this codebase (e.g.
+`platform_input_poll()`), not an assumption about what the ambient mapping
+already is. Needed a matching bump to `cfg/text_module.cfg`'s `TEXT` region
+size (330 → 368 bytes) to fit the extra bytes; confirmed safe against the
+reserved `TEXTGAP` window in `cfg/myc64.cfg` (512 bytes total, 445 used
+before this change), so no other region needed to move.
+
+Live-verified: a memory dump of both status rows after scrolling now reads
+back as the exact correct wrapped text (`"arrow and the words: 20 miles to
+nowhere"` / `"in particular."`), matching the screenshot-based confirmation.
+Verified via clean `make cartridge` (`tools/validate_easyflash_layout.py`
+still passes, 7 fixed module placements validated).
+
+Did a quick sweep for other screen-RAM reads while diagnosing this one.
+Found exactly one more: `redraw_dirty()` (`src/platform.c`, the per-step
+dirty-cell repaint used by ordinary movement) does
+`if (P_SCREEN_RAM[offset] != ch) P_SCREEN_RAM[offset] = ch;` - a read-
+compare-write, same hazard class. Left alone deliberately: unlike the
+pager's scroll, this read's only job is skipping a redundant write when the
+byte is already correct. A wrong read (KERNAL ROM, which will essentially
+never coincidentally equal an intended tile/text character code) just makes
+the comparison come out "different" and the write happens anyway - which
+was always going to be the correct byte regardless, since writes reach the
+underlying RAM correctly. Net effect: the optimization is quietly defeated
+(marginally more writes than strictly necessary) with no visible
+corruption, unlike the pager's scroll which actually *uses* the read
+result. Not fixed here since there's nothing user-visible to fix; worth
+tidying up if this area gets touched again, but not urgent. The same
+`P_COLOR_RAM[offset] != visible_color` check right next to it is unaffected
+- Color RAM is a real I/O register, visible under both ambient mappings
+observed (`$35`/`$37`), not inside the KERNAL shadow.

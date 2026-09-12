@@ -123,6 +123,20 @@ sound_init:
     sta V1_AD
     lda #$58
     sta V1_SR
+    ; The SID's noise shift register only clocks while a voice's control
+    ; register has the noise bit selected - a voice left on another
+    ; waveform (as room 02's tavern melody leaves voices 1 and 2, for
+    ; triangle/sawtooth notes) freezes its noise register at whatever value
+    ; it last held. If that value is exactly zero, merely reselecting noise
+    ; here does *not* restart it - it stays silent forever - a well-known
+    ; SID quirk. Pulsing the TEST bit (bit 3) forces a fresh non-zero seed
+    ; before the real waveform/gate write, so the rain bed can't come back
+    ; mute after a room that reuses these same two voices for melody.
+    ; Found live: tavern music stopped correctly on returning to this room,
+    ; but the rain bed stayed silent even though every SID register read
+    ; back exactly as sound_init below writes it.
+    lda #$88
+    sta V1_CTRL
     lda #$81
     sta V1_CTRL
 
@@ -133,6 +147,8 @@ sound_init:
     lda #$00
     sta V2_AD
     sta V2_SR
+    lda #$88
+    sta V2_CTRL
     lda #$80
     sta V2_CTRL
 

@@ -1164,3 +1164,73 @@ this - the broken state is invisible at the register level, because it
 lives in the envelope generator. The moment real audio was measured, the
 cause fell out in three probes. When a symptom is audible and the
 registers look right, go get the audio; do not iterate on theories.
+
+## Inventory/save/load screens flickering between map and text charsets (2026-09-12)
+
+Reported live: the inventory and save/load screens' text constantly
+flickered between legible (text charset) and garbled (map/tile charset)
+glyphs while just sitting idle on the screen, no input at all.
+
+Both screens are full-screen text displays: their banked modules call
+`platform_text_screen_enter()` (`src/irq.s`), which sets a resident flag
+(`platform_text_screen_active`) telling the per-frame raster IRQ
+(`raster_irq_body`) to keep using `TEXT_MEMPTR` for the whole frame instead
+of splitting between the tile charset (map rows) and text charset (status
+rows) the way ordinary gameplay does.
+
+`raster_irq_body` schedules two raster-compare interrupts per frame: one at
+line 0 ("top of frame" - decide tile vs text charset for the frame that's
+about to start) and one at `TEXT_RASTER` (226 - switch to the text charset
+for the two status rows at the bottom, unconditionally). If the line-0
+interrupt is ever serviced *late* - the raster has already moved on past 0
+by the time the CPU gets to it, which can happen whenever interrupts were
+briefly masked for any reason spanning that instant (SEI-protected
+sections exist throughout this codebase, e.g. `_platform_input_poll` masks
+interrupts for the full duration of the KERNAL's `SCNKEY`/`GETIN` calls,
+every single frame) - the handler took a *separate* recovery path
+(`@late_top_of_frame`) that unconditionally wrote `TILE_MEMPTR`, without
+ever consulting `platform_text_screen_active` the way the on-time
+`@top_of_frame` path does. Any frame whose line-0 event happened to be
+serviced late reverted to the tile charset for that whole frame, on a
+full-screen text display exactly as much as during ordinary gameplay -
+indistinguishable from a real map/text split, which is exactly the
+reported flicker. Since this could happen on *any* frame, at random,
+depending on incidental interrupt-masking timing elsewhere in the system,
+it manifested as a live, input-independent, constant flicker rather than
+anything tied to a specific action.
+
+First attempt (kept, but insufficient alone): added a `_raster_irq_resync`
+call to `_platform_input_poll` after restoring `CPU_PORT`, on the theory
+that this specific SEI window was the only source of lateness. Verified
+live via VICE screenshots (bare `screenshot` monitor commands, ~0.2-0.3s
+apart, while sitting idle in the inventory screen with zero key presses -
+memory reads always showed the correct state because connecting the
+monitor halts the CPU, which cannot catch a transient that free-running
+gameplay produces and self-corrects within a frame or two; only an
+undisturbed screenshot could) - the flicker was still fully reproducible
+afterward, roughly half of a same-second sample run coming back garbled.
+This ruled out `_platform_input_poll`'s own SEI window as the sole cause,
+though the resync call is still correct/harmless to keep - some other
+source of occasional interrupt latency (not chased further - the recovery
+path itself needed fixing regardless of *why* it's occasionally reached
+late) can trigger the identical bug.
+
+**Actual fix**: `raster_irq_body`'s late-line-0 detection (`cmp
+#TEXT_RASTER; bcc ...`) now branches straight into `@top_of_frame` itself
+instead of a separate `@late_top_of_frame` path, so a late top-of-frame
+event gets *exactly* the same handling an on-time one does - including
+the `platform_text_screen_active` check and the rain-sprite re-enable step
+the old late path also silently skipped. This closes the bug regardless of
+what causes the lateness, rather than chasing individual sources of
+interrupt-masking one at a time.
+
+Verified live in VICE: 15 consecutive bare-screenshot samples (same
+technique as above, ~0.2s apart, sitting idle in the inventory screen with
+zero key presses) all came back with fully legible text - zero garbled
+frames, against roughly half garbled in equivalent runs before this fix
+(both with and without the `_platform_input_poll` resync call alone). Not
+independently re-verified on the save/load screens live (a keybuf-timing
+quirk in the automated test harness, unrelated to this fix, prevented
+navigating there in the same session), but both call the identical
+`platform_text_screen_enter()`/`raster_irq_body` mechanism, so the fix
+applies by construction, not by coincidence.

@@ -308,11 +308,18 @@ raster_irq_body:
     lda VIC_RASTER
     beq @top_of_frame
 
-    ; If a top-of-frame IRQ was delayed into the map, recover immediately.
-    ; This avoids waiting almost a complete frame with the text charset still
-    ; selected. Lines 227-255 are already safe for the text charset.
+    ; If a top-of-frame IRQ was delayed into the map, recover immediately via
+    ; the same @top_of_frame handling an on-time one gets (this used to be a
+    ; separate path that stored TILE_MEMPTR unconditionally, ignoring
+    ; platform_text_screen_active - a full-screen text display (inventory,
+    ; save/load) whose top-of-frame event is ever serviced late this way
+    ; then had a stray frame revert to the tile charset, indistinguishable
+    ; from the map's own split - the "constantly flickering between map and
+    ; text charsets" reported live). This avoids waiting almost a complete
+    ; frame with the text charset still selected. Lines 227-255 are already
+    ; safe for the text charset.
     cmp #TEXT_RASTER
-    bcc @late_top_of_frame
+    bcc @top_of_frame
     cmp #TEXT_RASTER+1
     bcs @switch_to_text
 
@@ -355,11 +362,6 @@ raster_irq_body:
     jmp @top_schedule_text
 @top_uses_text:
     lda #TEXT_MEMPTR
-    bne @top_store_memptr
-
-@late_top_of_frame:
-    lda #TILE_MEMPTR
-@top_store_memptr:
     sta VIC_MEMPTR
 @top_schedule_text:
     lda #TEXT_RASTER

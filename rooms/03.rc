@@ -1,5 +1,5 @@
 enter_room: default
-enter_tile: default
+enter_tile: asm "rooms/asm/03_enter_tile.s"
 
 look_at:
     at 10,6 -> script STORY_ROOM03_LOOK_CAULDRON
@@ -30,5 +30,4 @@ use_at:
     # and its (0,6) door were sealed off when the west wall was closed up,
     # so this tile now serves as the two-way threshold.
     at 6,9 -> script STORY_ROOM03_LEAVE_KITCHEN
-    at 3,5 -> script STORY_ROOM03_DESCEND_STAIRS
     default -> GAME_USE_DEFAULT

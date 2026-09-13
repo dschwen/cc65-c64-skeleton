@@ -4,13 +4,14 @@
  * for these keys.
  *
  * The stairs back up to the kitchen (room 03, tile 3,5) land at (4,5) here
- * - no stair art is drawn on this side yet, but the tile is walkable and
- * adjacent to the use_at trigger the same way room 03's side is. */
+ * - now drawn as the same walkable stairs tile (68) as room 03's side.
+ * Stepping onto it transitions immediately (rooms/asm/04_enter_tile.s)
+ * rather than requiring Use. */
 room 04 {
     entry STORY_ROOM04_ASCEND_STAIRS {
         room_transition 3 8 10
     }
     entry STORY_ROOM04_LOOK_STAIRS_UP {
-        text "Stone steps lead back up to the kitchen."
+        text "The stairs lead up to the kitchen."
     }
 }

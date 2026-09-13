@@ -2,6 +2,13 @@
  * Lady Orra/Master Vey/Sir Caldus dispatch and STORY_ROOM02_* in
  * src/story.h for these keys.
  *
+ * The two open doorways in the top wall transition the instant the player
+ * steps onto them (rooms/asm/02_enter_tile.s) rather than requiring Use:
+ * (2,0), behind the bar, into the kitchen (room 03); (15,0), beside the
+ * hearth, into the guest corridor (room 05). The older side door at
+ * (19,6) still works too (Use-triggered, same kitchen entry point) - left
+ * in place since nothing asked for it to be removed.
+ *
  * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY/STORY_ROOM02_TALK_CALDUS
  * are one-time scripted first-meeting greetings, each gated on its own
  * STORY_STATE_ROOM_02_MET_* flag - the full topic-based "Ask about..."
@@ -98,5 +105,8 @@ room 02 {
     }
     entry STORY_ROOM02_LIGHT_TAPER_NO_ITEM {
         text "The hearth's embers glow, but you have nothing to light."
+    }
+    entry STORY_ROOM02_ENTER_CORRIDOR {
+        room_transition 5 20 16
     }
 }

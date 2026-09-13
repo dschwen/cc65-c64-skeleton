@@ -1,0 +1,14 @@
+/* Room 05 - Guest Corridor placeholder (MOONFEN_STORY_DESIGN.md's "Room 03
+ * - Guest Corridor": Pell Thimble, the Blue Seal payoff, and the three
+ * guest-room door plaques). Structure only for now - see rooms/05.rc for
+ * the door dispatch and STORY_ROOM05_* in src/story.h for these keys.
+ *
+ * The door back to the tavern (south wall, tile 10,10) transitions the
+ * instant the player steps onto it (see rooms/asm/05_enter_tile.s),
+ * matching room 02's own top doors - landing back at (15,1), just south of
+ * the corridor doorway there. */
+room 05 {
+    entry STORY_ROOM05_LEAVE_CORRIDOR {
+        room_transition 2 30 2
+    }
+}

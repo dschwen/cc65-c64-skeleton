@@ -1,0 +1,8 @@
+enter_room: default
+enter_tile: asm "rooms/asm/05_enter_tile.s"
+
+look_at:
+    default -> GAME_LOOK_DEFAULT
+
+use_at:
+    default -> GAME_USE_DEFAULT

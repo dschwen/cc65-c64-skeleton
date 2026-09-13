@@ -110,6 +110,10 @@ uint8_t game_inventory_count(uint8_t type);
 uint8_t game_inventory_has(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_add(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_remove(uint8_t type, uint8_t quantity);
+/* Single-arg __fastcall__ wrappers for quantity 1, trivial to call from
+ * hand-written room asm (lda #type; jsr _game_inventory_has_one). */
+uint8_t __fastcall__ game_inventory_has_one(uint8_t type);
+void __fastcall__ game_inventory_remove_one(uint8_t type);
 
 /* Saturating health changes; mana spend returns false without changing mana. */
 uint8_t game_health(void);

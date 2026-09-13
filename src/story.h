@@ -13,6 +13,12 @@
 #define STORY_STATE_ROOM_02_MET_ORRA           6u
 #define STORY_STATE_ROOM_02_MET_VEY             7u
 #define STORY_STATE_ROOM_02_MET_CALDUS          8u
+#define STORY_STATE_ROOM_02_CALDUS_FREED        9u
+
+/* QUEST_FLAGS bit assignments (single shared byte, see assets/scripts/*.script
+ * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01), bit 2 = the
+ * Long Taper has been lit at the tavern hearth (room 02). */
+#define QUEST_FLAG_TAPER_LIT 2u
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -38,10 +44,16 @@
 #define STORY_ROOM02_TALK_CALDUS 6u
 #define STORY_ROOM02_LOOK_CALDUS 7u
 #define STORY_ROOM02_ENTER_KITCHEN 8u
+#define STORY_ROOM02_CALDUS_FREE   9u
+#define STORY_ROOM02_LIGHT_TAPER      10u
+#define STORY_ROOM02_LIGHT_TAPER_NO_ITEM 11u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
 #define STORY_ROOM03_LOOK_BRAZIER  2u
 #define STORY_ROOM03_LOOK_SHELVES  3u
+#define STORY_ROOM03_LOOK_OIL      4u
+#define STORY_ROOM03_LOOK_TAPER    5u
+#define STORY_ROOM03_LOOK_CAULDRON 6u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

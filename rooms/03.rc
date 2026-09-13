@@ -3,6 +3,9 @@ enter_tile: default
 
 look_at:
     at 10,5 -> script STORY_ROOM03_LOOK_BRAZIER
+    at 10,6 -> script STORY_ROOM03_LOOK_CAULDRON
+    at 5,8 -> script STORY_ROOM03_LOOK_OIL
+    at 12,8 -> script STORY_ROOM03_LOOK_TAPER
     at 1,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 2,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 3,1 -> script STORY_ROOM03_LOOK_SHELVES

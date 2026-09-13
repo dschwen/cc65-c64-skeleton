@@ -165,6 +165,14 @@ uint8_t game_inventory_remove(uint8_t type, uint8_t quantity) {
     return PLATFORM_OK;
 }
 
+uint8_t __fastcall__ game_inventory_has_one(uint8_t type) {
+    return game_inventory_has(type, 1u);
+}
+
+void __fastcall__ game_inventory_remove_one(uint8_t type) {
+    (void)game_inventory_remove(type, 1u);
+}
+
 uint8_t game_take_object(uint8_t slot) {
     PlatformObject* object;
     PlatformObject original;

@@ -10,10 +10,15 @@
  * yet (assets/portraits/01, /02, /03 - the asset editor's Portrait mode)
  * so portrait_show renders a blank box there for now.
  *
- * Caldus's Lamp Oil/Silver Shard exchange (MOONFEN_STORY_DESIGN.md
- * section 4) isn't implemented yet - it needs the kitchen (Lamp Oil's
- * source) to exist first. This first meeting only introduces the jammed
- * visor as a hook. */
+ * Caldus's Lamp Oil payoff (STORY_ROOM02_CALDUS_FREE) and the hearth's Long
+ * Taper lighting (STORY_ROOM02_LIGHT_TAPER/_NO_ITEM) are dispatched from a
+ * hand-written asm fallback (rooms/asm/02_use_at.s) rather than a plain
+ * `at X,Y` entry in rooms/02.rc - the script DSL has no opcode to check or
+ * consume inventory contents, so the has-item/consume-item logic lives in
+ * that fragment and calls into these entries by key. Lamp Oil is object
+ * type 51, Long Taper is object type 52 (assets/objects.cobj) - the Silver
+ * Tower's payoff for freeing Caldus isn't implemented yet (no Silver Shard
+ * item exists), so freeing him for now is a flag-only outcome. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -69,5 +74,29 @@ room 02 {
     }
     entry STORY_ROOM02_ENTER_KITCHEN {
         room_transition 3 4 12
+    }
+    entry STORY_ROOM02_CALDUS_FREE {
+        portrait_show 3 right
+        check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
+            text "You press the vial of lamp oil into the seized hinge and work the visor back and forth."
+            text "With a screech of metal it finally gives, and Sir Caldus draws a first unmuffled breath."
+            text "\"You have my thanks - truly,\" he says. \"If you ever need a blade at your back, ask.\""
+            set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
+        } else {
+            text "\"Still breathing easy, thanks to you,\" Caldus says, tapping his now-loose visor."
+        }
+        wait_key
+        portrait_hide
+    }
+    entry STORY_ROOM02_LIGHT_TAPER {
+        check_flag QUEST_FLAGS & 2 {
+            text "The taper is already burning."
+        } else {
+            text "You touch the taper to the hearth's embers, and it catches, flame steady."
+            set_bit QUEST_FLAGS 2
+        }
+    }
+    entry STORY_ROOM02_LIGHT_TAPER_NO_ITEM {
+        text "The hearth's embers glow, but you have nothing to light."
     }
 }

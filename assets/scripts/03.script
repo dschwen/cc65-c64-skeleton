@@ -2,12 +2,20 @@
  * 6). See rooms/03.rc for the door dispatch and STORY_ROOM03_* in
  * src/story.h for these keys.
  *
- * First pass: just the room's physical structure (walls, floor, pantry
- * shelving, a cold brazier) and a door back to the tavern - reuses tiles
- * and objects already authored for room 02 rather than inventing new
- * tile/object art. The actual puzzle stations (steaming kettle, cauldron
- * with the broth recipe, Lamp Oil pickup) still need their own art and
- * are deferred to a follow-up pass. */
+ * First pass: the room's physical structure (walls, floor, pantry shelving,
+ * a cold brazier) and a door back to the tavern - reuses tiles and objects
+ * already authored for room 02 rather than inventing new tile/object art.
+ *
+ * Lamp Oil (object type 51, tile 5,8) and Long Taper (object type 52, tile
+ * 12,8) are takeable pickups - Take is a generic engine command (see
+ * game_take_tile()), so placing them in assets/03 is all the wiring they
+ * need to be picked up; STORY_ROOM02_CALDUS_FREE/STORY_ROOM02_LIGHT_TAPER
+ * (rooms/asm/02_use_at.s) are where they pay off. Both items' visual art is
+ * still blank (all-zero chars) pending the real drawings.
+ *
+ * The Cauldron (object type 39, tile 10,6) is the user's own addition; this
+ * pass only gives it a look_at flavor line - the broth-recipe check
+ * mechanic (MOONFEN_STORY_DESIGN.md section 6) is a follow-up pass. */
 room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
         room_transition 2 36 12
@@ -17,5 +25,14 @@ room 03 {
     }
     entry STORY_ROOM03_LOOK_SHELVES {
         text "Pantry shelves, mostly bare - whatever was kept here has long since been used or taken."
+    }
+    entry STORY_ROOM03_LOOK_CAULDRON {
+        text "A heavy iron cauldron, cold and empty."
+    }
+    entry STORY_ROOM03_LOOK_OIL {
+        text "A small vial of lamp oil."
+    }
+    entry STORY_ROOM03_LOOK_TAPER {
+        text "A long wax taper, unlit."
     }
 }

@@ -1,14 +1,19 @@
 /* Room 02 - the inn's tavern common room. See rooms/02.rc for the door/
- * Lady Orra/Master Vey dispatch and STORY_ROOM02_* in src/story.h for
- * these keys.
+ * Lady Orra/Master Vey/Sir Caldus dispatch and STORY_ROOM02_* in
+ * src/story.h for these keys.
  *
- * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY are one-time scripted
- * first-meeting greetings, each gated on its own STORY_STATE_ROOM_02_MET_*
- * flag - the full topic-based "Ask about..." conversation is a later pass.
- * Portrait IDs 1 (Orra) and 2 (Vey) are placeholder references: neither
- * portrait's art is authored yet (assets/portraits/01, /02 - the asset
- * editor's Portrait mode) so portrait_show renders a blank box there for
- * now. */
+ * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY/STORY_ROOM02_TALK_CALDUS
+ * are one-time scripted first-meeting greetings, each gated on its own
+ * STORY_STATE_ROOM_02_MET_* flag - the full topic-based "Ask about..."
+ * conversation is a later pass. Portrait IDs 1 (Orra), 2 (Vey), 3 (Caldus)
+ * are placeholder references: none of these portraits' art is authored
+ * yet (assets/portraits/01, /02, /03 - the asset editor's Portrait mode)
+ * so portrait_show renders a blank box there for now.
+ *
+ * Caldus's Lamp Oil/Silver Shard exchange (MOONFEN_STORY_DESIGN.md
+ * section 4) isn't implemented yet - it needs the kitchen (Lamp Oil's
+ * source) to exist first. This first meeting only introduces the jammed
+ * visor as a hook. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -42,6 +47,22 @@ room 02 {
             set_flag STORY_STATE_ROOM_02_MET_VEY 1
         } else {
             text "\"Still finding your feet, traveler?\" Vey says. \"The offer stands.\""
+        }
+        wait_key
+        portrait_hide
+    }
+    entry STORY_ROOM02_LOOK_CALDUS {
+        text "A knight in dented plate sits stiffly by the hearth, his visor jammed half-shut."
+    }
+    entry STORY_ROOM02_TALK_CALDUS {
+        portrait_show 3 right
+        check_flag STORY_STATE_ROOM_02_MET_CALDUS == 0 {
+            text "The knight straightens as best he can, one hand still braced against his helm."
+            text "\"Sir Caldus, formerly of the Silver Tower,\" he says, muffled by the visor. \"This cursed hinge seized somewhere between the storm and the door, and I've yet to find a soul who can loosen it.\""
+            text "\"If you should come across oil - lamp oil, axle grease, anything - I'd count it a great kindness.\""
+            set_flag STORY_STATE_ROOM_02_MET_CALDUS 1
+        } else {
+            text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
         }
         wait_key
         portrait_hide

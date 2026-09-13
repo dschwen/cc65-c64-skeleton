@@ -12,6 +12,7 @@
 #define QUEST_FLAGS                           5u
 #define STORY_STATE_ROOM_02_MET_ORRA           6u
 #define STORY_STATE_ROOM_02_MET_VEY             7u
+#define STORY_STATE_ROOM_02_MET_CALDUS          8u
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -34,6 +35,8 @@
 #define STORY_ROOM02_LOOK_ORRA   3u
 #define STORY_ROOM02_TALK_VEY    4u
 #define STORY_ROOM02_LOOK_VEY    5u
+#define STORY_ROOM02_TALK_CALDUS 6u
+#define STORY_ROOM02_LOOK_CALDUS 7u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

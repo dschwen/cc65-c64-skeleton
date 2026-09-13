@@ -4,11 +4,13 @@ enter_tile: default
 look_at:
     at 17,9 -> script STORY_ROOM02_LOOK_ORRA
     at 3,2 -> script STORY_ROOM02_LOOK_VEY
+    at 13,1 -> script STORY_ROOM02_LOOK_CALDUS
     default -> GAME_LOOK_DEFAULT
 
 use_at:
     at 8,10 -> script STORY_ROOM02_LEAVE_INN
     at 17,9 -> script STORY_ROOM02_TALK_ORRA
+    at 13,1 -> script STORY_ROOM02_TALK_CALDUS
     # Vey's own tile (3,2) is behind the bar counter and unreachable by the
     # player (confirmed live: a flood-fill from the room's entrance shows
     # his whole alcove sealed off) - (3,3), the counter tile directly in

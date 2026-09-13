@@ -1,0 +1,21 @@
+/* Room 03 - the inn's kitchen and pantry (MOONFEN_STORY_DESIGN.md section
+ * 6). See rooms/03.rc for the door dispatch and STORY_ROOM03_* in
+ * src/story.h for these keys.
+ *
+ * First pass: just the room's physical structure (walls, floor, pantry
+ * shelving, a cold brazier) and a door back to the tavern - reuses tiles
+ * and objects already authored for room 02 rather than inventing new
+ * tile/object art. The actual puzzle stations (steaming kettle, cauldron
+ * with the broth recipe, Lamp Oil pickup) still need their own art and
+ * are deferred to a follow-up pass. */
+room 03 {
+    entry STORY_ROOM03_LEAVE_KITCHEN {
+        room_transition 2 36 12
+    }
+    entry STORY_ROOM03_LOOK_BRAZIER {
+        text "A cold brazier, waiting to be lit."
+    }
+    entry STORY_ROOM03_LOOK_SHELVES {
+        text "Pantry shelves, mostly bare - whatever was kept here has long since been used or taken."
+    }
+}

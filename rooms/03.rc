@@ -1,0 +1,28 @@
+enter_room: default
+enter_tile: default
+
+look_at:
+    at 10,5 -> script STORY_ROOM03_LOOK_BRAZIER
+    at 1,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 2,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 3,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 4,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 5,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 6,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 7,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 8,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 9,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 10,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 11,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 12,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 13,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 14,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 15,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 16,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 17,1 -> script STORY_ROOM03_LOOK_SHELVES
+    at 18,1 -> script STORY_ROOM03_LOOK_SHELVES
+    default -> GAME_LOOK_DEFAULT
+
+use_at:
+    at 0,6 -> script STORY_ROOM03_LEAVE_KITCHEN
+    default -> GAME_USE_DEFAULT

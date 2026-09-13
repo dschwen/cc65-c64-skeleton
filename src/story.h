@@ -37,6 +37,11 @@
 #define STORY_ROOM02_LOOK_VEY    5u
 #define STORY_ROOM02_TALK_CALDUS 6u
 #define STORY_ROOM02_LOOK_CALDUS 7u
+#define STORY_ROOM02_ENTER_KITCHEN 8u
+
+#define STORY_ROOM03_LEAVE_KITCHEN 1u
+#define STORY_ROOM03_LOOK_BRAZIER  2u
+#define STORY_ROOM03_LOOK_SHELVES  3u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

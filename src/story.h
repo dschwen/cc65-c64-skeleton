@@ -10,6 +10,7 @@
 #define STORY_STATE_ROOM_00_MYSTERY_TRIGGERED 3u
 #define STORY_STATE_ROOM_01_ARRIVAL_SHOWN     4u
 #define QUEST_FLAGS                           5u
+#define STORY_STATE_ROOM_02_MET_ORRA           6u
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -28,6 +29,8 @@
 #define STORY_ROOM01_SEARCH_FAR  4u
 
 #define STORY_ROOM02_LEAVE_INN   1u
+#define STORY_ROOM02_TALK_ORRA   2u
+#define STORY_ROOM02_LOOK_ORRA   3u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

@@ -2,8 +2,10 @@ enter_room: default
 enter_tile: default
 
 look_at:
+    at 17,9 -> script STORY_ROOM02_LOOK_ORRA
     default -> GAME_LOOK_DEFAULT
 
 use_at:
     at 8,10 -> script STORY_ROOM02_LEAVE_INN
+    at 17,9 -> script STORY_ROOM02_TALK_ORRA
     default -> GAME_USE_DEFAULT

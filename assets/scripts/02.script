@@ -1,7 +1,30 @@
-/* Room 02 - the inn's guest room. See rooms/02.rc for the door dispatch and
- * STORY_ROOM02_* in src/story.h for this key. */
+/* Room 02 - the inn's tavern common room. See rooms/02.rc for the door/
+ * Lady Orra dispatch and STORY_ROOM02_* in src/story.h for these keys.
+ *
+ * STORY_ROOM02_TALK_ORRA is a one-time scripted first-meeting greeting,
+ * gated on STORY_STATE_ROOM_02_MET_ORRA - the full topic-based
+ * "Ask about..." conversation is a later pass. Portrait ID 1 is a
+ * placeholder reference: Lady Orra's own portrait art still needs to be
+ * authored in assets/portraits/01 (the asset editor's Portrait mode)
+ * before portrait_show renders anything meaningful there. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
+    }
+    entry STORY_ROOM02_LOOK_ORRA {
+        text "A woman in a dark velvet cloak sits alone in the corner, watching the room over the rim of her cup."
+    }
+    entry STORY_ROOM02_TALK_ORRA {
+        portrait_show 1 right
+        check_flag STORY_STATE_ROOM_02_MET_ORRA == 0 {
+            text "She studies you for a long moment before you can speak."
+            text "\"So. The one they say robbed Master Vey,\" she says quietly. \"I don't believe that of you.\""
+            text "\"Whether anyone else shares my opinion... we shall see, won't we.\""
+            set_flag STORY_STATE_ROOM_02_MET_ORRA 1
+        } else {
+            text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
+        }
+        wait_key
+        portrait_hide
     }
 }

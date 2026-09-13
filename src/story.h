@@ -49,11 +49,15 @@
 #define STORY_ROOM02_LIGHT_TAPER_NO_ITEM 11u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
-#define STORY_ROOM03_LOOK_BRAZIER  2u
 #define STORY_ROOM03_LOOK_SHELVES  3u
 #define STORY_ROOM03_LOOK_OIL      4u
 #define STORY_ROOM03_LOOK_TAPER    5u
 #define STORY_ROOM03_LOOK_CAULDRON 6u
+#define STORY_ROOM03_DESCEND_STAIRS 7u
+#define STORY_ROOM03_LOOK_STAIRS_DOWN 8u
+
+#define STORY_ROOM04_ASCEND_STAIRS   1u
+#define STORY_ROOM04_LOOK_STAIRS_UP  2u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

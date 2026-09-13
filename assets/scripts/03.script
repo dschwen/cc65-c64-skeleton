@@ -1,17 +1,18 @@
 /* Room 03 - the inn's kitchen and pantry (MOONFEN_STORY_DESIGN.md section
- * 6). See rooms/03.rc for the door dispatch and STORY_ROOM03_* in
+ * 6). See rooms/03.rc for the door/stairs dispatch and STORY_ROOM03_* in
  * src/story.h for these keys.
  *
- * First pass: the room's physical structure (walls, floor, pantry shelving,
- * a cold brazier) and a door back to the tavern - reuses tiles and objects
- * already authored for room 02 rather than inventing new tile/object art.
+ * The room's west wall has a single opening: a stairway down to the
+ * basement (room 04, tile 3,5) - the old (0,6) door and its now-sealed
+ * outer corridor are gone, so the tavern door and the stairs share that
+ * one wall. The player arrives from the tavern at (6,9), which also
+ * doubles as the way back (see rooms/03.rc's use_at comment).
  *
- * Lamp Oil (object type 51, tile 5,8) and Long Taper (object type 52, tile
- * 12,8) are takeable pickups - Take is a generic engine command (see
+ * Lamp Oil (object type 51, tile 5,1) and Long Taper (object type 52, tile
+ * 14,1) are takeable pickups - Take is a generic engine command (see
  * game_take_tile()), so placing them in assets/03 is all the wiring they
  * need to be picked up; STORY_ROOM02_CALDUS_FREE/STORY_ROOM02_LIGHT_TAPER
- * (rooms/asm/02_use_at.s) are where they pay off. Both items' visual art is
- * still blank (all-zero chars) pending the real drawings.
+ * (rooms/asm/02_use_at.s) are where they pay off.
  *
  * The Cauldron (object type 39, tile 10,6) is the user's own addition; this
  * pass only gives it a look_at flavor line - the broth-recipe check
@@ -20,8 +21,11 @@ room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
         room_transition 2 36 12
     }
-    entry STORY_ROOM03_LOOK_BRAZIER {
-        text "A cold brazier, waiting to be lit."
+    entry STORY_ROOM03_DESCEND_STAIRS {
+        room_transition 4 8 10
+    }
+    entry STORY_ROOM03_LOOK_STAIRS_DOWN {
+        text "Worn stone steps lead down into the dark."
     }
     entry STORY_ROOM03_LOOK_SHELVES {
         text "Pantry shelves, mostly bare - whatever was kept here has long since been used or taken."

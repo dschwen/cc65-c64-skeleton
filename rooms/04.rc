@@ -1,0 +1,10 @@
+enter_room: default
+enter_tile: default
+
+look_at:
+    at 3,5 -> script STORY_ROOM04_LOOK_STAIRS_UP
+    default -> GAME_LOOK_DEFAULT
+
+use_at:
+    at 3,5 -> script STORY_ROOM04_ASCEND_STAIRS
+    default -> GAME_USE_DEFAULT

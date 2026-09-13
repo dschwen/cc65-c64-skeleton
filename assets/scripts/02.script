@@ -73,7 +73,7 @@ room 02 {
         portrait_hide
     }
     entry STORY_ROOM02_ENTER_KITCHEN {
-        room_transition 3 4 12
+        room_transition 3 12 18
     }
     entry STORY_ROOM02_CALDUS_FREE {
         portrait_show 3 right

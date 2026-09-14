@@ -21,7 +21,7 @@
  * seal is offered before both evidence flags are set (kept, not
  * consumed), STORY_ROOM05_PELL_RESOLVE when both are set (the asm consumes
  * the seal before calling this entry; the entry itself hands over the
- * Brass Key - object type 53 - and sets PELL_HELPED).
+ * Brass Key - object type 10 - and sets PELL_HELPED).
  *
  * The torn invitation (5,7, fixed scenery - no object) is the first piece
  * of evidence; the blue-seal door is the second. Either can be examined in
@@ -95,7 +95,7 @@ room 05 {
         text "\"That ought to satisfy even Vey.\""
         text "Pell searches his mailbag."
         text "\"I found this beneath the door when I arrived. Thought it was a room key, but it fits nothing upstairs.\""
-        give_object 53 1
+        give_object 10 1
         text "\"Odd thing, though. My invitation never named Vey.\""
         text "\"It said only that the host of Moonfen would receive the bearer before moonset.\""
         text "\"I assumed Vey was the host. Perhaps I assumed too much.\""

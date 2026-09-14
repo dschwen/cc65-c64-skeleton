@@ -1,4 +1,4 @@
-; Room 05's enter_tile: stepping onto the south-wall doorway (10,10)
+; Room 05's enter_tile: stepping onto the south-wall doorway (2,10)
 ; transitions back to the tavern immediately, rather than requiring Use.
 ; Any other tile is a no-op. Spliced by tools/compile_room.py's
 ; `enter_tile: asm "path"` form; exports _enter_tile, called with no
@@ -12,7 +12,7 @@
 
 PLAYER_X = _game_state+10
 PLAYER_Y = _game_state+11
-DOOR_X = 10
+DOOR_X = 2
 DOOR_Y = 10
 
 .segment "CODE"

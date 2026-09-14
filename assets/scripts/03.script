@@ -16,7 +16,12 @@
  *
  * The Cauldron (object type 39, tile 10,6) is the user's own addition; this
  * pass only gives it a look_at flavor line - the broth-recipe check
- * mechanic (MOONFEN_STORY_DESIGN.md section 6) is a follow-up pass. */
+ * mechanic (MOONFEN_STORY_DESIGN.md section 6) is a follow-up pass.
+ *
+ * Tile 65 is a storm window - wherever it appears in this room (currently
+ * 9,0 and 3,5), looking at it always shows STORY_ROOM03_LOOK_WINDOW,
+ * dispatched generically by rooms/asm/03_look_at.s rather than a per-tile
+ * `at X,Y` entry. */
 room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
         room_transition 2 36 12
@@ -38,5 +43,8 @@ room 03 {
     }
     entry STORY_ROOM03_LOOK_TAPER {
         text "A long wax taper, unlit."
+    }
+    entry STORY_ROOM03_LOOK_WINDOW {
+        text "Through the window you see the rain pouring down outside."
     }
 }

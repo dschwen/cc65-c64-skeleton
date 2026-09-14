@@ -1,14 +1,34 @@
-/* Room 05 - Guest Corridor placeholder (MOONFEN_STORY_DESIGN.md's "Room 03
- * - Guest Corridor": Pell Thimble, the Blue Seal payoff, and the three
- * guest-room door plaques). Structure only for now - see rooms/05.rc for
- * the door dispatch and STORY_ROOM05_* in src/story.h for these keys.
+/* Room 05 - Guest Corridor (MOONFEN_STORY_DESIGN.md's "Room 03 - Guest
+ * Corridor": Pell Thimble, the Blue Seal payoff, and the three guest-room
+ * door plaques). See rooms/05.rc for the door dispatch and STORY_ROOM05_*
+ * in src/story.h for these keys. Pell Thimble (object type 44, tile 4,7)
+ * is the user's own addition; the Blue Seal/Brass Key payoff there isn't
+ * wired yet.
  *
- * The door back to the tavern (south wall, tile 10,10) transitions the
+ * The door back to the tavern (south wall, tile 2,10) transitions the
  * instant the player steps onto it (see rooms/asm/05_enter_tile.s),
  * matching room 02's own top doors - landing back at (15,1), just south of
- * the corridor doorway there. */
+ * the corridor doorway there.
+ *
+ * The three decorative guest-room doors (4,3 / 9,10 / 17,10) are inert -
+ * they just say "Locked." on Use and "This is a guest room." on Look,
+ * implying unseen guest rooms per the design doc.
+ *
+ * Tile 65 is the same storm window as room 03's (currently at 2,0 and
+ * 19,8) - looking at it always shows STORY_ROOM05_LOOK_WINDOW, dispatched
+ * generically by rooms/asm/05_look_at.s rather than a per-tile `at X,Y`
+ * entry. */
 room 05 {
     entry STORY_ROOM05_LEAVE_CORRIDOR {
         room_transition 2 30 2
+    }
+    entry STORY_ROOM05_LOOK_WINDOW {
+        text "Through the window you see the rain pouring down outside."
+    }
+    entry STORY_ROOM05_LOOK_GUEST_DOOR {
+        text "This is a guest room."
+    }
+    entry STORY_ROOM05_USE_GUEST_DOOR {
+        text "Locked."
     }
 }

@@ -21,7 +21,7 @@ look_at:
     at 16,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 17,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 18,1 -> script STORY_ROOM03_LOOK_SHELVES
-    default -> GAME_LOOK_DEFAULT
+    default -> asm "rooms/asm/03_look_at.s"
 
 use_at:
     # (6,9) is both where the tavern door lands the player (see

@@ -107,6 +107,6 @@ room 02 {
         text "The hearth's embers glow, but you have nothing to light."
     }
     entry STORY_ROOM02_ENTER_CORRIDOR {
-        room_transition 5 20 16
+        room_transition 5 20 18
     }
 }

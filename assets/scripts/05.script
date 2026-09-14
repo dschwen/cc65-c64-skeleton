@@ -1,18 +1,31 @@
 /* Room 05 - Guest Corridor (MOONFEN_STORY_DESIGN.md's "Room 03 - Guest
- * Corridor": Pell Thimble, the Blue Seal payoff, and the three guest-room
- * door plaques). See rooms/05.rc for the door dispatch and STORY_ROOM05_*
- * in src/story.h for these keys. Pell Thimble (object type 44, tile 4,7)
- * is the user's own addition; the Blue Seal/Brass Key payoff there isn't
- * wired yet.
+ * Corridor"; puzzle chain per PELL_THIMBLE_PUZZLE.md). See rooms/05.rc for
+ * the door/NPC dispatch and STORY_ROOM05_* in src/story.h for these keys.
  *
  * The door back to the tavern (south wall, tile 2,10) transitions the
  * instant the player steps onto it (see rooms/asm/05_enter_tile.s),
  * matching room 02's own top doors - landing back at (15,1), just south of
  * the corridor doorway there.
  *
- * The three decorative guest-room doors (4,3 / 9,10 / 17,10) are inert -
- * they just say "Locked." on Use and "This is a guest room." on Look,
- * implying unseen guest rooms per the design doc.
+ * Of the three guest-room doors, (9,10) and (17,10) are still plain
+ * decoration - "Locked." on Use, "This is a guest room." on Look (future
+ * Caldus/Orra evidence branches). (4,3) is Pell's blue-seal door: still
+ * "Locked." on Use, but Look gives it the special evidence text
+ * (STORY_ROOM05_LOOK_BLUE_DOOR) instead, setting BLUE_DOOR_SEEN.
+ *
+ * Pell Thimble (object type 44, tile 4,7) is the user's own addition. His
+ * Blue Seal check (has the seal? has he seen both pieces of evidence?)
+ * can't be expressed in the script DSL, so it's dispatched from
+ * rooms/asm/05_use_at.s: STORY_ROOM05_TALK_PELL when the player has no
+ * seal (or has already been helped), STORY_ROOM05_PELL_EARLY_SEAL when the
+ * seal is offered before both evidence flags are set (kept, not
+ * consumed), STORY_ROOM05_PELL_RESOLVE when both are set (the asm consumes
+ * the seal before calling this entry; the entry itself hands over the
+ * Brass Key - object type 53 - and sets PELL_HELPED).
+ *
+ * The torn invitation (5,7, fixed scenery - no object) is the first piece
+ * of evidence; the blue-seal door is the second. Either can be examined in
+ * any order, before or after meeting Pell.
  *
  * Tile 65 is the same storm window as room 03's (currently at 2,0 and
  * 19,8) - looking at it always shows STORY_ROOM05_LOOK_WINDOW, dispatched
@@ -30,5 +43,64 @@ room 05 {
     }
     entry STORY_ROOM05_USE_GUEST_DOOR {
         text "Locked."
+    }
+    entry STORY_ROOM05_LOOK_PELL {
+        text "A courier in a travel-worn coat, keeping close to his mailbag."
+    }
+    entry STORY_ROOM05_LOOK_INVITATION {
+        check_flag STORY_STATE_ROOM_05_MET_PELL == 0 {
+            text "A torn invitation. Most of the writing has run into blue-grey smears."
+            text "Only one line survives: \"The bearer of the blue...\""
+        } else {
+            text "Pell's damaged invitation. The lower corner has been torn away where a wax seal might once have been attached."
+            text "Only one line remains legible: \"The bearer of the blue...\""
+        }
+        set_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN 1
+    }
+    entry STORY_ROOM05_LOOK_BLUE_DOOR {
+        text "A guest-room door. A small brass plaque bears an unfamiliar symbol."
+        text "Looking closer: the plaque shows a blue circle crossed by a silver thread, and a smear of blue sealing wax clings beside the latch."
+        set_flag STORY_STATE_ROOM_05_BLUE_DOOR_SEEN 1
+    }
+    entry STORY_ROOM05_TALK_PELL {
+        portrait_show 4 left
+        check_flag STORY_STATE_ROOM_05_PELL_HELPED == 0 {
+            check_flag STORY_STATE_ROOM_05_MET_PELL == 0 {
+                text "\"Thimble. Pell Thimble. Courier, ordinarily. Prisoner of hospitality, presently.\""
+                text "\"Vey says none of us leave until the matter of the guests is settled. I'd be happier if I understood what that meant.\""
+                text "\"My invitation was damaged in the storm. Without it, Vey claims he cannot prove which room was mine. Half the writing is gone - and the seal came off somewhere outside.\""
+                set_flag STORY_STATE_ROOM_05_MET_PELL 1
+            } else {
+                text "\"Still no proof, if that's what you're asking,\" Pell says, glancing at his mailbag."
+            }
+        } else {
+            text "\"Thanks again, for what it's worth,\" Pell says, patting his mailbag."
+        }
+        wait_key
+        portrait_hide
+    }
+    entry STORY_ROOM05_PELL_EARLY_SEAL {
+        portrait_show 4 left
+        text "Pell turns the seal over in his fingers, then hands it back."
+        text "\"Blue wax, certainly. But that proves very little.\""
+        text "\"Vey wants proof. And for once, I think he has a point.\""
+        wait_key
+        portrait_hide
+    }
+    entry STORY_ROOM05_PELL_RESOLVE {
+        portrait_show 4 left
+        text "Pell compares the seal with the torn invitation, then glances toward the blue-marked door."
+        text "\"There. Same mark. Same wax. I knew I hadn't imagined the whole cursed thing.\""
+        text "He presses the seal against the surviving corner of the invitation."
+        text "\"That ought to satisfy even Vey.\""
+        text "Pell searches his mailbag."
+        text "\"I found this beneath the door when I arrived. Thought it was a room key, but it fits nothing upstairs.\""
+        give_object 53 1
+        text "\"Odd thing, though. My invitation never named Vey.\""
+        text "\"It said only that the host of Moonfen would receive the bearer before moonset.\""
+        text "\"I assumed Vey was the host. Perhaps I assumed too much.\""
+        set_flag STORY_STATE_ROOM_05_PELL_HELPED 1
+        wait_key
+        portrait_hide
     }
 }

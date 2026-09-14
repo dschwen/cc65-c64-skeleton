@@ -2,7 +2,9 @@ enter_room: default
 enter_tile: asm "rooms/asm/05_enter_tile.s"
 
 look_at:
-    at 4,3 -> script STORY_ROOM05_LOOK_GUEST_DOOR
+    at 4,7 -> script STORY_ROOM05_LOOK_PELL
+    at 5,7 -> script STORY_ROOM05_LOOK_INVITATION
+    at 4,3 -> script STORY_ROOM05_LOOK_BLUE_DOOR
     at 9,10 -> script STORY_ROOM05_LOOK_GUEST_DOOR
     at 17,10 -> script STORY_ROOM05_LOOK_GUEST_DOOR
     default -> asm "rooms/asm/05_look_at.s"
@@ -11,4 +13,6 @@ use_at:
     at 4,3 -> script STORY_ROOM05_USE_GUEST_DOOR
     at 9,10 -> script STORY_ROOM05_USE_GUEST_DOOR
     at 17,10 -> script STORY_ROOM05_USE_GUEST_DOOR
-    default -> GAME_USE_DEFAULT
+    # Pell (4,7) needs a Blue Seal inventory check the script DSL can't
+    # express - handled in the asm fallback. See rooms/asm/05_use_at.s.
+    default -> asm "rooms/asm/05_use_at.s"

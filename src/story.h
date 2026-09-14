@@ -14,6 +14,10 @@
 #define STORY_STATE_ROOM_02_MET_VEY             7u
 #define STORY_STATE_ROOM_02_MET_CALDUS          8u
 #define STORY_STATE_ROOM_02_CALDUS_FREED        9u
+#define STORY_STATE_ROOM_05_MET_PELL           10u
+#define STORY_STATE_ROOM_05_PELL_INVITE_SEEN   11u
+#define STORY_STATE_ROOM_05_BLUE_DOOR_SEEN     12u
+#define STORY_STATE_ROOM_05_PELL_HELPED        13u
 
 /* QUEST_FLAGS bit assignments (single shared byte, see assets/scripts/*.script
  * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01), bit 2 = the
@@ -65,6 +69,12 @@
 #define STORY_ROOM05_LOOK_WINDOW     2u
 #define STORY_ROOM05_LOOK_GUEST_DOOR 3u
 #define STORY_ROOM05_USE_GUEST_DOOR  4u
+#define STORY_ROOM05_LOOK_PELL       5u
+#define STORY_ROOM05_TALK_PELL       6u
+#define STORY_ROOM05_LOOK_INVITATION 7u
+#define STORY_ROOM05_LOOK_BLUE_DOOR  8u
+#define STORY_ROOM05_PELL_EARLY_SEAL 9u
+#define STORY_ROOM05_PELL_RESOLVE    10u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

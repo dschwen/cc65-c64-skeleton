@@ -1,8 +1,8 @@
-; Room 04's enter_tile: stepping onto the stairs-up tile (3,5, tile ID 68,
-; matching room 03's stairs-down tile) transitions back to the kitchen
-; immediately, rather than requiring Use. Any other tile is a no-op.
-; Spliced by tools/compile_room.py's `enter_tile: asm "path"` form; exports
-; _enter_tile, called with no arguments, returns nothing (rts).
+; Room 04's enter_tile: stepping onto the stairs-up tile (16,1, the
+; already-walkable tile 67 - see assets/tiles.ctil) transitions back to the
+; kitchen immediately, rather than requiring Use. Any other tile is a
+; no-op. Spliced by tools/compile_room.py's `enter_tile: asm "path"` form;
+; exports _enter_tile, called with no arguments, returns nothing (rts).
 .setcpu "6502"
 
 .import _game_state
@@ -12,8 +12,8 @@
 
 PLAYER_X = _game_state+10
 PLAYER_Y = _game_state+11
-STAIRS_X = 3
-STAIRS_Y = 5
+STAIRS_X = 16
+STAIRS_Y = 1
 
 .segment "CODE"
 

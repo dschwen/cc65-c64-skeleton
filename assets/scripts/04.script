@@ -3,13 +3,12 @@
  * rooms/04.rc for the stairs-up dispatch and STORY_ROOM04_* in src/story.h
  * for these keys.
  *
- * The stairs back up to the kitchen (room 03, tile 3,5) land at (4,5) here
- * - now drawn as the same walkable stairs tile (68) as room 03's side.
- * Stepping onto it transitions immediately (rooms/asm/04_enter_tile.s)
- * rather than requiring Use. */
+ * The stairs up to the kitchen (room 03, tile 10,1) are at (16,1) here, an
+ * already-walkable tile (67) in the alcove. Stepping onto it transitions
+ * immediately (rooms/asm/04_enter_tile.s) rather than requiring Use. */
 room 04 {
     entry STORY_ROOM04_ASCEND_STAIRS {
-        room_transition 3 8 10
+        room_transition 3 20 4
     }
     entry STORY_ROOM04_LOOK_STAIRS_UP {
         text "The stairs lead up to the kitchen."

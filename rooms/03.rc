@@ -5,7 +5,7 @@ look_at:
     at 10,6 -> script STORY_ROOM03_LOOK_CAULDRON
     at 5,1 -> script STORY_ROOM03_LOOK_OIL
     at 14,1 -> script STORY_ROOM03_LOOK_TAPER
-    at 3,5 -> script STORY_ROOM03_LOOK_STAIRS_DOWN
+    at 10,1 -> script STORY_ROOM03_LOOK_STAIRS_DOWN
     at 1,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 2,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 3,1 -> script STORY_ROOM03_LOOK_SHELVES
@@ -14,7 +14,6 @@ look_at:
     at 7,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 8,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 9,1 -> script STORY_ROOM03_LOOK_SHELVES
-    at 10,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 11,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 12,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 13,1 -> script STORY_ROOM03_LOOK_SHELVES
@@ -26,8 +25,6 @@ look_at:
 
 use_at:
     # (6,9) is both where the tavern door lands the player (see
-    # STORY_ROOM02_ENTER_KITCHEN) and the way back - the old outer corridor
-    # and its (0,6) door were sealed off when the west wall was closed up,
-    # so this tile now serves as the two-way threshold.
+    # STORY_ROOM02_ENTER_KITCHEN) and the way back.
     at 6,9 -> script STORY_ROOM03_LEAVE_KITCHEN
     default -> GAME_USE_DEFAULT

@@ -22,5 +22,4 @@ use_at:
     # walkable ground (cursor movement only checks the player-relative
     # clamp, not tile walkability).
     at 3,3 -> script STORY_ROOM02_TALK_VEY
-    at 19,6 -> script STORY_ROOM02_ENTER_KITCHEN
     default -> asm "rooms/asm/02_use_at.s"

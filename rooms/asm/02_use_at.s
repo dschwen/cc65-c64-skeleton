@@ -11,7 +11,7 @@
 ; game_inventory_remove_one in src/game_support.c). Both tiles used to be
 ; plain `at X,Y -> script` entries in rooms/02.rc; they moved here so the
 ; inventory check can pick which script entry runs:
-;   - (13,1), Sir Caldus's own tile: if the player carries Lamp Oil (object
+;   - (14,1), Sir Caldus's own tile: if the player carries Lamp Oil (object
 ;     type 51), consume one and run STORY_ROOM02_CALDUS_FREE; otherwise run
 ;     the ordinary STORY_ROOM02_TALK_CALDUS greeting/repeat entry.
 ;   - (12,1), the hearth: if the player carries a Long Taper (object type
@@ -32,7 +32,7 @@ LAMP_OIL_TYPE   = 51
 LONG_TAPER_TYPE = 52
 HEARTH_X = 12
 HEARTH_Y = 1
-CALDUS_X = 13
+CALDUS_X = 14
 CALDUS_Y = 1
 
 .segment "BSS"
@@ -58,6 +58,11 @@ _use_at_fallback:
 
     lda #LAMP_OIL_TYPE
     jsr _game_inventory_has_one
+    cmp #0                       ; Z from the call is unreliable: cc65's
+                                  ; own incspN cleanup after a __fastcall__
+                                  ; return re-touches the flags via its own
+                                  ; internal inc, so re-test A explicitly
+                                  ; rather than trusting the jsr's Z.
     beq @no_oil
     lda #LAMP_OIL_TYPE
     jsr _game_inventory_remove_one
@@ -82,6 +87,7 @@ _use_at_fallback:
 
     lda #LONG_TAPER_TYPE
     jsr _game_inventory_has_one
+    cmp #0                       ; see the Caldus check's comment above
     beq @no_taper
     lda #10                     ; STORY_ROOM02_LIGHT_TAPER
     jsr _game_room_script_entry

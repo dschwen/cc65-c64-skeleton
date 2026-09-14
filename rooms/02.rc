@@ -4,13 +4,13 @@ enter_tile: asm "rooms/asm/02_enter_tile.s"
 look_at:
     at 17,9 -> script STORY_ROOM02_LOOK_ORRA
     at 3,2 -> script STORY_ROOM02_LOOK_VEY
-    at 13,1 -> script STORY_ROOM02_LOOK_CALDUS
+    at 14,1 -> script STORY_ROOM02_LOOK_CALDUS
     default -> GAME_LOOK_DEFAULT
 
 use_at:
     at 8,10 -> script STORY_ROOM02_LEAVE_INN
     at 17,9 -> script STORY_ROOM02_TALK_ORRA
-    # Sir Caldus (13,1) and the hearth (12,1) are handled in the asm
+    # Sir Caldus (14,1) and the hearth (12,1) are handled in the asm
     # fallback below instead of a plain script entry here - both need an
     # inventory check (Lamp Oil / Long Taper) that the script DSL can't
     # express. See rooms/asm/02_use_at.s.

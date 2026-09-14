@@ -38,7 +38,9 @@ room 02 {
         portrait_show 1 right
         check_flag STORY_STATE_ROOM_02_MET_ORRA == 0 {
             text "She studies you for a long moment before you can speak."
+            wait_key
             text "\"So. The one they say robbed Master Vey,\" she says quietly. \"I don't believe that of you.\""
+            wait_key
             text "\"Whether anyone else shares my opinion... we shall see, won't we.\""
             set_flag STORY_STATE_ROOM_02_MET_ORRA 1
         } else {
@@ -54,8 +56,11 @@ room 02 {
         portrait_show 2 left
         check_flag STORY_STATE_ROOM_02_MET_VEY == 0 {
             text "The innkeeper looks up as you shake the rain from your coat."
+            wait_key
             text "\"Moonfen Inn welcomes all travelers,\" he says, \"though I'll admit we're a strange house to land in tonight.\""
+            wait_key
             text "\"There's been trouble here - a guest robbed, and no one but you come through that door since. You understand why folk might look at the last stranger first.\""
+            wait_key
             text "\"Prove me wrong and you're welcome at my fire. That's all I ask.\""
             set_flag STORY_STATE_ROOM_02_MET_VEY 1
         } else {
@@ -74,7 +79,9 @@ room 02 {
         portrait_show 0 right
         check_flag STORY_STATE_ROOM_02_MET_CALDUS == 0 {
             text "The knight straightens as best he can, one hand still braced against his helm."
+            wait_key
             text "\"Sir Caldus, formerly of the Silver Tower,\" he says, muffled by the visor. \"This cursed hinge seized somewhere between the storm and the door, and I've yet to find a soul who can loosen it.\""
+            wait_key
             text "\"If you should come across oil - lamp oil, axle grease, anything - I'd count it a great kindness.\""
             set_flag STORY_STATE_ROOM_02_MET_CALDUS 1
         } else {
@@ -90,7 +97,9 @@ room 02 {
         portrait_show 0 right
         check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
             text "You press the vial of lamp oil into the seized hinge and work the visor back and forth."
+            wait_key
             text "With a screech of metal it finally gives, and Sir Caldus draws a first unmuffled breath."
+            wait_key
             text "\"You have my thanks - truly,\" he says. \"If you ever need a blade at your back, ask.\""
             set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
         } else {

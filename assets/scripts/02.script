@@ -12,10 +12,11 @@
  * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY/STORY_ROOM02_TALK_CALDUS
  * are one-time scripted first-meeting greetings, each gated on its own
  * STORY_STATE_ROOM_02_MET_* flag - the full topic-based "Ask about..."
- * conversation is a later pass. Portrait IDs 1 (Orra), 2 (Vey), 3 (Caldus)
- * are placeholder references: none of these portraits' art is authored
- * yet (assets/portraits/01, /02, /03 - the asset editor's Portrait mode)
- * so portrait_show renders a blank box there for now.
+ * conversation is a later pass. Portrait 0 is Sir Caldus (visor closed) -
+ * shown on both Look and Use/Talk. Portrait IDs 1 (Orra) and 2 (Vey) are
+ * still placeholder references: neither has art authored yet
+ * (assets/portraits/01, /02 - the asset editor's Portrait mode), so
+ * portrait_show renders a blank box there for now.
  *
  * Caldus's Lamp Oil payoff (STORY_ROOM02_CALDUS_FREE) and the hearth's Long
  * Taper lighting (STORY_ROOM02_LIGHT_TAPER/_NO_ITEM) are dispatched from a
@@ -64,10 +65,13 @@ room 02 {
         portrait_hide
     }
     entry STORY_ROOM02_LOOK_CALDUS {
+        portrait_show 0 right
         text "A knight in dented plate sits stiffly by the hearth, his visor jammed half-shut."
+        wait_key
+        portrait_hide
     }
     entry STORY_ROOM02_TALK_CALDUS {
-        portrait_show 3 right
+        portrait_show 0 right
         check_flag STORY_STATE_ROOM_02_MET_CALDUS == 0 {
             text "The knight straightens as best he can, one hand still braced against his helm."
             text "\"Sir Caldus, formerly of the Silver Tower,\" he says, muffled by the visor. \"This cursed hinge seized somewhere between the storm and the door, and I've yet to find a soul who can loosen it.\""
@@ -83,7 +87,7 @@ room 02 {
         room_transition 3 12 18
     }
     entry STORY_ROOM02_CALDUS_FREE {
-        portrait_show 3 right
+        portrait_show 0 right
         check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
             text "You press the vial of lamp oil into the seized hinge and work the visor back and forth."
             text "With a screech of metal it finally gives, and Sir Caldus draws a first unmuffled breath."

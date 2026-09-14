@@ -24,7 +24,4 @@ look_at:
     default -> asm "rooms/asm/03_look_at.s"
 
 use_at:
-    # (6,9) is both where the tavern door lands the player (see
-    # STORY_ROOM02_ENTER_KITCHEN) and the way back.
-    at 6,9 -> script STORY_ROOM03_LEAVE_KITCHEN
     default -> GAME_USE_DEFAULT

@@ -5,8 +5,9 @@
  * The stairway down to the basement is at (10,1), an already-walkable
  * tile (10) among the pantry shelving - stepping onto it transitions
  * immediately (rooms/asm/03_enter_tile.s) rather than requiring Use. The
- * player arrives from the tavern at (6,9), which also doubles as the way
- * back (see rooms/03.rc's use_at comment).
+ * player arrives from the tavern at (6,9); the real door back is one tile
+ * south at (6,10) (the walkable door tile 5 in the south wall), which
+ * transitions the same way - stepping onto it, not Using it.
  *
  * Lamp Oil (object type 51, tile 5,1) and Long Taper (object type 52, tile
  * 14,1) are takeable pickups - Take is a generic engine command (see

@@ -81,8 +81,8 @@
       east: 0,
       west: 0,
       south: 0,
-      northText: 0,
-      eastText: 0,
+      northText: 4,
+      eastText: 1,
       westText: 0,
       southText: 0,
       data: new Uint8Array(MAP_TILE_COUNT),
@@ -209,10 +209,10 @@
     roomNeighborEast: document.getElementById("room-neighbor-east"),
     roomNeighborWest: document.getElementById("room-neighbor-west"),
     roomNeighborSouth: document.getElementById("room-neighbor-south"),
-    roomExitTextNorth: document.getElementById("room-exit-text-north"),
-    roomExitTextEast: document.getElementById("room-exit-text-east"),
     roomExitTextWest: document.getElementById("room-exit-text-west"),
     roomExitTextSouth: document.getElementById("room-exit-text-south"),
+    roomLightLevel: document.getElementById("room-light-level"),
+    roomLosEnabled: document.getElementById("room-los-enabled"),
     mapToolTile: document.getElementById("map-tool-tile"),
     mapToolObject: document.getElementById("map-tool-object"),
     showRoomObjects: document.getElementById("show-room-objects"),
@@ -1202,8 +1202,14 @@
     ui.roomObjectType.value = String(state.selectedObjectType);
     renderRoomObjectList();
     [
-      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, state.map.north, state.map.northText],
-      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, state.map.east, state.map.eastText],
+      [ui.roomExitNorth, ui.roomNeighborNorth, ROOM_EXIT_NORTH, state.map.north],
+      [ui.roomExitEast, ui.roomNeighborEast, ROOM_EXIT_EAST, state.map.east]
+    ].forEach(([checkbox, input, bit, value]) => {
+      checkbox.checked = (state.map.exitMask & bit) !== 0;
+      input.disabled = !checkbox.checked;
+      input.value = String(value);
+    });
+    [
       [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, state.map.west, state.map.westText],
       [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, state.map.south, state.map.southText]
     ].forEach(([checkbox, input, textInput, bit, value, textValue]) => {
@@ -1213,6 +1219,8 @@
       input.value = String(value);
       textInput.value = String(textValue);
     });
+    ui.roomLightLevel.value = String(state.map.northText);
+    ui.roomLosEnabled.checked = state.map.eastText !== 0;
   }
 
   function renderTestCanvas() {
@@ -2059,8 +2067,8 @@
     state.map.east = 0;
     state.map.west = 0;
     state.map.south = 0;
-    state.map.northText = 0;
-    state.map.eastText = 0;
+    state.map.northText = 4;
+    state.map.eastText = 1;
     state.map.westText = 0;
     state.map.southText = 0;
     const headerBytes = hasHeaderV3 ? ROOM_HEADER_BYTES :
@@ -2916,8 +2924,22 @@
     });
 
     [
-      [ui.roomExitNorth, ui.roomNeighborNorth, ui.roomExitTextNorth, ROOM_EXIT_NORTH, "north", "northText"],
-      [ui.roomExitEast, ui.roomNeighborEast, ui.roomExitTextEast, ROOM_EXIT_EAST, "east", "eastText"],
+      [ui.roomExitNorth, ui.roomNeighborNorth, ROOM_EXIT_NORTH, "north"],
+      [ui.roomExitEast, ui.roomNeighborEast, ROOM_EXIT_EAST, "east"]
+    ].forEach(([checkbox, input, bit, field]) => {
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) state.map.exitMask |= bit;
+        else state.map.exitMask &= ~bit;
+        input.disabled = !checkbox.checked;
+        schedulePersist();
+      });
+      input.addEventListener("change", () => {
+        state.map[field] = clampByte(Number(input.value));
+        input.value = String(state.map[field]);
+        schedulePersist();
+      });
+    });
+    [
       [ui.roomExitWest, ui.roomNeighborWest, ui.roomExitTextWest, ROOM_EXIT_WEST, "west", "westText"],
       [ui.roomExitSouth, ui.roomNeighborSouth, ui.roomExitTextSouth, ROOM_EXIT_SOUTH, "south", "southText"]
     ].forEach(([checkbox, input, textInput, bit, field, textField]) => {
@@ -2937,6 +2959,14 @@
         state.map[textField] = clampByte(Number(textInput.value));
         schedulePersist();
       });
+    });
+    ui.roomLightLevel.addEventListener("change", () => {
+      state.map.northText = clampByte(Number(ui.roomLightLevel.value));
+      schedulePersist();
+    });
+    ui.roomLosEnabled.addEventListener("change", () => {
+      state.map.eastText = ui.roomLosEnabled.checked ? 1 : 0;
+      schedulePersist();
     });
 
     ui.mapToolTile.addEventListener("click", () => {

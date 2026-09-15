@@ -140,15 +140,30 @@ typedef struct PlatformObjectTypeInfo {
  * which of the four neighbor bytes are valid, since every byte value is a
  * usable room ID.
  *
- * north/east/west/south_text are currently unread/reserved: rooms used to
- * carry a separate text-pool resource these fields indexed into by byte
- * offset (assets/resources/<room id>), but that resource is now a compiled
- * room script instead (see game_room_script_entry() below and
+ * west/south_text are currently unread/reserved: rooms used to carry a
+ * separate text-pool resource these fields indexed into by byte offset
+ * (assets/resources/<room id>), but that resource is now a compiled room
+ * script instead (see game_room_script_entry() below and
  * modules/script.c's KIND_ROOM handling) - a room-script entry is looked up
  * by its own numeric key, not one of these fields. Exit descriptions
  * haven't been migrated onto that mechanism yet (platform_look_exit()
- * always falls back to a generic message for now); these four bytes are
+ * always falls back to a generic message for now); these two bytes are
  * where that migration would read from once it happens.
+ *
+ * north_text/east_text were the same kind of reserved byte but are now
+ * repurposed (room_commit() in platform.c) as two per-room performance
+ * settings, cached into platform_room_light_level/platform_room_los_enabled
+ * on every room activation - see PLATFORM_API.md's Lighting section:
+ *   north_text: light level 0-3 selects that PLATFORM_LIGHT_* level as the
+ *     room's dynamic ambient floor (same dynamic lighting calculation as
+ *     before); 4 means full brightness with the whole per-object lighting
+ *     rebuild skipped every frame/move.
+ *   east_text: 0 disables the line-of-sight raycast for the room (every
+ *     tile renders visible, same as the "no valid player" fallback);
+ *     nonzero (the historical default) leaves it enabled.
+ * tools/asset-editor exposes these as "Light level" and "Line-of-sight
+ * calculation enabled" in the Room Editor panel, decoupled from the
+ * north/east exit checkboxes since they're unrelated to those exits.
  */
 typedef struct PlatformRoom {
     uint8_t width;
@@ -168,6 +183,8 @@ typedef struct PlatformRoom {
     PlatformObject objects[PLATFORM_ROOM_OBJECT_COUNT];
 } PlatformRoom;
 
+#define PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL 4u
+
 typedef uint8_t (*PlatformRoomStoreHook)(const PlatformRoom* room);
 typedef uint8_t (*PlatformRoomRestoreHook)(PlatformRoom* room);
 
@@ -181,6 +198,10 @@ extern volatile uint8_t platform_frame_counter;
 extern uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 extern uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
 extern uint8_t platform_global_light;
+/* Cached from the current room's north_text/east_text by room_commit() -
+ * see the PlatformRoom comment above. */
+extern uint8_t platform_room_light_level;
+extern uint8_t platform_room_los_enabled;
 extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 extern const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u];
 extern const uint8_t platform_light_distance[16u * 16u];

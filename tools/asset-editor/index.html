@@ -301,14 +301,30 @@
           <span>Format 3</span>
         </div>
         <div class="room-exits" aria-label="Adjacent rooms">
-          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-north" type="number" min="0" max="255" value="0" disabled aria-label="North exit description (reserved, currently unused)"></label>
-          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-east" type="number" min="0" max="255" value="0" disabled aria-label="East exit description (reserved, currently unused)"></label>
+          <label><span><input id="room-exit-north" type="checkbox"> North</span><input id="room-neighbor-north" type="number" min="0" max="255" value="0" disabled></label>
+          <label><span><input id="room-exit-east" type="checkbox"> East</span><input id="room-neighbor-east" type="number" min="0" max="255" value="0" disabled></label>
           <label><span><input id="room-exit-west" type="checkbox"> West</span><input id="room-neighbor-west" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-west" type="number" min="0" max="255" value="0" disabled aria-label="West exit description (reserved, currently unused)"></label>
           <label><span><input id="room-exit-south" type="checkbox"> South</span><input id="room-neighbor-south" type="number" min="0" max="255" value="0" disabled><input id="room-exit-text-south" type="number" min="0" max="255" value="0" disabled aria-label="South exit description (reserved, currently unused)"></label>
         </div>
-        <p class="hint">The four small fields are room->north_text/etc. -
-          reserved, currently unread by the engine (see PLATFORM_API.md);
-          not tied to any resource anymore.</p>
+        <p class="hint">The two small fields on West/South are room->west_text/
+          south_text - reserved, currently unread by the engine (see
+          PLATFORM_API.md); not tied to any resource anymore.</p>
+        <div class="room-exits" aria-label="Room performance settings">
+          <label>Light level <select id="room-light-level">
+            <option value="0">0 - none (dynamic)</option>
+            <option value="1">1 - dim (dynamic)</option>
+            <option value="2">2 - twilight (dynamic)</option>
+            <option value="3">3 - full (dynamic)</option>
+            <option value="4" selected>4 - full brightness, no dynamic lighting</option>
+          </select></label>
+          <label><input id="room-los-enabled" type="checkbox" checked> Line-of-sight calculation enabled</label>
+        </div>
+        <p class="hint">These two are stored in room->north_text/east_text
+          (repurposed from the unused exit-description bytes above - see
+          PLATFORM_API.md's Lighting section). Light level 4 and LOS enabled
+          match the engine's old always-on behavior and cost nothing extra
+          to keep; dial a room down only when its ambience or a performance
+          need calls for it.</p>
         <div class="map-toolbar">
           <div class="map-tool-buttons" role="group" aria-label="Room editing tool">
             <button id="map-tool-tile" class="active">Tile paint</button>

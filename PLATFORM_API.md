@@ -322,6 +322,8 @@ previous room or a full-screen text view from surviving the transition.
 extern uint8_t platform_base_colors[40 * 22];
 extern uint8_t platform_brightness[20 * 11];
 extern uint8_t platform_global_light;
+extern uint8_t platform_room_light_level;
+extern uint8_t platform_room_los_enabled;
 extern uint8_t platform_view_tiles[20 * 11];
 extern const uint8_t platform_light_colors[4 * 16];
 extern const uint8_t platform_light_distance[16 * 16];
@@ -348,6 +350,34 @@ result. It also rebuilds the internal viewer-quadrant cache for opaque tiles.
 that rebuild immediately. The sample game binds `-` and `+` to decreasing and
 increasing ambient light. Direct brightness-buffer edits must be followed by
 `platform_lighting_apply()`.
+
+### Per-room lighting level and line-of-sight
+
+Each room's `north_text`/`east_text` header bytes (see the `PlatformRoom` doc
+comment in `platform.h`) double as two performance settings, cached by
+`room_commit()` into `platform_room_light_level`/`platform_room_los_enabled`
+every time that room becomes active (boot or transition):
+
+- **Light level** (`north_text`, 0-4): 0-3 is one of the `PLATFORM_LIGHT_*`
+  levels and is applied as the room's ambient floor (`platform_global_light`)
+  on entry - the normal per-object dynamic lighting calculation still runs
+  every draw/move after that, and `+`/`-` still adjust it live. 4 means full
+  brightness with the entire dynamic-lighting rebuild (wall-cache prep, every
+  light-emitting object's raycast) skipped every time - `platform_global_light`
+  is ignored while a level-4 room is current. tools/asset-editor's Room Editor
+  panel exposes this as "Light level"; existing rooms default to 4 (matching
+  the engine's original always-full-dynamic-off-by-default behavior for
+  rooms authored before this setting existed).
+- **Line-of-sight enabled** (`east_text`, 0/1): 0 skips the line-of-sight
+  raycast entirely and marks every tile visible (the same fallback
+  `view_rebuild()` already used when there's no valid player); nonzero (the
+  default) leaves it enabled. Exposed as "Line-of-sight calculation enabled"
+  in the same panel.
+
+Both are cheap enough to leave enabled for most rooms; use them for rooms
+that don't need per-object dynamic lighting or hidden-tile occlusion (e.g. a
+single bright open room) to skip that room's `visibility_build()`/
+`platform_lighting_rebuild()` cost on every draw and object move.
 
 Object-type byte 49 remains a radius in half-tile/character-cell units and is
 clamped to 16 at runtime. Tile distance is doubled before applying the existing
@@ -705,7 +735,7 @@ the selected 2x2-character tile. Its hotspot may be on another tile.
 
 `platform_look_exit()` applies the same visibility and light-range check to the
 current edge tile. An enabled exit always displays the generic `An exit.` -
-custom per-exit descriptions (`room->north_text` etc.) aren't wired up yet;
+custom per-exit descriptions (`room->west_text`/`south_text`) aren't wired up yet;
 that's a planned extension on top of the room-script mechanism
 (`game_room_script_entry()` - see `ROOM_CODE_API.md`'s "Room scripts"). A
 disabled direction reports `There is no exit that way.`. Looking outward

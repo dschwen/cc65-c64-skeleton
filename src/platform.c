@@ -171,6 +171,8 @@ uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT]
 uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
 #pragma bss-name (pop)
 uint8_t platform_global_light;
+uint8_t platform_room_light_level;
+uint8_t platform_room_los_enabled;
 uint8_t platform_light_visibility[PLATFORM_MAP_TILE_COUNT];
 uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 
@@ -771,6 +773,8 @@ void platform_init(void) {
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
     memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
     platform_global_light = PLATFORM_LIGHT_FULL;
+    platform_room_light_level = PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL;
+    platform_room_los_enabled = 1u;
     /* look_cursor_visible/wall_count/wall_cache_room are plain BSS globals,
      * already 0 from the C runtime's zero-init - platform_init() runs
      * exactly once, first thing in main(), so nothing could have dirtied
@@ -878,6 +882,11 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
     if (room == &platform_room) {
         platform_current_room = room_id;
         platform_player = &platform_room.objects[platform_player_slot];
+        platform_room_light_level = room->north_text;
+        platform_room_los_enabled = room->east_text;
+        if (platform_room_light_level <= PLATFORM_LIGHT_FULL) {
+            platform_global_light = platform_room_light_level;
+        }
         /* room_stage's memcpy out is done above, so its memory is free to
          * reuse as scratch for this room's own script resource now (see
          * PLATFORM_ROOM_SCRATCH_BUFFER) - the same resource ID as the room
@@ -1039,7 +1048,8 @@ static void view_rebuild(const PlatformRoom* room,
     uint8_t tile_y;
     if (room == 0 || player == 0 || player->type == 0u ||
         player->x >= PLATFORM_MAP_CHAR_WIDTH ||
-        player->y >= PLATFORM_MAP_CHAR_HEIGHT) {
+        player->y >= PLATFORM_MAP_CHAR_HEIGHT ||
+        platform_room_los_enabled == 0u) {
         memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
         return;
     }
@@ -1242,6 +1252,15 @@ void platform_lighting_rebuild(const PlatformRoom* room,
                                const PlatformObject* player) {
     uint16_t i;
     uint16_t limit;
+
+    if (room != 0 &&
+        platform_room_light_level == PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL) {
+        memset(platform_brightness, PLATFORM_LIGHT_FULL,
+               sizeof(platform_brightness));
+        wall_cache_room = 0;
+        platform_lighting_apply();
+        return;
+    }
 
     memset(platform_brightness, platform_global_light,
            sizeof(platform_brightness));
@@ -1767,10 +1786,12 @@ uint8_t platform_look_exit(const PlatformRoom* room,
         return PLATFORM_ERR_NOT_FOUND;
     }
 
-    /* Custom per-exit descriptions aren't wired up yet - room->north_text
-     * etc. are currently unread (see the PlatformRoom doc comment); this
-     * always shows the generic message until that's built on top of the
-     * room-script mechanism (game_room_script_entry()). */
+    /* Custom per-exit descriptions aren't wired up yet - room->west_text/
+     * south_text are currently unread (north_text/east_text were the same
+     * kind of field but are now the per-room lighting/LOS settings - see
+     * the PlatformRoom doc comment); this always shows the generic message
+     * until that's built on top of the room-script mechanism
+     * (game_room_script_entry()). */
     look_exit_write("An exit.", color);
     return PLATFORM_OK;
 }

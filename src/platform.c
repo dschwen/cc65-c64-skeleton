@@ -15,8 +15,6 @@
 #define P_SPRITE_DATA      ((uint8_t*)0xfc00)
 #define P_OBJECT_TYPE_STAGE ((uint8_t*)0xb000)
 #define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
-#define DIRTY_BYTES        110u
-#define DIRTY_CELL_LIMIT   32u
 #define INITIAL_OBJECT_TYPE_COUNT 2u
 #define EF_FIRST_ROOM_BANK 3u
 #define EF_ROOMS_PER_BANK  6u
@@ -113,8 +111,12 @@ void platform_text_area_clear_native(void);
 void __fastcall__ platform_text_output_native(const char* text);
 void platform_room_helpers_run_banked(void);
 void platform_look_helpers_run_banked(void);
-static void dirty_clear(void);
-static void mark_object_cells(const PlatformObject* object);
+/* src/dirty_redraw.s - see that file's header comment and the comment
+ * near platform_room_object_limit() below for why these three moved out
+ * of C. redraw_dirty() is declared further down, right before its first
+ * use, matching where its forward declaration used to sit. */
+void dirty_clear(void);
+void mark_object_cells(const PlatformObject* object);
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
 
@@ -210,10 +212,6 @@ const uint8_t platform_light_distance[16u * 16u] = {
 static const uint8_t look_cursor_colors[8] = {0, 11, 12, 15, 1, 15, 12, 11};
 #pragma rodata-name (pop)
 
-static uint8_t dirty_cells[DIRTY_BYTES];
-static uint8_t dirty_x[DIRTY_CELL_LIMIT];
-static uint8_t dirty_y[DIRTY_CELL_LIMIT];
-static uint8_t dirty_count;
 /* Non-static: read/written by the in-place RH service through its generated
  * resolver; these addresses remain visible under the ROML mapping. */
 const PlatformRoom* rendered_room;
@@ -471,8 +469,8 @@ uint16_t platform_resource_last_size(void) {
 #define ROOM_HELPERS_OP_NEIGHBOR 0u
 #define ROOM_HELPERS_OP_REMOVE   1u
 
-static void redraw_dirty(const PlatformRoom* room,
-                         const PlatformObject* player);
+void redraw_dirty(const PlatformRoom* room,
+                  const PlatformObject* player);
 
 /* Explicitly initialized into low DATA so the in-place service can see every
  * parameter/result while ROML and BASIC hide `$8000-$BFFF`. */
@@ -610,117 +608,17 @@ void platform_object_taken_message(uint8_t type_id, uint8_t color) {
 }
 #pragma code-name (pop)
 
-static uint8_t object_cell(const PlatformObject* object,
-                           uint8_t world_x, uint8_t world_y,
-                           uint8_t* ch, uint8_t* color) {
-    const PlatformObjectType* type;
-    int16_t left;
-    int16_t top;
-    int16_t local_x;
-    int16_t local_y;
-    uint8_t index;
-
-    if (object == 0 || object->type == 0u) return 0;
-    type = platform_object_type_get(object->type);
-    if (!object_type_is_valid(type)) return 0;
-
-    left = (int16_t)object->x - HOTSPOT_X(type);
-    top = (int16_t)object->y - HOTSPOT_Y(type);
-    local_x = (int16_t)world_x - left;
-    local_y = (int16_t)world_y - top;
-    if (local_x < 0 || local_y < 0 ||
-        local_x >= OBJECT_WIDTH(type) || local_y >= OBJECT_HEIGHT(type)) {
-        return 0;
-    }
-
-    index = (uint8_t)(local_y * OBJECT_WIDTH(type) + local_x);
-    if (type->chars[index] == 0u) return 0;
-    *ch = type->chars[index];
-    *color = type->colors[index] & 0x0f;
-    return 1;
-}
-
-static void base_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
-                      uint8_t* ch, uint8_t* color) {
-    uint8_t tile;
-    uint8_t quadrant;
-    const uint8_t* definition;
-
-    tile = room->tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1)];
-    quadrant = (uint8_t)(((y & 1u) << 1) | (x & 1u));
-    definition = tile_data + ((uint16_t)tile << 3);
-    *ch = definition[quadrant << 1];
-    *color = definition[(quadrant << 1) + 1u] & 0x0f;
-}
-
-static void compose_cell(const PlatformRoom* room, uint8_t x, uint8_t y,
-                         const PlatformObject* player,
-                         uint16_t object_limit,
-                         uint8_t* ch, uint8_t* color) {
-    uint16_t i;
-    uint8_t object_ch;
-    uint8_t object_color;
-
-    base_cell(room, x, y, ch, color);
-    for (i = 0; i < object_limit; ++i) {
-        if (player == &room->objects[i]) continue;
-        if (object_cell(&room->objects[i], x, y, &object_ch, &object_color)) {
-            *ch = object_ch;
-            *color = object_color;
-        }
-    }
-    if (object_cell(player, x, y, &object_ch, &object_color)) {
-        *ch = object_ch;
-        *color = object_color;
-    }
-}
-
-static void dirty_clear(void) {
-    memset(dirty_cells, 0, sizeof(dirty_cells));
-    dirty_count = 0;
-}
-
-static void dirty_set(uint8_t x, uint8_t y) {
-    uint16_t cell;
-    uint8_t mask;
-    if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= PLATFORM_MAP_CHAR_HEIGHT) return;
-    cell = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-    mask = (uint8_t)(1u << (cell & 7u));
-    if (dirty_cells[cell >> 3] & mask) return;
-    dirty_cells[cell >> 3] |= mask;
-    if (dirty_count < DIRTY_CELL_LIMIT) {
-        dirty_x[dirty_count] = x;
-        dirty_y[dirty_count] = y;
-        ++dirty_count;
-    }
-}
-
-static void mark_object_cells(const PlatformObject* object) {
-    const PlatformObjectType* type;
-    int16_t left;
-    int16_t top;
-    uint8_t x;
-    uint8_t y;
-    uint8_t index;
-    int16_t world_x;
-    int16_t world_y;
-
-    if (object == 0 || object->type == 0u) return;
-    type = platform_object_type_get(object->type);
-    if (!object_type_is_valid(type)) return;
-    left = (int16_t)object->x - HOTSPOT_X(type);
-    top = (int16_t)object->y - HOTSPOT_Y(type);
-    index = 0;
-    for (y = 0; y < OBJECT_HEIGHT(type); ++y) {
-        for (x = 0; x < OBJECT_WIDTH(type); ++x, ++index) {
-            world_x = left + (int16_t)x;
-            world_y = top + (int16_t)y;
-            if (type->chars[index] != 0u && world_x >= 0 && world_y >= 0) {
-                dirty_set((uint8_t)world_x, (uint8_t)world_y);
-            }
-        }
-    }
-}
+/* object_cell/base_cell/compose_cell/dirty_clear/dirty_set/
+ * mark_object_cells/redraw_dirty used to live here as C static functions;
+ * they're now src/dirty_redraw.s (hand-written 6502) - see that file's
+ * header comment for why: this cluster measured 43-50% pure calling-
+ * convention overhead (every function passed pointer parameters that
+ * cc65 reloads from the software stack on each field access), and merging
+ * them into one module sharing state through fixed BSS locations removes
+ * essentially all of it. dirty_clear/mark_object_cells/redraw_dirty keep
+ * their exact original signatures (declared near the top of this file)
+ * so platform_object_move()/platform_player_set_type()/
+ * platform_room_object_remove() below call them exactly as before. */
 
 uint16_t platform_room_object_limit(const PlatformRoom* room) {
     uint16_t limit;
@@ -731,34 +629,6 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
         --limit;
     }
     return limit;
-}
-
-static void redraw_dirty(const PlatformRoom* room,
-                         const PlatformObject* player) {
-    uint8_t i;
-    uint8_t x;
-    uint8_t y;
-    uint8_t ch;
-    uint8_t color;
-    uint16_t offset;
-    uint8_t visible_color;
-    uint16_t object_limit;
-    uint16_t tile_offset;
-
-    object_limit = platform_room_object_limit(room);
-    for (i = 0; i < dirty_count; ++i) {
-        x = dirty_x[i];
-        y = dirty_y[i];
-        compose_cell(room, x, y, player, object_limit, &ch, &color);
-        offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-        tile_offset = (uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1);
-        platform_base_colors[offset] = color;
-        visible_color = platform_light_colors[
-            ((platform_brightness[tile_offset] & 0x03u) << 4) | (color & 0x0fu)];
-        if (platform_view_tiles[tile_offset] == 0u) visible_color = 0u;
-        if (P_SCREEN_RAM[offset] != ch) P_SCREEN_RAM[offset] = ch;
-        if (P_COLOR_RAM[offset] != visible_color) P_COLOR_RAM[offset] = visible_color;
-    }
 }
 
 void platform_init(void) {

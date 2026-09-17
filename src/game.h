@@ -114,6 +114,17 @@ uint8_t game_inventory_remove(uint8_t type, uint8_t quantity);
  * hand-written room asm (lda #type; jsr _game_inventory_has_one). */
 uint8_t __fastcall__ game_inventory_has_one(uint8_t type);
 void __fastcall__ game_inventory_remove_one(uint8_t type);
+void __fastcall__ game_inventory_add_one(uint8_t type);
+
+/*
+ * Locate an unlit Brazier (object type 41) at tile_x/tile_y and, if the
+ * player carries a Lit Taper (type 53), swap it for a Lit Brazier (type
+ * 40) - see rooms/asm/04_use_at.s and MOONFEN_STORY_DESIGN.md's "Lighting
+ * the sconces". Returns GAME_USE_DEFAULT when no unlit brazier occupies
+ * the tile. Declared __fastcall__ (tile_y in A, tile_x pushed first via
+ * `jsr pusha`) so hand-written room asm can call it directly.
+ */
+uint8_t __fastcall__ game_ignite_brazier(uint8_t tile_x, uint8_t tile_y);
 
 /* Saturating health changes; mana spend returns false without changing mana. */
 uint8_t game_health(void);

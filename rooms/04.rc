@@ -6,4 +6,4 @@ look_at:
     default -> GAME_LOOK_DEFAULT
 
 use_at:
-    default -> GAME_USE_DEFAULT
+    default -> asm "rooms/asm/04_use_at.s"

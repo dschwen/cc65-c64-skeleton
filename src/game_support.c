@@ -173,6 +173,15 @@ void __fastcall__ game_inventory_remove_one(uint8_t type) {
     (void)game_inventory_remove(type, 1u);
 }
 
+void __fastcall__ game_inventory_add_one(uint8_t type) {
+    (void)game_inventory_add(type, 1u);
+}
+
+/* game_ignite_brazier() lives in src/brazier.s, hand-written - cc65's
+ * codegen for the equivalent C loop (reloading the object pointer from the
+ * software stack on every single field access) ran to ~500 bytes, blowing
+ * HIGHCODE's already-tight budget for what should be a small function. */
+
 uint8_t game_take_object(uint8_t slot) {
     PlatformObject* object;
     PlatformObject original;

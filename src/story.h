@@ -20,9 +20,11 @@
 #define STORY_STATE_ROOM_05_PELL_HELPED        13u
 
 /* QUEST_FLAGS bit assignments (single shared byte, see assets/scripts/*.script
- * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01), bit 2 = the
- * Long Taper has been lit at the tavern hearth (room 02). */
-#define QUEST_FLAG_TAPER_LIT 2u
+ * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01). Whether the
+ * Long Taper has been lit is no longer tracked as a separate bit - lighting
+ * it swaps the inventory item itself from Long Taper (type 52) to Lit
+ * Taper (type 53, see rooms/asm/02_use_at.s), so the item's own type is
+ * the persistent state. */
 
 /* Room-script entry keys (game_room_script_entry() in game.h; see
  * assets/scripts/<room id>.script). Each room picks its own numbering - no
@@ -52,6 +54,7 @@
 #define STORY_ROOM02_LIGHT_TAPER      10u
 #define STORY_ROOM02_LIGHT_TAPER_NO_ITEM 11u
 #define STORY_ROOM02_ENTER_CORRIDOR   12u
+#define STORY_ROOM02_LIGHT_TAPER_ALREADY 13u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
 #define STORY_ROOM03_LOOK_SHELVES  3u
@@ -64,6 +67,8 @@
 
 #define STORY_ROOM04_ASCEND_STAIRS   1u
 #define STORY_ROOM04_LOOK_STAIRS_UP  2u
+#define STORY_ROOM04_LIGHT_BRAZIER   3u
+#define STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM 4u
 
 #define STORY_ROOM05_LEAVE_CORRIDOR  1u
 #define STORY_ROOM05_LOOK_WINDOW     2u

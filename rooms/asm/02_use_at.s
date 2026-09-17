@@ -14,22 +14,28 @@
 ;   - (14,1), Sir Caldus's own tile: if the player carries Lamp Oil (object
 ;     type 51), consume one and run STORY_ROOM02_CALDUS_FREE; otherwise run
 ;     the ordinary STORY_ROOM02_TALK_CALDUS greeting/repeat entry.
-;   - (12,1), the hearth: if the player carries a Long Taper (object type
-;     52), light it (STORY_ROOM02_LIGHT_TAPER, which itself checks the
-;     QUEST_FLAGS taper-lit bit for a repeat visit); otherwise
-;     STORY_ROOM02_LIGHT_TAPER_NO_ITEM.
+;   - (12,1), the hearth: if the player carries an unlit Long Taper (object
+;     type 52), consume it, add a Lit Taper (type 53, a minimal light
+;     source - see assets/objects.cobj) and run STORY_ROOM02_LIGHT_TAPER;
+;     else if they already carry a Lit Taper, STORY_ROOM02_LIGHT_TAPER_
+;     ALREADY; otherwise STORY_ROOM02_LIGHT_TAPER_NO_ITEM. The taper's own
+;     inventory type is the persistent "is it lit" state - no separate
+;     flag needed. The Lit Taper is also what rooms/asm/04_use_at.s checks
+;     for when igniting the basement's braziers.
 ; Any other tile falls through to the ordinary default.
 .setcpu "6502"
 
 .import _game_room_script_entry
 .import _game_inventory_has_one
 .import _game_inventory_remove_one
+.import _game_inventory_add_one
 .importzp sp
 
 .export _use_at_fallback
 
 LAMP_OIL_TYPE   = 51
 LONG_TAPER_TYPE = 52
+LIT_TAPER_TYPE  = 53
 HEARTH_X = 12
 HEARTH_Y = 1
 CALDUS_X = 14
@@ -88,8 +94,22 @@ _use_at_fallback:
     lda #LONG_TAPER_TYPE
     jsr _game_inventory_has_one
     cmp #0                       ; see the Caldus check's comment above
-    beq @no_taper
+    beq @check_lit_taper
+    lda #LONG_TAPER_TYPE
+    jsr _game_inventory_remove_one
+    lda #LIT_TAPER_TYPE
+    jsr _game_inventory_add_one
     lda #10                     ; STORY_ROOM02_LIGHT_TAPER
+    jsr _game_room_script_entry
+    lda #1                      ; GAME_USE_HANDLED
+    rts
+
+@check_lit_taper:
+    lda #LIT_TAPER_TYPE
+    jsr _game_inventory_has_one
+    cmp #0                       ; see the Caldus check's comment above
+    beq @no_taper
+    lda #13                     ; STORY_ROOM02_LIGHT_TAPER_ALREADY
     jsr _game_room_script_entry
     lda #1                      ; GAME_USE_HANDLED
     rts

@@ -5,12 +5,25 @@
  *
  * The stairs up to the kitchen (room 03, tile 10,1) are at (16,1) here, an
  * already-walkable tile (67) in the alcove. Stepping onto it transitions
- * immediately (rooms/asm/04_enter_tile.s) rather than requiring Use. */
+ * immediately (rooms/asm/04_enter_tile.s) rather than requiring Use.
+ *
+ * The two Braziers (object type 41, unlit) sit at tiles (11,3) and (13,3).
+ * Using one while carrying a Lit Taper (type 53 - see rooms/asm/
+ * 02_use_at.s's hearth handling) swaps it for a Lit Brazier (type 40,
+ * already-authored art/light); the inventory check and object-type swap
+ * happen in game_ignite_brazier() (src/game_support.c), dispatched from
+ * rooms/asm/04_use_at.s since the script DSL has no opcode for either. */
 room 04 {
     entry STORY_ROOM04_ASCEND_STAIRS {
         room_transition 3 20 4
     }
     entry STORY_ROOM04_LOOK_STAIRS_UP {
         text "The stairs lead up to the kitchen."
+    }
+    entry STORY_ROOM04_LIGHT_BRAZIER {
+        text "You touch the taper's flame to the brazier, and it catches."
+    }
+    entry STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM {
+        text "The brazier is cold. You have nothing to light it with."
     }
 }

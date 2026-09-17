@@ -1179,6 +1179,7 @@ void platform_lighting_rebuild(const PlatformRoom* room,
 static void redraw_map_and_objects(const PlatformRoom* room,
                                    const PlatformObject* player) {
     uint16_t i;
+    uint8_t y;
     rendered_room = room;
     rendered_player = player;
     rendered_object_limit = PLATFORM_ROOM_OBJECT_COUNT;
@@ -1187,11 +1188,20 @@ static void redraw_map_and_objects(const PlatformRoom* room,
         --rendered_object_limit;
     }
     platform_map_draw_native(room);
-    for (i = 0; i < rendered_object_limit; ++i) {
-        if (player == &room->objects[i]) continue;
-        object_draw_base(&room->objects[i]);
+    /* Painter's algorithm: draw ascending by y so an object/actor lower on
+     * screen visually overlaps ones above it, instead of raw slot order.
+     * A fixed pass over the small y range (0-21) rather than an actual
+     * sort - object counts here are always tiny, so this stays cheap -
+     * matches compose_cell()'s own highest-y-wins rule in
+     * src/dirty_redraw.s for the dirty-cell repaint path, so a room looks
+     * the same after a full redraw or after a partial one. */
+    for (y = 0u; y < PLATFORM_MAP_CHAR_HEIGHT; ++y) {
+        for (i = 0; i < rendered_object_limit; ++i) {
+            if (player == &room->objects[i]) continue;
+            if (room->objects[i].y == y) object_draw_base(&room->objects[i]);
+        }
+        if (player->y == y) object_draw_base(player);
     }
-    object_draw_base(player);
 }
 
 void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) {

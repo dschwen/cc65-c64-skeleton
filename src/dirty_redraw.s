@@ -104,6 +104,16 @@ rd_bits:      .res 1
 rd_basex:     .res 1
 rd_bit:       .res 1
 
+; compose_cell()/object_cell_try()/compose_accept()'s depth-order state -
+; see compose_accept()'s own comment. rd_besty tracks the current
+; winner's y across a whole compose_cell() call; the cc_cand_* trio is
+; object_cell_try()'s per-attempt candidate output.
+rd_besty:     .res 1
+cc_hit:       .res 1
+cc_cand_ch:   .res 1
+cc_cand_color: .res 1
+cc_cand_y:    .res 1
+
 mo_objptr     = rd_room       ; 2 bytes
 mo_left       = rd_player
 mo_top        = rd_player+1
@@ -309,11 +319,14 @@ _mark_object_cells:
 @done:
     rts
 
-; Internal: tests the object at rd_objptr against (rd_curx,rd_cury) and,
-; on a hit, overwrites rd_ch/rd_color - a no-op on a miss, matching how
-; the original object_cell() only copied through the caller's *ch/*color
-; when it returned true. No null-object check: only ever called here with
-; rd_objptr pointing into a live room->objects[] slot or at platform_player.
+; Internal: tests the object at rd_objptr against (rd_curx,rd_cury).
+; Returns A=1 and cc_cand_ch/cc_cand_color/cc_cand_y set on a hit
+; (transparency-checked per cell, not just the bounding box), or A=0 on a
+; miss (cc_cand_* left untouched) - compose_cell()/compose_accept() below
+; decide whether to actually use the candidate, based on depth order
+; rather than unconditionally as the original object_cell() did. No null-
+; object check: only ever called here with rd_objptr pointing into a live
+; room->objects[] slot or at platform_player.
 object_cell_try:
     lda rd_objptr
     sta ptr1
@@ -321,10 +334,14 @@ object_cell_try:
     sta ptr1+1
     ldy #0
     lda (ptr1),y            ; object->type
-    beq @miss
+    bne @has_type
+    jmp @miss
+@has_type:
     jsr fetch_type_and_validate
     lda tv_ok
-    beq @miss
+    bne @valid
+    jmp @miss
+@valid:
     lda rd_objptr
     sta ptr1
     lda rd_objptr+1
@@ -335,23 +352,32 @@ object_cell_try:
     sbc tv_hotx
     sta rd_oleft
     ldy #2
-    lda (ptr1),y            ; object->y
+    lda (ptr1),y            ; object->y - also this object's depth key
+    sta cc_cand_y
     sec
     sbc tv_hoty
     sta rd_otop
     lda rd_curx
     sec
     sbc rd_oleft
-    bmi @miss
+    bpl @localx_ok
+    jmp @miss
+@localx_ok:
     cmp tv_width
-    bcs @miss
+    bcc @localx_inrange
+    jmp @miss
+@localx_inrange:
     sta rd_localx
     lda rd_cury
     sec
     sbc rd_otop
-    bmi @miss
+    bpl @localy_ok
+    jmp @miss
+@localy_ok:
     cmp tv_height
-    bcs @miss
+    bcc @localy_inrange
+    jmp @miss
+@localy_inrange:
     sta rd_localy
     ; index = local_y*width + local_x
     lda #0
@@ -374,15 +400,45 @@ object_cell_try:
     sta ptr1+1
     lda (ptr1),y
     beq @miss               ; transparent
-    sta rd_ch
+    sta cc_cand_ch
     tya
     clc
     adc #(OBJECT_TYPE_COLORS - OBJECT_TYPE_CHARS)
     tay
     lda (ptr1),y
     and #$0f
-    sta rd_color
+    sta cc_cand_color
+    lda #1
+    rts
 @miss:
+    lda #0
+    rts
+
+; Internal: given object_cell_try's just-returned hit flag in A, commits
+; its candidate ch/color/y into rd_ch/rd_color/rd_besty if it should win -
+; the first hit always does; after that, only a candidate whose y is at
+; least the current winner's (>=, so a later-considered object wins a tie)
+; does. Matches redraw_map_and_objects()'s ascending-y bucket-sorted full
+; redraw (src/platform.c) so a room looks the same whether it was last
+; drawn there or repainted here.
+compose_accept:
+    cmp #0
+    beq @reject
+    lda cc_hit
+    beq @accept
+    lda cc_cand_y
+    cmp rd_besty
+    bcc @reject
+@accept:
+    lda cc_cand_ch
+    sta rd_ch
+    lda cc_cand_color
+    sta rd_color
+    lda cc_cand_y
+    sta rd_besty
+    lda #1
+    sta cc_hit
+@reject:
     rts
 
 ; Internal: sets rd_ch/rd_color from the room tile under (rd_curx,rd_cury).
@@ -444,10 +500,13 @@ base_cell:
     rts
 
 ; Internal: composes rd_ch/rd_color for (rd_curx,rd_cury) - tile, then
-; every room object (except the player) in slot order, then the player on
-; top - exactly the original compose_cell()'s draw order.
+; every object covering this cell (room objects in slot order, then the
+; player), keeping whichever has the highest y (see compose_accept()
+; above for the exact tie rule) rather than always the last one tried.
 compose_cell:
     jsr base_cell
+    lda #0
+    sta cc_hit
     lda rd_room
     clc
     adc #<ROOM_OBJECTS
@@ -469,6 +528,7 @@ compose_cell:
     beq @obj_next
 @obj_try:
     jsr object_cell_try
+    jsr compose_accept
 @obj_next:
     lda rd_objptr
     clc
@@ -485,6 +545,7 @@ compose_cell:
     lda rd_player+1
     sta rd_objptr+1
     jsr object_cell_try
+    jsr compose_accept
     rts
 
 ; void redraw_dirty(const PlatformRoom* room, const PlatformObject* player)

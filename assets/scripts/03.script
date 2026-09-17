@@ -25,7 +25,7 @@
  * `at X,Y` entry. */
 room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
-        room_transition 2 36 12
+        room_transition 2 4 2
     }
     entry STORY_ROOM03_DESCEND_STAIRS {
         room_transition 4 32 4

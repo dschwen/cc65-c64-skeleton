@@ -108,6 +108,7 @@ void platform_lightning_native(void);
 void platform_light_source_apply_native(void);
 void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
+void platform_color_copy_native(void);
 void platform_text_area_clear_native(void);
 void __fastcall__ platform_text_output_native(const char* text);
 void platform_room_helpers_run_banked(void);
@@ -1002,7 +1003,14 @@ static void object_draw_base(const PlatformObject* object) {
     }
     if (source_x >= end_x || source_y >= end_y) return;
     native_object_type = type;
-    native_object_source = (uint8_t)(source_y * OBJECT_WIDTH(type) + source_x);
+    /* source_y is only nonzero when the object is clipped at the room's
+     * top edge - the overwhelming majority of objects aren't, so skip
+     * cc65's runtime multiply routine (called unconditionally otherwise,
+     * regardless of operand values) for the common case where the result
+     * is trivially source_x. */
+    native_object_source = source_y == 0u
+        ? source_x
+        : (uint8_t)(source_y * OBJECT_WIDTH(type) + source_x);
     native_object_columns = (uint8_t)(end_x - source_x);
     native_object_rows = (uint8_t)(end_y - source_y);
     native_object_row_skip = (uint8_t)(OBJECT_WIDTH(type) - native_object_columns);
@@ -1258,7 +1266,17 @@ void platform_lighting_rebuild(const PlatformRoom* room,
         memset(platform_brightness, PLATFORM_LIGHT_FULL,
                sizeof(platform_brightness));
         wall_cache_room = 0;
-        platform_lighting_apply();
+        /* platform_light_colors' "full light" row is the identity mapping
+         * (this file's table definition) and LOS-disabled forces every
+         * platform_view_tiles entry to 1 (view_rebuild()'s own fast path
+         * above) - together those mean platform_lighting_apply()'s real
+         * per-cell transform would be a no-op here, so skip straight to
+         * copying the staged colors into Color RAM instead. */
+        if (platform_room_los_enabled == 0u) {
+            platform_color_copy_native();
+        } else {
+            platform_lighting_apply();
+        }
         return;
     }
 

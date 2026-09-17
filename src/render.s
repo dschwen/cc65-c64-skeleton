@@ -9,6 +9,7 @@
 .export _platform_light_source_apply_native
 .export _platform_visibility_build_native
 .export _platform_color_clear_native
+.export _platform_color_copy_native
 .export _platform_text_area_clear_native
 
 .import _native_object_type
@@ -625,6 +626,33 @@ _platform_color_clear_native:
     iny
     cpy #112
     bne @color_clear_tail
+    rts
+
+; Straight 40x22 copy from platform_base_colors to Color RAM, no per-cell
+; lookup/branch - used by platform_lighting_rebuild()'s static-full fast
+; path in place of platform_lighting_apply()'s real per-tile brightness/
+; view pass when the current room's light level is static-full and LOS is
+; disabled, since that combination makes the real pass's per-cell
+; transform provably the identity (see platform.c's platform_lighting_
+; rebuild()).
+_platform_color_copy_native:
+    ldy #0
+@color_copy_pages:
+    lda _platform_base_colors,y
+    sta COLOR_RAM,y
+    lda _platform_base_colors+$100,y
+    sta COLOR_RAM+$100,y
+    lda _platform_base_colors+$200,y
+    sta COLOR_RAM+$200,y
+    iny
+    bne @color_copy_pages
+    ldy #0
+@color_copy_tail:
+    lda _platform_base_colors+$300,y
+    sta COLOR_RAM+$300,y
+    iny
+    cpy #112
+    bne @color_copy_tail
     rts
 
 ; Produce a short VIC flash without modifying screen RAM or either offscreen

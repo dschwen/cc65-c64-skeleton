@@ -21,7 +21,13 @@
 ;     ALREADY; otherwise STORY_ROOM02_LIGHT_TAPER_NO_ITEM. The taper's own
 ;     inventory type is the persistent "is it lit" state - no separate
 ;     flag needed. The Lit Taper is also what rooms/asm/04_use_at.s checks
-;     for when igniting the basement's braziers.
+;     for when igniting the basement's braziers. Lighting it also gives
+;     the player's own type (1, "The Hero") a light radius directly via
+;     platform_hero_light_set() - see that function's own comment in
+;     src/platform.c for why this is a direct type-record patch rather
+;     than a per-call check inside light_source_apply() - then calls
+;     platform_lighting_rebuild() immediately so the glow appears without
+;     waiting for a room change.
 ; Any other tile falls through to the ordinary default.
 .setcpu "6502"
 
@@ -29,6 +35,12 @@
 .import _game_inventory_has_one
 .import _game_inventory_remove_one
 .import _game_inventory_add_one
+.import _platform_hero_light_set
+.import _platform_lighting_rebuild
+.import _platform_room
+.import _platform_player
+.import pushax
+.import incsp2
 .importzp sp
 
 .export _use_at_fallback
@@ -36,6 +48,7 @@
 LAMP_OIL_TYPE   = 51
 LONG_TAPER_TYPE = 52
 LIT_TAPER_TYPE  = 53
+HERO_TAPER_LIGHT = 6
 HEARTH_X = 12
 HEARTH_Y = 1
 CALDUS_X = 14
@@ -99,6 +112,15 @@ _use_at_fallback:
     jsr _game_inventory_remove_one
     lda #LIT_TAPER_TYPE
     jsr _game_inventory_add_one
+    lda #HERO_TAPER_LIGHT
+    jsr _platform_hero_light_set
+    lda #<_platform_room
+    ldx #>_platform_room
+    jsr pushax
+    lda _platform_player
+    ldx _platform_player+1
+    jsr _platform_lighting_rebuild
+    jsr incsp2                  ; pop the &platform_room pushed above
     lda #10                     ; STORY_ROOM02_LIGHT_TAPER
     jsr _game_room_script_entry
     lda #1                      ; GAME_USE_HANDLED

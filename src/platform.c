@@ -125,7 +125,7 @@ uint8_t platform_current_room;
 uint8_t platform_player_slot;
 PlatformObject* platform_player;
 #pragma bss-name (push, "OBJECTTYPES")
-static PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
+PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
 #pragma bss-name (pop)
 #pragma bss-name (push, "OBJECTTYPES_B")
 static PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];

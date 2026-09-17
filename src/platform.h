@@ -251,6 +251,14 @@ uint8_t platform_object_types_load(void);
 const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 
 /*
+ * Overwrite object type 1's ("The Hero") own light radius in the resident
+ * table directly (src/hero_light.s - hand-written, see that file's own
+ * comment for why). Does not itself trigger a lighting rebuild; the
+ * caller must call platform_lighting_rebuild() afterward.
+ */
+void platform_hero_light_set(uint8_t light);
+
+/*
  * Fetch the name/flags cold record directly from EasyFlash. This is a real
  * cartridge bank-switch (heavier than platform_object_type_get()) and must
  * only be called from discrete, human-input-paced code paths (Take/Use/Look

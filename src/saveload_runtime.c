@@ -81,6 +81,7 @@ static uint8_t saveload_apply_pending(void) {
     memcpy(game_state.inventory, p + 32u,
            sizeof(game_state.inventory));
     memcpy(game_state.flags, p + 96u, sizeof(game_state.flags));
+    game_player_light_sync();
 
     game_world_delta_count = 0u;
     memcpy(game_world_deltas, p + SAVE_PREFIX_BYTES, delta_bytes);

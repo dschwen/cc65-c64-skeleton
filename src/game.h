@@ -126,6 +126,19 @@ void __fastcall__ game_inventory_add_one(uint8_t type);
  */
 uint8_t __fastcall__ game_ignite_brazier(uint8_t tile_x, uint8_t tile_y);
 
+/*
+ * Re-derive the player's own light radius (platform_hero_light_set(),
+ * src/platform.h) from whether the current inventory holds a Lit Taper
+ * (object type 53). Needed anywhere game_state.inventory can change out
+ * from under the resident Hero type record without the ignite path
+ * itself having run in this session - currently just the save/load
+ * restore (src/saveload_runtime.c). Ordinary room transitions need no
+ * call: object_types_a[1].light is resident RAM that only ever changes
+ * via this function or the ignite path, so it already carries forward
+ * correctly on its own.
+ */
+void game_player_light_sync(void);
+
 /* Saturating health changes; mana spend returns false without changing mana. */
 uint8_t game_health(void);
 uint8_t game_mana(void);

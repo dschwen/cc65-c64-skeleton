@@ -18,11 +18,34 @@
 .setcpu "6502"
 
 .import _object_types_a
+.import _game_inventory_has_one
 
 .export _platform_hero_light_set
+.export _game_player_light_sync
 
 .segment "MIDCODE"
 
 _platform_hero_light_set:
     sta _object_types_a+69
     rts
+
+; void game_player_light_sync(void) - re-derives the Hero's light radius
+; from the current inventory (see rooms/asm/02_use_at.s's own call for why
+; this exists as a direct type-record patch rather than a per-call check
+; inside light_source_apply()). Needed anywhere the resident type table
+; could be stale relative to inventory without the ignite path having run
+; in this session - currently just src/saveload_runtime.c's load restore,
+; called right after it overwrites game_state.inventory from the save
+; record; placed in DISKCODE (the save/load disk driver's own segment,
+; ~49 spare bytes there versus zero everywhere else this session's other
+; additions have needed to fit) since it's thematically a save/load
+; helper anyway and every general-purpose code region is full.
+; game_inventory_has_one() is a real C boolean (0 or 1 only, never 0xFF)
+; so ANDing with 6 - rather than branching - maps {0,1} to {0,6} exactly,
+; matching platform_hero_light_set()'s own radius constant.
+.segment "DISKCODE"
+_game_player_light_sync:
+    lda #53                     ; LIT_TAPER_TYPE
+    jsr _game_inventory_has_one
+    and #6
+    jmp _platform_hero_light_set

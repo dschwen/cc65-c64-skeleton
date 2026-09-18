@@ -187,6 +187,62 @@ numbers change and every build-time layout check must be re-established.
 
 ---
 
+## Phase 0 results (spike completed 2026-09-18)
+
+Ran the recommended measurement spike as a throwaway scratch build (not committed):
+standalone, semantically-equivalent C reimplementations of two of `src/render.s`'s
+routines — `_platform_map_draw_native` (tile → screen/color RAM blit, the
+20×11-tile draw loop) and `_platform_lighting_apply_native` (per-tile
+view/brightness → Color RAM pass) — same data-layout sizes, same algorithm,
+compiled three ways and measured by linking each into a minimal program and
+reading the exact address range of the resulting function from the linker's
+own map/label output (not estimated).
+
+| Routine | Hand ca65 asm (current) | cc65 `-Oirs` C | oscar64 `-O2` C |
+|---|---|---|---|
+| Tile/color draw loop | 380 B | 482 B | **197 B** |
+| Lighting apply pass | 269 B | 507 B | **169 B** |
+
+Both oscar64 builds were checked against their `.asm` listing to confirm they
+are genuine, correct double loops with real branches and table lookups (not
+inlining/dead-code elimination artifacts) — e.g. the lighting routine still
+branches per-tile on `view_tiles[]` and does four `light_colors[]` lookups per
+lit tile, matching the hand asm's logic exactly. All `-O1`/`-O2`/`-O3`/`-Os`
+levels produced the *identical* 197 B / 169 B output for these two routines —
+no further tuning available or needed at this code shape.
+
+**oscar64 plain C beats this project's hand-optimized cc65-ABI assembly by
+~1.9–2× on code size, using ordinary portable C with no `__fastcall__`,
+pragmas, or inline asm.** This is a materially stronger and clearer result
+than "Phase 0 exists to measure" assumed either direction might show — it
+directly supports deleting rather than translating the ~2,000 "hard" lines of
+asm identified in the inventory above (`dirty_redraw.s`, `brazier.s`,
+`world_slots.s`, the `rooms/asm/*_look_at.s`/`*_use_at.s` family), since their
+entire reason to exist was beating cc65's C codegen.
+
+**Not obtained:** a live cycle-count comparison. The attempt to bracket one
+routine call with VICE remote-monitor breakpoints and read the `STOPWATCH`
+cycle counter (`r` command; confirmed the field exists and works for a single
+snapshot) repeatedly hung across reconnects/resumes in this sandbox — likely a
+text-monitor/`nc` framing issue rather than anything oscar64- or
+project-specific, since the same friction would hit any cc65-vs-oscar64
+comparison. Given the code-size gap is this large and this consistent (no
+early-out branches removed, same instruction-mix character — indexed loads
+into computed zero-page pointers vs. the hand asm's self-modified operands —
+in both), cycle counts are very likely to favor oscar64 too, but that's an
+inference, not a measurement. If a precise number is needed before committing
+further, redo this with VICE's **binary monitor** protocol (`-binarymonitor`)
+instead of the text monitor — `headless-c64-debugging-on-ubuntu.md` already
+flags it as "the cleaner long-term interface," and it avoids the line-framing
+assumptions that caused the hangs here.
+
+**Revised recommendation:** proceed to Phase 1 (skeleton EasyFlash cartridge
+boot under oscar64) when you're ready. The size data closes out the question
+Phase 0 was scoped to answer; a cycle-accurate pass is worth doing but need not
+block starting Phase 1, since Phase 1 doesn't depend on it.
+
+---
+
 ## Cost
 
 Rough shape of the work, assuming the game must end up at feature parity:

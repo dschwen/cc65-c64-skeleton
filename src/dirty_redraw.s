@@ -42,6 +42,7 @@
 .import _platform_view_tiles
 .importzp ptr1
 .importzp sp
+.import incsp2
 
 .export _dirty_clear
 .export _mark_object_cells
@@ -746,4 +747,15 @@ _redraw_dirty:
     inc rd_y
     jmp @y_loop
 @all_done:
-    rts
+    ; room was pushed onto the software stack by the caller (it's not the
+    ; last parameter, so cc65 never puts it in A/X) - cc65's calling
+    ; convention makes the CALLEE responsible for deallocating any
+    ; stack-passed parameter, so this must pop those 2 bytes itself rather
+    ; than falling through to a plain rts. Skipping this leaked 2 bytes of
+    ; sp on every call, corrupting the caller's own locals (read via
+    ; (sp),y right after this returns) starting with its very next call -
+    ; this was the cause of a real bug (rain sprites disabled after one
+    ; step: platform_object_move()'s post-redraw code misread a stale
+    ; offset into an unrelated flag/pointer and ran code that zeroed
+    ; platform_rain_active).
+    jmp incsp2

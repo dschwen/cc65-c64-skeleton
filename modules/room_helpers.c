@@ -1,22 +1,26 @@
 #include <stdint.h>
 
 #include "platform.h"
+#include "banks.h"
 
-/* Independently linked, in-place room-helpers service ("RH"): the bodies of
- * platform_room_object_remove() and platform_room_neighbor(), moved out of
- * the always-resident engine. Both are confirmed safe to run from here -
- * every call site (game_support.c's Take handler, platform_player_step(),
- * platform_look_exit()) runs from resident code, never from a room's own
- * banked-in code. `platform_room_object_add()` remains resident because room
- * entry uses it while destination room code is staged at `$B000`.
+/* In-place room-helpers service ("RH"): the bodies of
+ * platform_room_object_remove() and platform_room_neighbor(), moved out
+ * of the always-resident engine into their own bank (BANK_ROOM_HELPERS).
+ * `platform_room_object_add()` remains resident because room entry uses
+ * it while destination room code is being staged.
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
  * arguments into room_helpers_* globals and set room_helpers_op before
- * entering this service (there is one parameterless native entry point,
- * `room_helpers_banked_run()`; see `src/banked_api.s`). The result goes back
- * out through room_helpers_result (and room_helpers_room_id for the
- * neighbor lookup).
+ * calling far_call_bank(). The result goes back out through
+ * room_helpers_result (and room_helpers_room_id for the neighbor lookup).
  */
+
+#pragma section( room_helpers_code, 0 )
+#pragma section( room_helpers_data, 0 )
+#pragma region( room_helpers_bank, 0x8000, 0xc000, , BANK_ROOM_HELPERS,
+                 { room_helpers_data, room_helpers_code } )
+#pragma code(room_helpers_code)
+#pragma data(room_helpers_data)
 
 #define ROOM_HELPERS_OP_NEIGHBOR 0u
 #define ROOM_HELPERS_OP_REMOVE   1u
@@ -63,10 +67,9 @@ static uint8_t room_helpers_neighbor(void) {
     return PLATFORM_OK;
 }
 
-/* Only mutate the object array and resident rendered-object limit. Light,
- * dirty-cell, redraw, and lighting work stay in the resident wrapper so this
- * immutable service has one small, explicit side-effect boundary and never
- * depends on `$B000` renderer workspace. */
+/* Only mutates the object array and resident rendered-object limit.
+ * Light, dirty-cell, redraw, and lighting work stay in the resident
+ * wrapper. */
 static uint8_t room_helpers_object_remove(void) {
     PlatformRoom* room;
     PlatformObject* object;
@@ -88,10 +91,13 @@ static uint8_t room_helpers_object_remove(void) {
     return PLATFORM_OK;
 }
 
-void room_helpers_banked_run(void) {
+__noinline void room_helpers_entry(void) {
     if (room_helpers_op == ROOM_HELPERS_OP_REMOVE) {
         room_helpers_result = room_helpers_object_remove();
     } else {
         room_helpers_result = room_helpers_neighbor();
     }
 }
+
+#pragma code(code)
+#pragma data(data)

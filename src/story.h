@@ -86,6 +86,6 @@
  * the stable GameState.inventory slot, so both type and quantity are
  * available. Return GAME_USE_HANDLED after producing the complete result.
  */
-uint8_t __fastcall__ story_use_inventory(uint8_t inventory_slot);
+uint8_t story_use_inventory(uint8_t inventory_slot);
 
 #endif

@@ -3,26 +3,30 @@
 
 #include "look_helpers_abi.h"
 #include "platform.h"
+#include "banks.h"
 
-/* Independently linked, in-place look-helpers service ("LH"): the bodies of
- * platform_look_tile(), platform_look_tile_check(), platform_object_take_
- * prompt(), and platform_object_taken_message(), moved out of the always-
- * resident engine (src/platform.c), along with their private look_append
- * and look_write text-buffer helpers and supporting statics - none of
- * these are used anywhere else. All four are confirmed called only on a
- * discrete confirm action (Look/Take's Enter key in src/main.c, the Take
- * handler in src/game_support.c), never per-keypress during cursor
- * movement and never from a room's own banked-in code.
- *
- * Not here: platform_look_exit() (src/platform.c), whose two fixed messages
- * do not use the buffer machinery and which calls RH sequentially.
+/*
+ * In-place look-helpers service ("LH"): the bodies of platform_look_tile(),
+ * platform_look_tile_check(), platform_object_take_prompt(), and
+ * platform_object_taken_message(), moved out of the always-resident engine
+ * (src/platform.c) into their own EasyFlash bank (BANK_LOOK_HELPERS),
+ * reached via far_call_bank() - see memmap.h. All four are confirmed
+ * called only on a discrete confirm action, never per-keypress during
+ * cursor movement.
  *
  * Entry/parameters: the resident wrappers in src/platform.c stage their
  * arguments into look_helpers_* globals and set look_helpers_op before the
- * far call. There is one parameterless entry, look_helpers_banked_run(); the
- * result goes back through look_helpers_result. Private mutable state borrows
- * the low-RAM room staging buffer through look_helpers_workspace.
+ * far call. There is one parameterless entry, look_helpers_entry(); the
+ * result goes back through look_helpers_result. Private mutable state
+ * borrows the low-RAM room staging buffer through look_helpers_workspace.
  */
+
+#pragma section( look_helpers_code, 0 )
+#pragma section( look_helpers_data, 0 )
+#pragma region( look_helpers_bank, 0x8000, 0xc000, , BANK_LOOK_HELPERS,
+                 { look_helpers_data, look_helpers_code } )
+#pragma code(look_helpers_code)
+#pragma data(look_helpers_data)
 
 #define LOOK_HELPERS_OP_TILE         0u
 #define LOOK_HELPERS_OP_TILE_CHECK   1u
@@ -47,7 +51,7 @@ extern uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 extern uint8_t platform_object_intersects_tile(const PlatformObject* object,
                                                uint8_t tile_x, uint8_t tile_y);
 extern const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id);
-extern void __fastcall__ platform_text_output_native(const char* text);
+extern void platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
 
@@ -140,9 +144,11 @@ static uint8_t look_helpers_tile_check(void) {
         return PLATFORM_ERR_BLOCKED;
     }
 
-    /* Not a read of platform_brightness[offset] here: ROML execution exposes
-     * BASIC instead of the underlying `$B000` WORKBSS. The resident wrapper
-     * already staged the value in look_helpers_light. */
+    /* Uses the resident wrapper's pre-staged look_helpers_light rather
+     * than reading platform_brightness[] directly - both work under this
+     * port (resident data stays visible regardless of bank state), but
+     * keeping the same staged-value convention avoids adding a new,
+     * untested code path here. */
     light = look_helpers_light & 0x03u;
 
     distance_x = (viewer->x >> 1) > tile_x
@@ -230,7 +236,7 @@ static uint8_t look_helpers_taken_msg(void) {
     return PLATFORM_OK;
 }
 
-void look_helpers_banked_run(void) {
+__noinline void look_helpers_entry(void) {
     switch (look_helpers_op) {
         case LOOK_HELPERS_OP_TILE_CHECK:
             look_helpers_result = look_helpers_tile_check();
@@ -246,3 +252,6 @@ void look_helpers_banked_run(void) {
             break;
     }
 }
+
+#pragma code(code)
+#pragma data(data)

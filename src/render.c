@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "platform.h"
+#include "platform_native.h"
 
 /*
  * Native (oscar64 C) replacement for src/render.s. Phase 0 of the oscar64

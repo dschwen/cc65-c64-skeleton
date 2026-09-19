@@ -1,86 +1,50 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "easyflash_layout.h"
+#include "memmap.h"
+#include "banks.h"
 #include "platform.h"
+#include "platform_native.h"
 #include "game.h"
 #include "look_helpers_abi.h"
 
-#pragma code-name ("HIGHCODE")
-#pragma rodata-name ("HIGHRODATA")
-
-#define P_SCREEN_RAM       ((uint8_t*)0xf800)
-#define P_COLOR_RAM        ((volatile uint8_t*)0xd800)
-#define P_SPRITE_POINTERS  ((uint8_t*)0xfbf8)
-#define P_SPRITE_DATA      ((uint8_t*)0xfc00)
-#define P_OBJECT_TYPE_STAGE ((uint8_t*)0xb000)
-#define P_VIC(reg)         (((volatile uint8_t*)0xd000)[(reg)])
-#define INITIAL_OBJECT_TYPE_COUNT 2u
-#define EF_FIRST_ROOM_BANK 3u
-#define EF_ROOMS_PER_BANK  6u
-#define EF_TYPE_BANK_0     46u
-#define EF_TYPE_BANK_1     47u
-#define EF_PORTRAIT_FIRST_BANK  49u
-#define EF_PORTRAITS_PER_BANK   32u
-#define EF_RESOURCE_DIRECTORY_BANK   57u
-#define RESOURCE_DIRECTORY_ENTRY_BYTES 8u
-/* One kind's directory (256 entries), in PLATFORM_RESOURCE_KIND_* order - keep
- * in sync with tools/pack_easyflash.py's RESOURCE_DIRECTORY_BYTES/
- * RESOURCE_KIND_* ordering. Four of these exactly fill
- * EF_RESOURCE_DIRECTORY_BANK's 8 KiB ROML half, so kinds 0-3 live there and
- * kinds 4+ continue at the head of its ROMH half. */
-#define RESOURCE_DIRECTORY_BYTES (256u * RESOURCE_DIRECTORY_ENTRY_BYTES)
-#define RESOURCE_DIRECTORIES_PER_HALF 4u
-
 /*
- * Hot object-type records (see PlatformObjectType) are packed at a 35-byte
- * stride across three resident zones: zone A (types 0-105) always visible at
- * $C180, zone B (106-222) beneath I/O at $D000, and zone C (223-255) beneath
- * KERNAL at $E000. Cold records (PlatformObjectTypeInfo, 15 bytes) are never
- * resident; they stay in EasyFlash bank 46 ROMH.
+ * Native (oscar64 C) port of src/platform.c. Structural translation of the
+ * original: game logic, object/lighting math and the public API are
+ * unchanged. What changed is how banked/resident data is reached - see
+ * memmap.h's header comment for the memory model this assumes.
+ *
+ * Object-type storage keeps the original's three-zone split (hot data
+ * resident, cold data banked) since it's a sound design independent of
+ * the compiler, but the zones no longer need mode-switching to read: Zone
+ * B now lives at $C000-CFFF (never shadowed by I/O or KERNAL) and Zone C
+ * at $E000-E7FF (visible in this program's steady memory-mapping state -
+ * see src/banking.c), so platform_object_type_get() is a plain array
+ * index, not a staged copy.
  */
-#define OBJECT_TYPE_RECORD_BYTES     35u
-#define OBJECT_TYPE_ZONE_A_COUNT     106u
-#define OBJECT_TYPE_ZONE_B_COUNT     117u
-#define OBJECT_TYPE_ZONE_AB_COUNT    (OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT)
-#define OBJECT_TYPE_ZONE_C_COUNT     (PLATFORM_OBJECT_TYPE_COUNT - OBJECT_TYPE_ZONE_AB_COUNT)
-#define OBJECT_TYPE_COLD_BYTES       15u
-#define OBJECT_TYPE_STAGE_BYTES      0x0800u
-/* Offset within EF_TYPE_BANK_0's ROMH half, which holds nothing else. */
-#define OBJECT_TYPE_COLD_BASE        0u
 
-#define PORTRAIT_FIRST_SPRITE   1u
-#define PORTRAIT_BG_SPRITE      5u
-#define PORTRAIT_SPRITE_WIDTH   24u
-#define PORTRAIT_SPRITE_HEIGHT  21u
-#define PORTRAIT_MARGIN         16u
-#define PORTRAIT_SLIDE_STEP     4u
-#define PORTRAIT_SCREEN_X       23u
-#define PORTRAIT_SCREEN_Y       49u
-#define PORTRAIT_SPRITE_DATA \
-    ((uint8_t*)(0xfc00u + PORTRAIT_FIRST_SPRITE * 64u))
-#define PORTRAIT_BG_DATA \
-    ((uint8_t*)(0xfc00u + PORTRAIT_BG_SPRITE * 64u))
+#define P_OBJECT_TYPE_STAGE ((uint8_t*)0xb000u)
+#define INITIAL_OBJECT_TYPE_COUNT 2u
+
 #define WALL_CACHE_QUADRANT_NW 0x01u
 #define WALL_CACHE_QUADRANT_NE 0x02u
 #define WALL_CACHE_QUADRANT_SW 0x04u
 #define WALL_CACHE_QUADRANT_SE 0x08u
 
 #define OBJECT_WIDTH(t)  ((uint8_t)((t)->dimensions >> 4))
-#define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0f))
+#define OBJECT_HEIGHT(t) ((uint8_t)((t)->dimensions & 0x0fu))
 #define HOTSPOT_X(t)     ((uint8_t)((t)->hotspot >> 4))
-#define HOTSPOT_Y(t)     ((uint8_t)((t)->hotspot & 0x0f))
+#define HOTSPOT_Y(t)     ((uint8_t)((t)->hotspot & 0x0fu))
 
-/* Not const any more: these are reserved destinations that platform_init()
- * fetches PLATFORM_RESOURCE_KIND_ASSET resources into at boot, not linked-in
- * read-only data (see src/assets.s). Everything past platform_init() should
- * still treat them as read-only. */
+/* Reserved destinations platform_init() fetches
+ * PLATFORM_RESOURCE_KIND_ASSET resources into - see src/assets.c. */
 extern uint8_t charset_tile[];
 extern uint8_t charset_text[];
 extern uint8_t tile_data[];
 extern uint8_t tile_properties[];
 extern const uint8_t initial_room_data[];
 extern const uint8_t initial_object_type_data[];
+
 void raster_irq_install(void);
 void raster_irq_vectors_restore(void);
 void raster_irq_suspend(void);
@@ -89,17 +53,15 @@ extern volatile uint8_t platform_raster_irq_active;
 void platform_memory_game(void);
 void platform_memory_kernal(void);
 void platform_memory_all_ram(void);
-void platform_easyflash_copy_roml(void);
-void platform_easyflash_copy_romh(void);
-extern uint8_t platform_ef_copy_bank;
-extern uint16_t platform_ef_copy_offset;
-extern uint16_t platform_ef_copy_destination;
-extern uint16_t platform_ef_copy_size;
+void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
+void platform_easyflash_copy_romh(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
 uint8_t platform_irq_save_disable(void);
-void __fastcall__ platform_irq_restore(uint8_t status);
+void platform_irq_restore(uint8_t status);
 void platform_object_types_clear(void);
 uint8_t platform_boot_is_easyflash(void);
-void __fastcall__ platform_map_draw_native(const PlatformRoom* room);
+
+/* render.c */
+void platform_map_draw_native(const PlatformRoom* room);
 void platform_object_draw_native(void);
 void platform_lighting_apply_native(void);
 void platform_lightning_native(void);
@@ -108,54 +70,71 @@ void platform_visibility_build_native(void);
 void platform_color_clear_native(void);
 void platform_color_copy_native(void);
 void platform_text_area_clear_native(void);
-void __fastcall__ platform_text_output_native(const char* text);
-void platform_room_helpers_run_banked(void);
-void platform_look_helpers_run_banked(void);
-/* src/dirty_redraw.s - see that file's header comment and the comment
- * near platform_room_object_limit() below for why these three moved out
- * of C. redraw_dirty() is declared further down, right before its first
- * use, matching where its forward declaration used to sit. */
+void platform_text_output_native(const char* text);
+
+/* dirty_redraw.c */
 void dirty_clear(void);
 void mark_object_cells(const PlatformObject* object);
+void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
+
+/* Per-room bank-switched services (modules/*.c) - see src/banks.h. Each
+ * takes its arguments via resident globals and (where it returns
+ * anything) writes into a resident scratch buffer, the same convention
+ * FAR_CALL's cc65 A/X passthrough used to give for free - a banked
+ * function's return value must never be a pointer into its own bank-local
+ * data, which becomes invalid the instant the bank switches back. */
+void room_helpers_entry(void);
+void look_helpers_entry(void);
+void script_entry(void);
+void typeinfo_entry(void);
+extern uint8_t typeinfo_query_type_id;
+
+/* Room code dispatch (src/room_dispatch.c) - retargeted from the old
+ * $9900 copied-overlay scheme to per-room banks, one function table entry
+ * per room. */
+void game_room_enter_tile_native(void);
+uint8_t game_room_look_at_native(uint8_t tile_x, uint8_t tile_y);
+void game_room_enter_room_native(void);
+uint8_t game_room_use_at_native(uint8_t tile_x, uint8_t tile_y);
+
+/* Resource fetch (src/resources.c) - room/script/portrait/environment/
+ * asset data, all bank-switched reads. */
+uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
+                                  uint8_t* destination, uint16_t capacity);
+uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
+                                       uint16_t start, uint8_t* destination,
+                                       uint16_t capacity);
+uint16_t platform_resource_last_size(void);
+uint8_t platform_room_data_fetch(uint8_t room_id, void* destination);
+
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
 
-#pragma bss-name (push, "ROOMBSS")
 PlatformRoom platform_room;
-#pragma bss-name (pop)
 uint8_t platform_current_room;
 uint8_t platform_player_slot;
 PlatformObject* platform_player;
-#pragma bss-name (push, "OBJECTTYPES")
+
 PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
-#pragma bss-name (pop)
-#pragma bss-name (push, "OBJECTTYPES_B")
-static PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
-#pragma bss-name (pop)
-#pragma bss-name (push, "OBJECTTYPES_C")
-static PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
-#pragma bss-name (pop)
-PlatformObjectType platform_object_type_scratch;
-/* LOWBSS, and public: the banked module in modules/typeinfo.c fills this, and
- * it must stay readable while that bank is mapped over $8000-$BFFF. */
-#pragma bss-name (push, "LOWBSS")
+#pragma bss(hotc000)
+PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
+#pragma bss(bss)
+#pragma bss(hote000)
+PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
+#pragma bss(bss)
+
+/* Filled in by the banked TypeInfo service (bank 1) - see
+ * platform_object_type_info_get() below. */
 PlatformObjectTypeInfo platform_object_type_info_scratch;
-#pragma bss-name (pop)
-static uint8_t resource_directory_entry[RESOURCE_DIRECTORY_ENTRY_BYTES];
+
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
-#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_object_columns;
-#pragma bss-name (pop)
 uint8_t native_object_rows;
-#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_object_row_skip;
-#pragma bss-name (pop)
 uint16_t native_object_screen_offset;
-#pragma bss-name (push, "ZEROPAGE")
 uint8_t native_light_source_x;
 uint8_t native_light_source_y;
-#pragma bss-name (pop)
 uint8_t native_light_radius;
 uint8_t native_light_min_x;
 uint8_t native_light_min_y;
@@ -169,17 +148,15 @@ uint8_t native_visibility_origin_x;
 uint8_t native_visibility_origin_y;
 uint8_t native_visibility_origin_offset;
 uint8_t native_visibility_max_ring;
-#pragma bss-name (push, "WORKBSS")
+
 uint8_t platform_base_colors[PLATFORM_MAP_CHAR_WIDTH * PLATFORM_MAP_CHAR_HEIGHT];
 uint8_t platform_brightness[PLATFORM_MAP_TILE_COUNT];
-#pragma bss-name (pop)
 uint8_t platform_global_light;
 uint8_t platform_room_light_level;
 uint8_t platform_room_los_enabled;
 uint8_t platform_light_visibility[PLATFORM_MAP_TILE_COUNT];
 uint8_t platform_view_tiles[PLATFORM_MAP_TILE_COUNT];
 
-#pragma rodata-name (push, "RODATA")
 const uint8_t platform_light_colors[PLATFORM_LIGHT_LEVEL_COUNT * 16u] = {
     /* no light */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -210,57 +187,36 @@ const uint8_t platform_light_distance[16u * 16u] = {
     15, 16, 16, 16, 16, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
 };
 static const uint8_t look_cursor_colors[8] = {0, 11, 12, 15, 1, 15, 12, 11};
-#pragma rodata-name (pop)
 
-/* Non-static: read/written by the in-place RH service through its generated
- * resolver; these addresses remain visible under the ROML mapping. */
 const PlatformRoom* rendered_room;
 const PlatformObject* rendered_player;
 uint16_t rendered_object_limit;
 static uint8_t look_cursor_visible;
-#pragma bss-name (push, "ROOMSTAGE")
 static PlatformRoom room_stage;
-#pragma bss-name (pop)
 
-/* The current room's own script resource (resource ID == room ID; see
- * game_room_script_entry() in src/script_runtime.c and modules/script.c's
- * KIND_ROOM handling), fetched into room_stage's own memory - not a
- * separate buffer. room_stage is only "the pending room" for the brief span
- * between room_stage_load() and room_commit()'s memcpy out of it; every
- * actual use of room_stage ends before that memcpy (checked: both callers
- * of room_commit() never touch room_stage again afterward). So the instant
- * the memcpy completes, its memory is free until the *next* transition's
- * room_stage_load(), and room_commit() below claims it immediately for this
- * instead. LH also borrows this memory for its counts and text buffer between
- * transitions; the workspace is 595 bytes versus the
- * 1,001-byte room buffer. Sized via sizeof(room_stage), not a hardcoded
- * constant, so it tracks PlatformRoom automatically if that struct changes. */
 #define PLATFORM_ROOM_SCRATCH_BUFFER ((uint8_t*)&room_stage)
 #define PLATFORM_ROOM_SCRATCH_MAX_BYTES ((uint16_t)sizeof(room_stage))
-#pragma bss-name (push, "WORKBSS")
+
 static uint8_t wall_light_cache[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
-#pragma bss-name (pop)
 static PlatformRoomStoreHook room_store_hook;
 static PlatformRoomRestoreHook room_restore_hook;
 static uint8_t player_spawn_room;
 static uint8_t player_spawn_slot;
 static uint8_t player_spawn_type;
 
-#pragma code-name (push, "CODE")
-static void write_screen_cell(uint8_t x, uint8_t y,
-                              uint8_t ch, uint8_t color) {
+static void write_screen_cell(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
     uint16_t offset;
     uint16_t tile_offset;
 
     if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= 25u) return;
     offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-    P_SCREEN_RAM[offset] = ch;
-    color &= 0x0f;
+    SCREEN_RAM[offset] = ch;
+    color &= 0x0fu;
     if (y < PLATFORM_MAP_CHAR_HEIGHT) {
         platform_base_colors[offset] = color;
         tile_offset = (uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1);
@@ -269,9 +225,8 @@ static void write_screen_cell(uint8_t x, uint8_t y,
         if (platform_view_tiles[tile_offset] == 0u) color = 0u;
     }
 
-    P_COLOR_RAM[offset] = color;
+    COLOR_RAM[offset] = color;
 }
-#pragma code-name (pop)
 
 static uint8_t object_type_is_valid(const PlatformObjectType* type) {
     uint8_t width;
@@ -284,196 +239,37 @@ static uint8_t object_type_is_valid(const PlatformObjectType* type) {
            HOTSPOT_X(type) < width && HOTSPOT_Y(type) < height;
 }
 
-#pragma code-name (push, "HIGHCODE")
 const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
-    uint8_t irq_status;
-    uint8_t cpu_port;
-
     if (type_id < OBJECT_TYPE_ZONE_A_COUNT) {
         return &object_types_a[type_id];
     }
-    irq_status = platform_irq_save_disable();
-    cpu_port = *(volatile uint8_t*)0x0001u;
-    platform_memory_all_ram();
     if (type_id < OBJECT_TYPE_ZONE_AB_COUNT) {
-        memcpy(&platform_object_type_scratch,
-               &object_types_b[type_id - OBJECT_TYPE_ZONE_A_COUNT],
-               sizeof(platform_object_type_scratch));
-    } else {
-        memcpy(&platform_object_type_scratch,
-               &object_types_c[type_id - OBJECT_TYPE_ZONE_AB_COUNT],
-               sizeof(platform_object_type_scratch));
+        return &object_types_b[type_id - OBJECT_TYPE_ZONE_A_COUNT];
     }
-    /* Restore the caller's exact map, not an assumed gameplay `$35`. This
-     * accessor is called transitively by collision/render helpers and may be
-     * reached from an in-place ROML service whose code requires `$37`.
-     * Hard-coding `$35` here removed that caller before its next instruction. */
-    *(volatile uint8_t*)0x0001u = cpu_port;
-    platform_irq_restore(irq_status);
-    return &platform_object_type_scratch;
+    return &object_types_c[type_id - OBJECT_TYPE_ZONE_AB_COUNT];
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "HIGHCODE")
-/* platform_object_type_info_get() now lives in an EasyFlash bank and runs in
- * place - see modules/typeinfo.c for the implementation and src/banked_api.s
- * for the resident FAR_CALL stub that forwards to it. Cold records themselves
- * live alone in EF_TYPE_BANK_0's ROMH half; they used to trail the Zone C hot
- * table in EF_TYPE_BANK_1's ROML half, where later banked modules overwrote
- * them. */
-#pragma code-name (pop)
+/* platform_object_type_info_get() runs the banked TypeInfo service (bank
+ * 1) in place, fetching the cold name/flags record directly from
+ * EasyFlash - a real cartridge bank switch (heavier than
+ * platform_object_type_get()) that must only be called from discrete,
+ * human-input-paced code paths, never per frame or per rendered cell. */
+const PlatformObjectTypeInfo* platform_object_type_info_get(uint8_t type_id) {
+    typeinfo_query_type_id = type_id;
+    far_call_bank(BANK_TYPEINFO, typeinfo_entry);
+    return &platform_object_type_info_scratch;
+}
 
 /*
- * Generic sparse resource directories: three read-only, variable-size-blob
- * directories (one per PLATFORM_RESOURCE_KIND_*, see platform.h), each 256
- * entries, back to back at the head of bank 57's ROML half, across EasyFlash
- * banks 57-63. tools/pack_easyflash.py places entries first-fit into
- * ROML/ROMH halves in bank order (all three kinds sharing one packing pass)
- * and never splits a resource across a bank switch (see
- * EASYFLASH_CARTRIDGE.md). Entry layout: bank, mode (0 = ROML half, 1 =
- * ROMH half), offset within that half (little-endian), length
- * (little-endian), 16-bit sum-of-bytes checksum (little-endian).
- */
-/* Looks up kind/resource_id's directory entry into bank/mode/offset/size.
- * Returns PLATFORM_OK, or PLATFORM_ERR_NOT_FOUND for an absent/corrupt
- * entry. Shared by platform_resource_fetch() and
- * platform_resource_fetch_range(). */
-#pragma code-name (push, "HIGHCODE")
-static uint8_t resource_directory_lookup(uint8_t kind, uint8_t resource_id,
-                                         uint8_t* bank, uint8_t* mode,
-                                         uint16_t* offset, uint16_t* size) {
-    platform_ef_copy_bank = EF_RESOURCE_DIRECTORY_BANK;
-    platform_ef_copy_destination = (uint16_t)resource_directory_entry;
-    platform_ef_copy_size = RESOURCE_DIRECTORY_ENTRY_BYTES;
-    /* Kinds 0-3 exactly fill the ROML half (4 x 256 x 8 = 8 KiB), so kinds 4+
-     * continue at the head of the ROMH half - see PLATFORM_RESOURCE_KIND_ASSET
-     * in platform.h and pack_resources() in tools/pack_easyflash.py. */
-    if (kind >= RESOURCE_DIRECTORIES_PER_HALF) {
-        platform_ef_copy_offset =
-            (uint16_t)(kind - RESOURCE_DIRECTORIES_PER_HALF) *
-                RESOURCE_DIRECTORY_BYTES +
-            (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
-        platform_easyflash_copy_romh();
-    } else {
-        platform_ef_copy_offset = (uint16_t)kind * RESOURCE_DIRECTORY_BYTES +
-            (uint16_t)resource_id * RESOURCE_DIRECTORY_ENTRY_BYTES;
-        platform_easyflash_copy_roml();
-    }
-    if (resource_directory_entry[0] == 0xffu) return PLATFORM_ERR_NOT_FOUND;
-
-    *bank = resource_directory_entry[0];
-    *mode = resource_directory_entry[1];
-    *offset = (uint16_t)resource_directory_entry[2] |
-              ((uint16_t)resource_directory_entry[3] << 8);
-    *size = (uint16_t)resource_directory_entry[4] |
-            ((uint16_t)resource_directory_entry[5] << 8);
-    if (*mode > 1u || *size == 0u || *offset + *size > PLATFORM_RESOURCE_MAX_BYTES) {
-        return PLATFORM_ERR_NOT_FOUND;
-    }
-    return PLATFORM_OK;
-}
-
-uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
-                                  uint8_t* destination, uint16_t capacity) {
-    uint8_t bank;
-    uint8_t mode;
-    uint16_t offset;
-    uint16_t size;
-    uint16_t checksum;
-    uint16_t sum;
-    uint16_t i;
-
-    if (resource_directory_lookup(kind, resource_id, &bank, &mode, &offset,
-                                  &size) != PLATFORM_OK) {
-        return 0u;
-    }
-    checksum = (uint16_t)resource_directory_entry[6] |
-               ((uint16_t)resource_directory_entry[7] << 8);
-    if (size > capacity) return 0u;
-
-    platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = offset;
-    platform_ef_copy_destination = (uint16_t)destination;
-    platform_ef_copy_size = size;
-    if (mode == 0u) platform_easyflash_copy_roml();
-    else platform_easyflash_copy_romh();
-
-    sum = 0u;
-    for (i = 0u; i < size; ++i) sum += destination[i];
-    if (sum != checksum) return 0u;
-    return size;
-}
-
-/* Fetches at most `capacity` bytes starting at byte `start` of
- * resource_id's data (not from the top of the resource, unlike
- * platform_resource_fetch()) - for a resource bigger than any single
- * resident buffer can hold in one piece (up to PLATFORM_RESOURCE_MAX_BYTES,
- * 8 KiB - see modules/script.c's windowed reader). Returns the number of
- * bytes actually copied (0 for start >= the resource's size, or a lookup
- * failure). Unlike platform_resource_fetch(), this does not verify the
- * resource's checksum - that checksum covers the whole resource, not an
- * arbitrary sub-range, so a full-resource integrity check would need a
- * separate pass over every byte before a caller could use any of it; a
- * corrupt directory entry (the actual failure mode this guards against)
- * is still caught by resource_directory_lookup()'s own bounds checks. */
-uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
-                                       uint16_t start, uint8_t* destination,
-                                       uint16_t capacity) {
-    uint8_t bank;
-    uint8_t mode;
-    uint16_t offset;
-    uint16_t size;
-    uint16_t remaining;
-    uint16_t chunk;
-
-    if (resource_directory_lookup(kind, resource_id, &bank, &mode, &offset,
-                                  &size) != PLATFORM_OK) {
-        return 0u;
-    }
-    if (start >= size) return 0u;
-
-    remaining = size - start;
-    chunk = remaining < capacity ? remaining : capacity;
-
-    platform_ef_copy_bank = bank;
-    platform_ef_copy_offset = offset + start;
-    platform_ef_copy_destination = (uint16_t)destination;
-    platform_ef_copy_size = chunk;
-    if (mode == 0u) platform_easyflash_copy_roml();
-    else platform_easyflash_copy_romh();
-
-    return chunk;
-}
-
-/* Total size of the resource most recently looked up by
- * platform_resource_fetch() or platform_resource_fetch_range(), regardless
- * of how much of it actually fit in the caller's destination buffer that
- * call. Reads resource_directory_lookup()'s already-populated static
- * buffer rather than needing a dedicated global (BSS here has no spare
- * bytes - see MEMORY_MAP.md). Only meaningful right after one of those two
- * calls; a fetch failure leaves it holding whatever the last successful
- * lookup found. */
-uint16_t platform_resource_last_size(void) {
-    return (uint16_t)resource_directory_entry[4] |
-           ((uint16_t)resource_directory_entry[5] << 8);
-}
-#pragma code-name (pop)
-
-/*
- * In-place room-helpers service ("RH"): platform_room_object_remove/platform_
- * room_neighbor's compact mutation/query bodies (modules/room_helpers.c).
- * It executes at `$84C0` in bank 47 ROML, after the object-type Zone C table,
- * and owns no writable storage. The low resident globals below are its ABI;
- * cfg/easyflash_layout.json is the single source of its bank and address.
+ * In-place room-helpers service ("RH"): platform_room_object_remove/
+ * platform_room_neighbor's bodies (modules/room_helpers.c), bank
+ * BANK_ROOM_HELPERS.
  */
 #define ROOM_HELPERS_OP_NEIGHBOR 0u
 #define ROOM_HELPERS_OP_REMOVE   1u
 
-void redraw_dirty(const PlatformRoom* room,
-                  const PlatformObject* player);
+void redraw_dirty(const PlatformRoom* room, const PlatformObject* player);
 
-/* Explicitly initialized into low DATA so the in-place service can see every
- * parameter/result while ROML and BASIC hide `$8000-$BFFF`. */
 PlatformRoom* room_helpers_room = 0;
 uint8_t room_helpers_slot = 0;
 uint8_t room_helpers_direction = 0;
@@ -489,16 +285,11 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
     room_helpers_op = ROOM_HELPERS_OP_NEIGHBOR;
     room_helpers_room = (PlatformRoom*)room;
     room_helpers_direction = direction;
-    platform_room_helpers_run_banked();
+    far_call_bank(BANK_ROOM_HELPERS, room_helpers_entry);
     if (room_helpers_result == PLATFORM_OK) *room_id = room_helpers_room_id;
     return room_helpers_result;
 }
 
-/* UPPERCODE purely for segment balance. Before entering ROML, compute light
- * and dirty cells resident-side. The service performs only the object
- * mutation and rendered-limit update; redraw and lighting repair also remain
- * resident because they use `$B000` WORKBSS. */
-#pragma code-name (push, "UPPERCODE")
 uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player) {
     PlatformObject* object;
@@ -516,7 +307,7 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     } else {
         room_helpers_emitted_light = 0u;
     }
-    platform_room_helpers_run_banked();
+    far_call_bank(BANK_ROOM_HELPERS, room_helpers_entry);
     if (room_helpers_result == PLATFORM_OK) {
         redraw_dirty(room, player);
         if (room_helpers_emitted_light != 0u && room == rendered_room) {
@@ -526,22 +317,17 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
     }
     return room_helpers_result;
 }
-#pragma code-name (pop)
 
 /*
  * In-place Look Helpers service ("LH"): platform_look_tile/_check/object_
- * take_prompt/object_taken_message's bodies (modules/look_helpers.c). It runs
- * at `$9300` in bank 47 ROML and borrows room_stage for temporary state.
- * platform_look_exit() remains resident because its two fixed messages do not
- * need LH's formatting machinery and it calls RH sequentially.
+ * take_prompt/object_taken_message's bodies (modules/look_helpers.c), bank
+ * BANK_LOOK_HELPERS.
  */
 #define LOOK_HELPERS_OP_TILE         0u
 #define LOOK_HELPERS_OP_TILE_CHECK   1u
 #define LOOK_HELPERS_OP_TAKE_PROMPT  2u
 #define LOOK_HELPERS_OP_TAKEN_MSG    3u
 
-/* Explicitly initialized into low DATA so every field remains visible while
- * ROML and BASIC hide `$8000-$BFFF`. */
 const PlatformRoom* look_helpers_room = 0;
 const PlatformObject* look_helpers_viewer = 0;
 uint8_t look_helpers_tile_x = 0;
@@ -551,11 +337,8 @@ uint8_t look_helpers_type_id = 0;
 uint8_t look_helpers_op = 0;
 uint8_t look_helpers_result = 0;
 LookHelpersWorkspace* look_helpers_workspace = 0;
-/* Set here before the far call; see platform_look_tile_check()'s comment for
- * why banked code cannot read platform_brightness[] itself. */
 uint8_t look_helpers_light = 0;
 
-#pragma code-name (push, "HIGHCODE")
 uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
@@ -567,15 +350,10 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
-    /* Prefetch the tile's brightness here, resident-side, instead of letting
-     * look_helpers_tile_check() read platform_brightness[] while ROML is
-     * mapped: that array is at `$B000`, where 8 KiB mode exposes BASIC rather
-     * than RAM. Bounds-check before reading so invalid API arguments cannot
-     * stage a plausible-looking value from the wrong cell. */
     look_helpers_light = (tile_x < PLATFORM_MAP_WIDTH && tile_y < PLATFORM_MAP_HEIGHT)
                              ? platform_brightness[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x]
                              : 0u;
-    platform_look_helpers_run_banked();
+    far_call_bank(BANK_LOOK_HELPERS, look_helpers_entry);
     return look_helpers_result;
 }
 
@@ -587,7 +365,7 @@ uint8_t platform_look_tile(const PlatformRoom* room,
     look_helpers_tile_x = tile_x;
     look_helpers_tile_y = tile_y;
     look_helpers_color = color;
-    platform_look_helpers_run_banked();
+    far_call_bank(BANK_LOOK_HELPERS, look_helpers_entry);
     return look_helpers_result;
 }
 
@@ -596,7 +374,7 @@ void platform_object_take_prompt(uint8_t type_id, uint8_t color) {
     look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    platform_look_helpers_run_banked();
+    far_call_bank(BANK_LOOK_HELPERS, look_helpers_entry);
 }
 
 void platform_object_taken_message(uint8_t type_id, uint8_t color) {
@@ -604,21 +382,8 @@ void platform_object_taken_message(uint8_t type_id, uint8_t color) {
     look_helpers_workspace = (LookHelpersWorkspace*)platform_room_scratch();
     look_helpers_type_id = type_id;
     look_helpers_color = color;
-    platform_look_helpers_run_banked();
+    far_call_bank(BANK_LOOK_HELPERS, look_helpers_entry);
 }
-#pragma code-name (pop)
-
-/* object_cell/base_cell/compose_cell/dirty_clear/dirty_set/
- * mark_object_cells/redraw_dirty used to live here as C static functions;
- * they're now src/dirty_redraw.s (hand-written 6502) - see that file's
- * header comment for why: this cluster measured 43-50% pure calling-
- * convention overhead (every function passed pointer parameters that
- * cc65 reloads from the software stack on each field access), and merging
- * them into one module sharing state through fixed BSS locations removes
- * essentially all of it. dirty_clear/mark_object_cells/redraw_dirty keep
- * their exact original signatures (declared near the top of this file)
- * so platform_object_move()/platform_player_set_type()/
- * platform_room_object_remove() below call them exactly as before. */
 
 uint16_t platform_room_object_limit(const PlatformRoom* room) {
     uint16_t limit;
@@ -635,21 +400,17 @@ void platform_init(void) {
     uint8_t cartridge;
 
     cartridge = platform_boot_is_easyflash();
-    *((volatile uint8_t*)0xdd00) &= 0xfcu;
-    P_VIC(0x20) = 0;
-    P_VIC(0x21) = 0;
-    P_VIC(0x18) = 0xeau;
-    P_VIC(0x15) = 0;
+    *((volatile uint8_t*)0xdd00u) &= 0xfcu;
+    ((volatile uint8_t*)0xd000u)[0x20] = 0u;
+    ((volatile uint8_t*)0xd000u)[0x21] = 0u;
+    ((volatile uint8_t*)0xd000u)[0x18] = 0xeau;
+    ((volatile uint8_t*)0xd000u)[0x15] = 0u;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
     memset(platform_view_tiles, 1, sizeof(platform_view_tiles));
     platform_global_light = PLATFORM_LIGHT_FULL;
     platform_room_light_level = PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL;
     platform_room_los_enabled = 1u;
-    /* look_cursor_visible/wall_count/wall_cache_room are plain BSS globals,
-     * already 0 from the C runtime's zero-init - platform_init() runs
-     * exactly once, first thing in main(), so nothing could have dirtied
-     * them yet. */
     (void)platform_irq_save_disable();
     if (!cartridge) {
         platform_object_types_clear();
@@ -659,49 +420,30 @@ void platform_init(void) {
     platform_memory_game();
     memcpy(&platform_room, initial_room_data, sizeof(platform_room));
     if (cartridge) {
-        /* Static assets are fetched, not linked in - see src/assets.s. This
-         * must happen before anything draws (nothing does until main() gets
-         * past platform_init()) and before the raster IRQ is installed below,
-         * since the split-screen handler points the VIC at both charsets every
-         * frame. Failure leaves the reserved destinations zeroed, i.e. blank
-         * glyphs and all-zero tile properties - visibly wrong rather than
-         * subtly wrong, which is the intent. */
         (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
                                       PLATFORM_ASSET_CHARSET_TILE,
                                       charset_tile, 2048u);
         (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
                                       PLATFORM_ASSET_CHARSET_TEXT,
                                       charset_text, 2048u);
-        /* Bitmaps and properties as one blob, so they cannot drift apart. */
         (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
                                       PLATFORM_ASSET_TILES,
                                       tile_data, 2048u + 256u);
         (void)platform_object_types_load();
         (void)platform_room_load(&platform_room, 0u);
     }
-    /* platform_current_room/platform_player_slot/player_spawn_room/
-     * player_spawn_slot are plain BSS globals, already 0 - see above. */
     platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
-    /* Must happen before the IRQ is installed: weather_animate (src/irq.s)
-     * calls into ENVCODE_TICK unconditionally every frame, and the first
-     * real environment module isn't fetched until game_enter_room() (called
-     * later, in main()) - so the raster IRQ would otherwise jump into
-     * whatever garbage happens to be sitting in that reserved RAM the very
-     * first time it fires. */
     env_install_null();
     raster_irq_install();
 }
 
-#pragma code-name (push, "LOWCODE")
 void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
                                PlatformRoomRestoreHook restore_hook) {
     room_store_hook = store_hook;
     room_restore_hook = restore_hook;
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "MIDCODE")
 void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
     if (room == 0) return;
     if (room == rendered_room) {
@@ -714,7 +456,6 @@ void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
     room->id = room_id;
     room->format = PLATFORM_ROOM_FORMAT;
 }
-#pragma code-name (pop)
 
 static uint8_t room_validate(const PlatformRoom* room, uint8_t room_id) {
     if (room->width != PLATFORM_MAP_WIDTH || room->height != PLATFORM_MAP_HEIGHT ||
@@ -725,21 +466,8 @@ static uint8_t room_validate(const PlatformRoom* room, uint8_t room_id) {
     return PLATFORM_OK;
 }
 
-static uint8_t room_load_easyflash(uint8_t room_id) {
-    platform_ef_copy_bank =
-        (uint8_t)(EF_FIRST_ROOM_BANK + room_id / EF_ROOMS_PER_BANK);
-    platform_ef_copy_offset =
-        (uint16_t)(room_id % EF_ROOMS_PER_BANK) * PLATFORM_ROOM_FILE_BYTES;
-    platform_ef_copy_destination = (uint16_t)&room_stage;
-    platform_ef_copy_size = sizeof(room_stage);
-    platform_easyflash_copy_roml();
-    return PLATFORM_OK;
-}
-
 static uint8_t room_stage_load(uint8_t room_id) {
-    uint8_t status;
-    status = room_load_easyflash(room_id);
-    if (status != PLATFORM_OK) return status;
+    if (!platform_room_data_fetch(room_id, &room_stage)) return PLATFORM_ERR_NOT_FOUND;
     return room_validate(&room_stage, room_id);
 }
 
@@ -758,14 +486,6 @@ static void room_commit(PlatformRoom* room, uint8_t room_id) {
         if (platform_room_light_level <= PLATFORM_LIGHT_FULL) {
             platform_global_light = platform_room_light_level;
         }
-        /* room_stage's memcpy out is done above, so its memory is free to
-         * reuse as scratch for this room's own script resource now (see
-         * PLATFORM_ROOM_SCRATCH_BUFFER) - the same resource ID as the room
-         * itself. Nothing pre-fetches it here: game_room_script_entry()
-         * (src/script_runtime.c) fetches whatever window it needs, fresh,
-         * every time it runs, via modules/script.c's windowed reader -
-         * a room's script resource can be up to PLATFORM_RESOURCE_MAX_BYTES
-         * now, too big to usefully hold here in one piece anyway. */
     }
 }
 
@@ -778,49 +498,16 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
 }
 
 uint8_t platform_object_types_load(void) {
-    uint8_t irq_status;
-
-    /* Zone A: types 0-105, bank 46 offset 0, direct to $C180. */
-    platform_ef_copy_bank = EF_TYPE_BANK_0;
-    platform_ef_copy_offset = 0u;
-    platform_ef_copy_destination = (uint16_t)object_types_a;
-    platform_ef_copy_size = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
-    platform_easyflash_copy_roml();
-
-    /* Zone B: types 106-222, bank 46 offset 3710. Stage it in two pieces
-     * through renderer WORKBSS at `$B000-$B7FF`; `$B800-$B9EA` is the
-     * persistent KERNAL disk driver and must never be overwritten. */
-    platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES;
-    platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
-    platform_ef_copy_size = OBJECT_TYPE_STAGE_BYTES;
-    platform_easyflash_copy_roml();
-    irq_status = platform_irq_save_disable();
-    platform_memory_all_ram();
-    memcpy(object_types_b, P_OBJECT_TYPE_STAGE, OBJECT_TYPE_STAGE_BYTES);
-    platform_memory_game();
-    platform_irq_restore(irq_status);
-
-    platform_ef_copy_offset = OBJECT_TYPE_ZONE_A_COUNT * OBJECT_TYPE_RECORD_BYTES +
-                              OBJECT_TYPE_STAGE_BYTES;
-    platform_ef_copy_destination = (uint16_t)P_OBJECT_TYPE_STAGE;
-    platform_ef_copy_size = OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES -
-                            OBJECT_TYPE_STAGE_BYTES;
-    platform_easyflash_copy_roml();
-    irq_status = platform_irq_save_disable();
-    platform_memory_all_ram();
-    memcpy((uint8_t*)object_types_b + OBJECT_TYPE_STAGE_BYTES,
-           P_OBJECT_TYPE_STAGE,
-           OBJECT_TYPE_ZONE_B_COUNT * OBJECT_TYPE_RECORD_BYTES -
-               OBJECT_TYPE_STAGE_BYTES);
-    platform_memory_game();
-    platform_irq_restore(irq_status);
-
-    /* Zone C: types 223-255, bank 47 offset 0, direct to $E000 (KERNAL hidden). */
-    platform_ef_copy_bank = EF_TYPE_BANK_1;
-    platform_ef_copy_offset = 0u;
-    platform_ef_copy_destination = (uint16_t)object_types_c;
-    platform_ef_copy_size = OBJECT_TYPE_ZONE_C_COUNT * OBJECT_TYPE_RECORD_BYTES;
-    platform_easyflash_copy_roml();
+    platform_easyflash_copy_roml(BANK_TYPEINFO, 0u, object_types_a,
+                                 OBJECT_TYPE_ZONE_A_COUNT * sizeof(PlatformObjectType));
+    platform_easyflash_copy_roml(BANK_TYPEINFO,
+                                 OBJECT_TYPE_ZONE_A_COUNT * sizeof(PlatformObjectType),
+                                 object_types_b,
+                                 OBJECT_TYPE_ZONE_B_COUNT * sizeof(PlatformObjectType));
+    platform_easyflash_copy_roml(BANK_TYPEINFO,
+                                 OBJECT_TYPE_ZONE_AB_COUNT * sizeof(PlatformObjectType),
+                                 object_types_c,
+                                 OBJECT_TYPE_ZONE_C_COUNT * sizeof(PlatformObjectType));
     raster_irq_vectors_restore();
     return PLATFORM_OK;
 }
@@ -873,11 +560,6 @@ static void object_draw_base(const PlatformObject* object) {
     }
     if (source_x >= end_x || source_y >= end_y) return;
     native_object_type = type;
-    /* source_y is only nonzero when the object is clipped at the room's
-     * top edge - the overwhelming majority of objects aren't, so skip
-     * cc65's runtime multiply routine (called unconditionally otherwise,
-     * regardless of operand values) for the common case where the result
-     * is trivially source_x. */
     native_object_source = source_y == 0u
         ? source_x
         : (uint8_t)(source_y * OBJECT_WIDTH(type) + source_x);
@@ -1050,7 +732,6 @@ static void wall_cache_add_source(void) {
             wall_light_cache[i] = packed_light_add(
                 wall_light_cache[i], quadrants, level);
         }
-        /* The normal source blitter now updates open cells only. */
         platform_light_visibility[wall_tile_offsets[i]] = 0u;
     }
 }
@@ -1136,12 +817,6 @@ void platform_lighting_rebuild(const PlatformRoom* room,
         memset(platform_brightness, PLATFORM_LIGHT_FULL,
                sizeof(platform_brightness));
         wall_cache_room = 0;
-        /* platform_light_colors' "full light" row is the identity mapping
-         * (this file's table definition) and LOS-disabled forces every
-         * platform_view_tiles entry to 1 (view_rebuild()'s own fast path
-         * above) - together those mean platform_lighting_apply()'s real
-         * per-cell transform would be a no-op here, so skip straight to
-         * copying the staged colors into Color RAM instead. */
         if (platform_room_los_enabled == 0u) {
             platform_color_copy_native();
         } else {
@@ -1167,15 +842,6 @@ void platform_lighting_rebuild(const PlatformRoom* room,
     platform_lighting_apply();
 }
 
-/* platform_map_draw_native()/object_draw_base() write character codes to
- * screen RAM (harmless to repeat - identical bytes, since neither the tiles
- * nor the objects changed for platform_lighting_repair()'s only caller) and,
- * as their real purpose here, base (pre-lighting) colors into
- * platform_base_colors, NOT to Color RAM directly - see the destination
- * setup in src/render.s's _platform_map_draw_native/_platform_object_draw_
- * native. That's what makes platform_lighting_repair() below possible
- * without a visible clear-and-redraw: this only ever touches the cache,
- * never Color RAM, until platform_lighting_rebuild()'s final pass. */
 static void redraw_map_and_objects(const PlatformRoom* room,
                                    const PlatformObject* player) {
     uint16_t i;
@@ -1188,13 +854,6 @@ static void redraw_map_and_objects(const PlatformRoom* room,
         --rendered_object_limit;
     }
     platform_map_draw_native(room);
-    /* Painter's algorithm: draw ascending by y so an object/actor lower on
-     * screen visually overlaps ones above it, instead of raw slot order.
-     * A fixed pass over the small y range (0-21) rather than an actual
-     * sort - object counts here are always tiny, so this stays cheap -
-     * matches compose_cell()'s own highest-y-wins rule in
-     * src/dirty_redraw.s for the dirty-cell repaint path, so a room looks
-     * the same after a full redraw or after a partial one. */
     for (y = 0u; y < PLATFORM_MAP_CHAR_HEIGHT; ++y) {
         for (i = 0; i < rendered_object_limit; ++i) {
             if (player == &room->objects[i]) continue;
@@ -1214,19 +873,15 @@ void platform_room_draw(const PlatformRoom* room, const PlatformObject* player) 
     platform_lighting_rebuild(room, player);
 }
 
-#pragma code-name (push, "LOWCODE")
 void platform_lighting_apply(void) {
     platform_lighting_apply_native();
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "MIDCODE")
 void platform_lighting_set_global(uint8_t level) {
     if (level >= PLATFORM_LIGHT_LEVEL_COUNT) level = PLATFORM_LIGHT_FULL;
     platform_global_light = level;
     platform_lighting_rebuild(rendered_room, rendered_player);
 }
-#pragma code-name (pop)
 
 void platform_lightning(void) {
     platform_lightning_native();
@@ -1268,14 +923,7 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
     }
 }
 
-/* Change the player's own object type in place (e.g. a terrain-driven
- * cosmetic swap, like room 01's water tiles) and repaint at the player's
- * current position. Unlike platform_object_move(), this marks the OLD
- * type's footprint before changing .type and the NEW type's footprint
- * after, so the two types need not share dimensions, hotspot, or
- * transparent-cell pattern - the new type's art is unconstrained. No-ops
- * if the type is already type_id. */
-void __fastcall__ platform_player_set_type(uint8_t type_id) {
+void platform_player_set_type(uint8_t type_id) {
     if (platform_player == 0 || platform_player->type == type_id) return;
     dirty_clear();
     mark_object_cells(platform_player);
@@ -1321,54 +969,15 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y) {
     if (platform_room_neighbor(&platform_room, direction, &room_id) != PLATFORM_OK) {
         return PLATFORM_ERR_BLOCKED;
     }
-    /* Do not call platform_room_enter() here. Its own contract (see this
-     * file's declaration in platform.h) requires the caller to bracket it,
-     * plus the game_enter_room()/game_enter_tile() sync that must follow it
-     * with no gap, inside one raster_irq_suspend()/platform_screen_blank()
-     * window - this function has neither the layering (game_enter_room() is
-     * a game.c concept) nor, previously, any bracket at all. That made every
-     * ordinary edge-of-room step - by far the most common way a player
-     * changes rooms - reach platform_room_enter() completely unguarded,
-     * unlike the three other call sites (src/main.c startup,
-     * game_process_pending_transition(), saveload_apply_pending()), which
-     * all bracket it correctly. Queue it through the same deferred
-     * mechanism script-triggered transitions already use instead of adding
-     * a fourth, hand-rolled bracket: game_process_pending_transition()
-     * (src/game.c), called once per frame before input is polled, performs
-     * the actual switch fully bracketed one frame later. See
-     * MEMORY_MAP_TARGET.md's "Interrupt and banking safety" section. */
     return game_transition_request(room_id, (uint8_t)new_x, (uint8_t)new_y);
 }
 
-#pragma code-name (push, "LOWCODE")
-/* platform_frame_counter only ever advances from the raster IRQ
- * (src/irq.s), which raster_irq_suspend() masks off (VIC_IRQ_ENABLE bit 0) for
- * the entire duration of a room switch (see game_process_pending_transition(),
- * saveload_apply_pending(), and main()'s startup bracket in src/game.c/
- * src/saveload_runtime.c/src/main.c). Any "wait for a keypress" loop built on
- * this function - src/text.s's wait_for_fresh_key() (the bottom pager's
- * between-pages wait), game_wait_fresh_key() (src/game.c), modules/script.c's
- * wait_fresh_key() (the OP_WAIT_KEY opcode) - would otherwise spin forever
- * the moment it runs while suspended, because the byte it's polling can never
- * change. Found live: room 01's enter_room() (rooms/asm/01_enter_room.s)
- * shows its one-time, three-line arrival narration via
- * game_room_script_entry() - and enter_room() always runs from inside
- * exactly this suspended window - so its text pager's own between-pages wait
- * hung the very first time a player triggered that transition, well before
- * this session's work: showing 3+ lines of room-entry/tile-entry script text
- * during any room transition was already latently broken. Fall back to
- * polling the VIC's own raster position directly when suspended: wait for
- * the 9-bit raster to reach the bottom of the frame, then wrap back to the
- * top. That is real hardware timing independent of the IRQ - the VIC counts
- * raster lines regardless of whether it is allowed to request an interrupt -
- * and provides the same "one frame has passed" duration without depending on
- * the suspended handler. */
 void platform_wait_frame(void) {
     uint8_t frame;
     if (!platform_raster_irq_active) {
-        while (!(P_VIC(0x11) & 0x80u)) {
+        while (!(((volatile uint8_t*)0xd000u)[0x11] & 0x80u)) {
         }
-        while (P_VIC(0x11) & 0x80u) {
+        while (((volatile uint8_t*)0xd000u)[0x11] & 0x80u) {
         }
         return;
     }
@@ -1376,7 +985,6 @@ void platform_wait_frame(void) {
     while (platform_frame_counter == frame) {
     }
 }
-#pragma code-name (pop)
 
 uint16_t platform_room_object_count(const PlatformRoom* room,
                                     uint8_t actor_only) {
@@ -1427,44 +1035,20 @@ uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
     return PLATFORM_ERR_FULL;
 }
 
-/* $D011 bit 7 means two different things depending on direction: on a READ
- * it's the current raster line's bit 8 (is the raster past 255?); on a
- * WRITE it's bit 8 of the raster-IRQ COMPARE value src/irq.s schedules
- * through $D012. A plain read-modify-write (the previous `&= 0xef`) copies
- * whatever bit 7 happened to read as straight back out as part of that
- * compare value - harmless the ~82% of the time the real raster is below
- * line 256 when this runs, but the other ~18% (whenever it's called while
- * the raster happens to be in the 256-311 range) it latches compare-bit-8=1,
- * silently changing every future "top of frame" trigger from raster==0 to
- * raster==256. raster_irq_body (src/irq.s) never touches $D011 itself again
- * once running - only $D012's low byte - so nothing ever un-latches it: the
- * IRQ keeps firing every frame (so the frame counter still advances
- * normally) but permanently takes the bmi/"switch to text" branch every
- * time, since it only ever sees raster values at or above 256 from then on
- * - the map charset is never selected again. Found live: room 00 to 01's
- * transition (which calls this several times) intermittently locked the
- * *destination* room's map into the text charset, permanently, right after
- * the transition completed - matching this exact mechanism (an ~18% chance
- * per call, so a several-call transition sequence has good odds of hitting
- * it at least once, and this session added several new calls to these two
- * functions around banked services, mechanically raising that chance further
- * without changing the underlying, pre-existing bug). raster_irq_install()
- * and _raster_irq_resync() (src/irq.s) already know to force bit 7 back to
- * 0 on every $D011 write for exactly this reason - these two functions are
- * the only $D011 writers in the codebase that didn't. */
+/* See platform.c's original comment history (MEMORY_MAP.md) on why every
+ * $D011 write here masks bit 7 off first. */
 void platform_screen_blank(void) {
-    P_VIC(0x11) &= 0x6fu;
+    ((volatile uint8_t*)0xd000u)[0x11] &= 0x6fu;
 }
 
 void platform_screen_unblank(void) {
-    P_VIC(0x11) = (P_VIC(0x11) & 0x7fu) | 0x10u;
+    ((volatile uint8_t*)0xd000u)[0x11] = (((volatile uint8_t*)0xd000u)[0x11] & 0x7fu) | 0x10u;
 }
 
 void platform_sprites_hide_all(void) {
-    P_VIC(0x15) = 0u;
+    ((volatile uint8_t*)0xd000u)[0x15] = 0u;
 }
 
-#pragma code-name (push, "LOWCODE")
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y) {
     PlatformObject actor;
@@ -1525,7 +1109,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 transition_done:
     return result;
 }
-#pragma code-name (pop)
 
 uint8_t platform_room_object_transfer(PlatformRoom* leaving,
                                       PlatformRoom* entering,
@@ -1604,14 +1187,6 @@ void platform_text_write_line(uint8_t line, uint8_t column,
     }
 }
 
-/* Lets a one-shot service (currently the script interpreter and LH) borrow
- * this same buffer as scratch RAM while it runs, the same "temporally
- * exclusive" reuse room_commit() already does with room_stage itself. Only
- * safe between room_commit() calls (i.e. while no transition is staging a
- * new room) - true for every current borrower, since they all run from
- * resident code between transitions, never from inside one. Nothing
- * resident reads it between borrows (each borrower fetches whatever it
- * needs, fresh), so there is no "restore it before returning" contract. */
 uint8_t* platform_room_scratch(void) {
     return PLATFORM_ROOM_SCRATCH_BUFFER;
 }
@@ -1656,19 +1231,12 @@ uint8_t platform_object_intersects_tile(const PlatformObject* object,
     return 0u;
 }
 
-/* platform_look_tile_check()'s real body now lives in the in-place LH service
- * (see the platform_look_tile_check wrapper earlier in this file);
- * platform_look_exit() calls that wrapper like any other caller. Its own
- * two messages are fixed literals - unlike look_tile/_check's dynamically
- * assembled ones, they need none of the moved look_buffer/look_append_*
- * machinery, just a direct write. */
 static void look_exit_write(const char* text, uint8_t color) {
     platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
     platform_text_output_color = color & 0x0fu;
     platform_text_output_native(text);
 }
 
-#pragma code-name (push, "UPPERCODE")
 uint8_t platform_look_exit(const PlatformRoom* room,
                            const PlatformObject* viewer,
                            uint8_t edge_x, uint8_t edge_y,
@@ -1684,59 +1252,51 @@ uint8_t platform_look_exit(const PlatformRoom* room,
         return PLATFORM_ERR_NOT_FOUND;
     }
 
-    /* Custom per-exit descriptions aren't wired up yet - room->west_text/
-     * south_text are currently unread (north_text/east_text were the same
-     * kind of field but are now the per-room lighting/LOS settings - see
-     * the PlatformRoom doc comment); this always shows the generic message
-     * until that's built on top of the room-script mechanism
-     * (game_room_script_entry()). */
     look_exit_write("An exit.", color);
     return PLATFORM_OK;
 }
-#pragma code-name (pop)
 
 static void look_cursor_position(uint8_t tile_x, uint8_t tile_y) {
+    volatile uint8_t* vic = (volatile uint8_t*)0xd000u;
     uint16_t sprite_x;
 
     sprite_x = 23u + (uint16_t)tile_x * 16u;
-    P_VIC(0x00) = (uint8_t)sprite_x;
-    P_VIC(0x01) = (uint8_t)(49u + (uint16_t)tile_y * 16u);
-    if (sprite_x & 0x100u) P_VIC(0x10) |= 0x01u;
-    else P_VIC(0x10) &= 0xfeu;
+    vic[0x00] = (uint8_t)sprite_x;
+    vic[0x01] = (uint8_t)(49u + (uint16_t)tile_y * 16u);
+    if (sprite_x & 0x100u) vic[0x10] |= 0x01u;
+    else vic[0x10] &= 0xfeu;
 }
 
-#pragma code-name (push, "LOWCODE")
 uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
+    volatile uint8_t* vic = (volatile uint8_t*)0xd000u;
     uint8_t row;
 
     if (tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) {
         return PLATFORM_ERR_ARGUMENT;
     }
-    memset(P_SPRITE_DATA, 0, 64u);
-    P_SPRITE_DATA[0] = 0xffu;
-    P_SPRITE_DATA[1] = 0xffu;
-    P_SPRITE_DATA[2] = 0xc0u;
-    P_SPRITE_DATA[51] = 0xffu;
-    P_SPRITE_DATA[52] = 0xffu;
-    P_SPRITE_DATA[53] = 0xc0u;
+    memset(SPRITE_DATA, 0, 64u);
+    SPRITE_DATA[0] = 0xffu;
+    SPRITE_DATA[1] = 0xffu;
+    SPRITE_DATA[2] = 0xc0u;
+    SPRITE_DATA[51] = 0xffu;
+    SPRITE_DATA[52] = 0xffu;
+    SPRITE_DATA[53] = 0xc0u;
     for (row = 1u; row < 17u; ++row) {
-        P_SPRITE_DATA[(uint8_t)(row * 3u)] = 0x80u;
-        P_SPRITE_DATA[(uint8_t)(row * 3u + 2u)] = 0x40u;
+        SPRITE_DATA[(uint8_t)(row * 3u)] = 0x80u;
+        SPRITE_DATA[(uint8_t)(row * 3u + 2u)] = 0x40u;
     }
-    P_SPRITE_POINTERS[0] = (uint8_t)((0xfc00u - 0xc000u) / 64u);
+    SPRITE_POINTERS[0] = (uint8_t)((0xfc00u - 0xc000u) / 64u);
     look_cursor_position(tile_x, tile_y);
-    P_VIC(0x17) &= 0xfeu;
-    P_VIC(0x1b) &= 0xfeu;
-    P_VIC(0x1c) &= 0xfeu;
-    P_VIC(0x1d) &= 0xfeu;
+    vic[0x17] &= 0xfeu;
+    vic[0x1b] &= 0xfeu;
+    vic[0x1c] &= 0xfeu;
+    vic[0x1d] &= 0xfeu;
     look_cursor_visible = 1u;
-    P_VIC(0x15) |= 0x01u;
+    vic[0x15] |= 0x01u;
     platform_look_cursor_tick();
     return PLATFORM_OK;
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "MIDCODE")
 uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y) {
     if (!look_cursor_visible || tile_x >= PLATFORM_MAP_WIDTH ||
         tile_y >= PLATFORM_MAP_HEIGHT) return PLATFORM_ERR_ARGUMENT;
@@ -1746,32 +1306,31 @@ uint8_t platform_look_cursor_move(uint8_t tile_x, uint8_t tile_y) {
 
 void platform_look_cursor_tick(void) {
     if (look_cursor_visible) {
-        P_VIC(0x27) = look_cursor_colors[(platform_frame_counter >> 2) & 0x07u];
+        ((volatile uint8_t*)0xd000u)[0x27] =
+            look_cursor_colors[(platform_frame_counter >> 2) & 0x07u];
     }
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "UPPERCODE")
 void platform_look_cursor_hide(void) {
-    P_VIC(0x15) &= 0xfeu;
+    ((volatile uint8_t*)0xd000u)[0x15] &= 0xfeu;
     look_cursor_visible = 0u;
 }
-#pragma code-name (pop)
 
-static uint8_t portrait_load_easyflash(uint8_t portrait_id) {
-    platform_ef_copy_bank =
-        (uint8_t)(EF_PORTRAIT_FIRST_BANK + portrait_id / EF_PORTRAITS_PER_BANK);
-    platform_ef_copy_offset =
-        (uint16_t)(portrait_id % EF_PORTRAITS_PER_BANK) * PLATFORM_PORTRAIT_BYTES;
-    platform_ef_copy_destination = (uint16_t)PORTRAIT_SPRITE_DATA;
-    platform_ef_copy_size = PLATFORM_PORTRAIT_BYTES;
-    platform_easyflash_copy_roml();
-    return PLATFORM_OK;
-}
+#define PORTRAIT_FIRST_SPRITE   1u
+#define PORTRAIT_BG_SPRITE      5u
+#define PORTRAIT_SPRITE_WIDTH   24u
+#define PORTRAIT_SPRITE_HEIGHT  21u
+#define PORTRAIT_MARGIN         16u
+#define PORTRAIT_SLIDE_STEP     4u
+#define PORTRAIT_SCREEN_X       23u
+#define PORTRAIT_SCREEN_Y       49u
+#define PORTRAIT_SPRITE_DATA \
+    ((uint8_t*)(0xfc00u + PORTRAIT_FIRST_SPRITE * 64u))
+#define PORTRAIT_BG_DATA \
+    ((uint8_t*)(0xfc00u + PORTRAIT_BG_SPRITE * 64u))
 
-/* left_x/right_x share the 9th (MSB) bit across sprites 1/3/5 and 2/4. */
-#pragma code-name (push, "UPPERCODE")
 static void portrait_position(uint16_t left_x, uint8_t top_y) {
+    volatile uint8_t* vic = (volatile uint8_t*)0xd000u;
     uint16_t right_x;
     uint8_t bottom_y;
     uint8_t msb;
@@ -1779,53 +1338,53 @@ static void portrait_position(uint16_t left_x, uint8_t top_y) {
     right_x = left_x + PORTRAIT_SPRITE_WIDTH;
     bottom_y = (uint8_t)(top_y + PORTRAIT_SPRITE_HEIGHT);
 
-    P_VIC(2u) = (uint8_t)left_x;  P_VIC(3u) = top_y;
-    P_VIC(4u) = (uint8_t)right_x; P_VIC(5u) = top_y;
-    P_VIC(6u) = (uint8_t)left_x;  P_VIC(7u) = bottom_y;
-    P_VIC(8u) = (uint8_t)right_x; P_VIC(9u) = bottom_y;
-    P_VIC(10u) = (uint8_t)left_x; P_VIC(11u) = top_y;
+    vic[2u] = (uint8_t)left_x;  vic[3u] = top_y;
+    vic[4u] = (uint8_t)right_x; vic[5u] = top_y;
+    vic[6u] = (uint8_t)left_x;  vic[7u] = bottom_y;
+    vic[8u] = (uint8_t)right_x; vic[9u] = bottom_y;
+    vic[10u] = (uint8_t)left_x; vic[11u] = top_y;
 
     msb = 0u;
     if (left_x & 0x100u) msb |= 0x2au;
     if (right_x & 0x100u) msb |= 0x14u;
-    P_VIC(0x10) = (P_VIC(0x10) & 0xc1u) | msb;
+    vic[0x10] = (vic[0x10] & 0xc1u) | msb;
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "HIGHCODE")
 uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
+    volatile uint8_t* vic = (volatile uint8_t*)0xd000u;
     uint16_t left_x;
     uint8_t target_y;
     uint8_t y;
-    uint8_t status;
 
     if (side != PLATFORM_PORTRAIT_LEFT && side != PLATFORM_PORTRAIT_RIGHT) {
         return PLATFORM_ERR_ARGUMENT;
     }
 
-    status = portrait_load_easyflash(portrait_id);
-    if (status != PLATFORM_OK) return status;
+    platform_easyflash_copy_roml(
+        (uint8_t)(BANK_PORTRAIT_FIRST + portrait_id / PORTRAITS_PER_BANK),
+        (uint16_t)(portrait_id % PORTRAITS_PER_BANK) * PLATFORM_PORTRAIT_BYTES,
+        PORTRAIT_SPRITE_DATA, PLATFORM_PORTRAIT_BYTES);
 
     env_disable();
 
     memset(PORTRAIT_BG_DATA, 0xffu, 63u);
     PORTRAIT_BG_DATA[63] = 0u;
 
-    P_SPRITE_POINTERS[1] = (uint8_t)((0xfc40u - 0xc000u) / 64u);
-    P_SPRITE_POINTERS[2] = (uint8_t)((0xfc80u - 0xc000u) / 64u);
-    P_SPRITE_POINTERS[3] = (uint8_t)((0xfcc0u - 0xc000u) / 64u);
-    P_SPRITE_POINTERS[4] = (uint8_t)((0xfd00u - 0xc000u) / 64u);
-    P_SPRITE_POINTERS[5] = (uint8_t)((0xfd40u - 0xc000u) / 64u);
+    SPRITE_POINTERS[1] = (uint8_t)((0xfc40u - 0xc000u) / 64u);
+    SPRITE_POINTERS[2] = (uint8_t)((0xfc80u - 0xc000u) / 64u);
+    SPRITE_POINTERS[3] = (uint8_t)((0xfcc0u - 0xc000u) / 64u);
+    SPRITE_POINTERS[4] = (uint8_t)((0xfd00u - 0xc000u) / 64u);
+    SPRITE_POINTERS[5] = (uint8_t)((0xfd40u - 0xc000u) / 64u);
 
-    P_VIC(0x17) = (P_VIC(0x17) & 0xc1u) | 0x20u; /* Y-expand: bg sprite only */
-    P_VIC(0x1b) &= 0xc1u;                        /* priority: all in front */
-    P_VIC(0x1c) &= 0xc1u;                        /* hires, no multicolor */
-    P_VIC(0x1d) = (P_VIC(0x1d) & 0xc1u) | 0x20u; /* X-expand: bg sprite only */
-    P_VIC(0x28) = 1u; /* sprite 1 (top-left) white */
-    P_VIC(0x29) = 1u; /* sprite 2 (top-right) white */
-    P_VIC(0x2a) = 1u; /* sprite 3 (bottom-left) white */
-    P_VIC(0x2b) = 1u; /* sprite 4 (bottom-right) white */
-    P_VIC(0x2c) = 0u; /* sprite 5 (background) black */
+    vic[0x17] = (vic[0x17] & 0xc1u) | 0x20u;
+    vic[0x1b] &= 0xc1u;
+    vic[0x1c] &= 0xc1u;
+    vic[0x1d] = (vic[0x1d] & 0xc1u) | 0x20u;
+    vic[0x28] = 1u;
+    vic[0x29] = 1u;
+    vic[0x2a] = 1u;
+    vic[0x2b] = 1u;
+    vic[0x2c] = 0u;
 
     left_x = side == PLATFORM_PORTRAIT_LEFT
                  ? PORTRAIT_SCREEN_X + PORTRAIT_MARGIN
@@ -1834,7 +1393,7 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
     target_y = PORTRAIT_SCREEN_Y + PORTRAIT_MARGIN;
     y = (uint8_t)(PORTRAIT_SCREEN_Y - PLATFORM_PORTRAIT_HEIGHT);
     portrait_position(left_x, y);
-    P_VIC(0x15) |= 0x3eu;
+    vic[0x15] |= 0x3eu;
 
     while (y < target_y) {
         platform_wait_frame();
@@ -1844,11 +1403,8 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
     }
     return PLATFORM_OK;
 }
-#pragma code-name (pop)
 
-#pragma code-name (push, "UPPERCODE")
 void platform_portrait_hide(void) {
-    P_VIC(0x15) &= 0xc1u;
+    ((volatile uint8_t*)0xd000u)[0x15] &= 0xc1u;
     env_enable();
 }
-#pragma code-name (pop)

@@ -355,7 +355,7 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
  * dimensions, hotspot, or transparent-cell pattern. No-op if the player is
  * already type_id.
  */
-void __fastcall__ platform_player_set_type(uint8_t type_id);
+void platform_player_set_type(uint8_t type_id);
 
 /*
  * Move the global player one half-tile when the destination hotspot is inside
@@ -498,7 +498,7 @@ void platform_portrait_hide(void);
  * Pass 0 to reuse whichever setup callback was last registered (this is
  * what the portrait-resume path does - it never has its own setup to give).
  */
-void __fastcall__ platform_rain_enable(void (*setup)(void));
+void platform_rain_enable(void (*setup)(void));
 void platform_rain_activate(void);
 void platform_rain_disable(void);
 uint8_t platform_rain_is_active(void);

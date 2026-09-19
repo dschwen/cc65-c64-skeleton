@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "platform.h"
+#include "platform_native.h"
 #include "game.h"
 
 /*
@@ -11,9 +12,6 @@
  * object-type table for the offset-69 rationale this now avoids entirely
  * by indexing the real array.
  */
-
-#define OBJECT_TYPE_ZONE_A_COUNT 106u /* keep in sync with platform.c */
-extern PlatformObjectType object_types_a[];
 
 #define LIT_TAPER_TYPE 53u
 

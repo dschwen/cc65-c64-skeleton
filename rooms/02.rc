@@ -1,5 +1,5 @@
 enter_room: default
-enter_tile: asm "rooms/asm/02_enter_tile.s"
+enter_tile: asm "rooms/c/02_enter_tile.c"
 
 look_at:
     at 17,9 -> script STORY_ROOM02_LOOK_ORRA
@@ -13,7 +13,7 @@ use_at:
     # Sir Caldus (14,1) and the hearth (12,1) are handled in the asm
     # fallback below instead of a plain script entry here - both need an
     # inventory check (Lamp Oil / Long Taper) that the script DSL can't
-    # express. See rooms/asm/02_use_at.s.
+    # express. See rooms/c/02_use_at.c.
     # Vey's own tile (3,2) is behind the bar counter and unreachable by the
     # player (confirmed live: a flood-fill from the room's entrance shows
     # his whole alcove sealed off) - (3,3), the counter tile directly in
@@ -22,4 +22,4 @@ use_at:
     # walkable ground (cursor movement only checks the player-relative
     # clamp, not tile walkability).
     at 3,3 -> script STORY_ROOM02_TALK_VEY
-    default -> asm "rooms/asm/02_use_at.s"
+    default -> asm "rooms/c/02_use_at.c"

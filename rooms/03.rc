@@ -1,5 +1,5 @@
 enter_room: default
-enter_tile: asm "rooms/asm/03_enter_tile.s"
+enter_tile: asm "rooms/c/03_enter_tile.c"
 
 look_at:
     at 10,6 -> script STORY_ROOM03_LOOK_CAULDRON
@@ -21,7 +21,7 @@ look_at:
     at 16,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 17,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 18,1 -> script STORY_ROOM03_LOOK_SHELVES
-    default -> asm "rooms/asm/03_look_at.s"
+    default -> asm "rooms/c/03_look_at.c"
 
 use_at:
     default -> GAME_USE_DEFAULT

@@ -7,9 +7,6 @@
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
 
-#pragma code-name ("HIGHCODE")
-#pragma rodata-name ("HIGHRODATA")
-
 static uint8_t key;
 static uint8_t command;
 static uint8_t look_x;

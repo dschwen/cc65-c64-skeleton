@@ -1,69 +1,29 @@
 #!/usr/bin/env python3
 """Compile a room-code DSL source file (a small declarative syntax covering
-the mechanical patterns real room code turns out to need) into 6502 assembly
-(.s), for assembling with cl65/ca65 exactly like a hand-written .s file.
+the mechanical patterns real room code turns out to need) into a C source
+file compiled directly into the oscar64 whole-program build, each room
+living in its own EasyFlash bank (see src/room_dispatch.c and
+src/rooms/room_table.h).
 
-This exists because room code (rooms/XX.c, compiled by cc65 - see
-ROOM_CODE_API.md) turns out to be almost entirely one of three mechanical
-shapes across every room in this project: an empty handler, an unconditional
+This DSL covers three mechanical shapes (an empty handler, an unconditional
 story-flag bump on tile entry, or a tile-coordinate dispatch to
-game_room_script_entry() from look_at()/use_at(). This DSL covers exactly
-those three shapes plus an escape hatch (a hand-written .s fragment) for
-genuinely custom logic (e.g. a room's enter_room() poking VIC-II registers
-directly for a weather effect), and compiles straight to the same body a
-room's cc65-compiled object file already exports (_enter_tile, _look_at,
-_enter_room, _use_at) - rooms/room_header.s, the resolver
-(tools/generate_room_resolver.py), the linker config (cfg/room_overlay.cfg),
-and the finalizer (tools/finalize_room_code.py) are all unchanged; they only
-ever cared about those four exported symbols and the final 24-byte header,
-never about how the room's own code was produced.
+game_room_script_entry() from look_at()/use_at()) plus an escape hatch (a
+hand-written C fragment in rooms/c/, one per room per handler) for genuinely
+custom logic. Each generated room provides four externally-callable,
+room-prefixed functions (roomNN_enter_room/_enter_tile/_look_at/_use_at)
+matching src/room_dispatch.c's RoomEntry contract; all four (and any spliced
+fragment) are placed in that room's own #pragma code()/data()/bss() bank
+section via src/banks.h's BANK_ROOM_FIRST + room index, and must be
+__noinline (a banked function that got inlined into resident code would
+silently stop being reachable through the intended bank switch - see
+memmap.h's far_call_bank() comment).
 
-This does NOT solve a size problem - compiled room overlays are nowhere near
-their 1024-byte ceiling today (the largest, room 00, uses under 20% of it).
-The point is authoring simplicity: a room's tile-dispatch/flag-bump logic is
-one declarative line each instead of hand-written C, and every room's
-dispatch pattern looks textually identical instead of hand-copied.
-
-DSL syntax:
-
-    enter_room: default
-    enter_tile: flag STORY_STATE_ROOM_00_TILE_ENTRY_COUNT increment
-
-    look_at:
-        at 18,3 -> script STORY_ROOM00_LOOK_TREE
-        default -> GAME_LOOK_DEFAULT
-
-    use_at:
-        at 18,3 -> script STORY_ROOM00_USE_TREE
-        default -> GAME_USE_DEFAULT
-
-`enter_room`/`enter_tile` take one line: `default` (empty handler, just
-`rts`), `flag NAME increment` (`++game_state.flags[NAME]`), `flag NAME set
-VALUE` (`game_state.flags[NAME] = VALUE`), or `asm "path"` (splices in a
-hand-written .s fragment exporting `_enter_room`/`_enter_tile` itself,
-verbatim, for logic no DSL statement covers - see rooms/asm/ for examples).
-
-`look_at`/`use_at` each start an indented block: zero or more `at X,Y ->
-script KEY` lines (tile-coordinate dispatch to game_room_script_entry(KEY),
-returning GAME_LOOK_HANDLED/GAME_USE_HANDLED on a match), followed by exactly
-one mandatory default line - either `default -> RETURN_CONST` (what to
-return when nothing matched - normally GAME_LOOK_DEFAULT/GAME_USE_DEFAULT,
-matching the C handlers' own fallback), or `default -> asm "path"` (an
-escape hatch mirroring enter_room/enter_tile's own: splices in a
-hand-written .s fragment for logic no `at` line can express, e.g. a
-condition on the player's own position or a tile's ID rather than a bare
-coordinate match - see rooms/asm/ for examples). The asm form's fragment
-must export `_look_at_fallback`/`_use_at_fallback` (matching whichever
-block it's used in) as an ordinary subroutine: called via plain `jsr` with
-tile_x/tile_y still on the software stack exactly as documented in
-gen_dispatch()'s own ABI comment, returning its result in A (X is zeroed by
-the caller) using the same GAME_LOOK/USE DEFAULT/HANDLED convention a
-matched `at` entry would, ending every path in `rts`. `#` starts a comment
-to end of line; blank lines are ignored.
-
-X, Y, KEY, and RETURN_CONST may be decimal/hex literals or symbols resolved
-against #define NAME VALUE lines in --flags (default src/story.h/src/game.h
-combined), the same convention tools/compile_script.py already uses.
+DSL syntax: unchanged from the original cc65-targeting generator - see
+git history for the full syntax doc. Only the `asm "path"` escape hatch
+changed meaning: `path` now names a C fragment (see rooms/c/*.c) providing
+a plain, room-generically-named function (enter_tile/enter_room/
+look_at_fallback/use_at_fallback), spliced in with its name substituted to
+the room-prefixed one.
 """
 
 from __future__ import annotations
@@ -75,19 +35,9 @@ from pathlib import Path
 
 DEFINE_RE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)")
 
-# GameState.flags[]'s byte offset within game_state (src/game.h) - turn(4) +
-# day(2) + hour(1) + minute(1) + current_room(1) + player_type(1) +
-# player_x(1) + player_y(1) + health(1) + maximum_health(1) + mana(1) +
-# maximum_mana(1) + pending_transition(1) + pending_room(1) + pending_x(1) +
-# pending_y(1) + inventory(32*2) = 84. Re-check this constant if GameState's
-# field order/size in src/game.h ever changes - nothing here derives it
-# automatically.
-GAME_STATE_FLAGS_OFFSET = 84
-
-# GAME_LOOK_DEFAULT/HANDLED and GAME_USE_DEFAULT/HANDLED are #defined in
-# src/game.h, not src/story.h - load both by default so `default ->
-# GAME_LOOK_DEFAULT` resolves without extra flags.
 DEFAULT_FLAG_FILES = (Path("src/story.h"), Path("src/game.h"))
+
+FRAGMENT_NAMES = ("enter_tile", "enter_room", "look_at_fallback", "use_at_fallback")
 
 
 def load_symbols(paths: list[Path]) -> dict[str, int]:
@@ -131,30 +81,23 @@ class AtEntry:
 
 
 class DispatchHandler:
-    """look_at/use_at: a list of `at X,Y -> script KEY` entries plus the
-    mandatory trailing default - either a literal return value or a spliced
-    asm fragment's fallback subroutine (see module docstring)."""
-
-    __slots__ = ("entries", "default_value", "default_asm_path")
+    __slots__ = ("entries", "default_value", "default_fragment_path")
 
     def __init__(self) -> None:
         self.entries: list[AtEntry] = []
         self.default_value: int | None = None
-        self.default_asm_path: str | None = None
+        self.default_fragment_path: str | None = None
 
 
 class SimpleHandler:
-    """enter_room/enter_tile: one of "default", ("flag", name, op, value),
-    or ("asm", path)."""
-
-    __slots__ = ("kind", "flag_index", "flag_op", "flag_value", "asm_path")
+    __slots__ = ("kind", "flag_index", "flag_op", "flag_value", "fragment_path")
 
     def __init__(self) -> None:
-        self.kind = "default"  # "default" | "flag" | "asm"
+        self.kind = "default"  # "default" | "flag" | "fragment"
         self.flag_index = 0
         self.flag_op = "increment"  # "increment" | "set"
         self.flag_value = 0
-        self.asm_path = ""
+        self.fragment_path = ""
 
 
 def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
@@ -179,7 +122,7 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                     i += 1
                     continue
                 if not inner_raw[:1].isspace():
-                    break  # next top-level statement
+                    break
                 i += 1
                 inner_no = i
                 if inner_line.startswith("at "):
@@ -198,7 +141,7 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                 elif inner_line.startswith("default"):
                     am = re.match(r'default\s*->\s*asm\s+"([^"]+)"$', inner_line)
                     if am:
-                        handler.default_asm_path = am.group(1)
+                        handler.default_fragment_path = am.group(1)
                     else:
                         m = re.match(r"default\s*->\s*(\S+)$", inner_line)
                         if not m:
@@ -211,7 +154,7 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                         f"line {inner_no}: expected 'at X,Y -> script KEY' or "
                         f"'default -> VALUE', got {inner_line!r}"
                     )
-            if handler.default_value is None and handler.default_asm_path is None:
+            if handler.default_value is None and handler.default_fragment_path is None:
                 raise SystemExit(
                     f"{name}: missing mandatory 'default -> VALUE' or "
                     "'default -> asm \"path\"' line"
@@ -240,8 +183,8 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                 am = re.match(r'asm\s+"([^"]+)"$', rest)
                 if not am:
                     raise SystemExit(f"line {line_no}: malformed asm statement: {rest!r}")
-                simple.kind = "asm"
-                simple.asm_path = am.group(1)
+                simple.kind = "fragment"
+                simple.fragment_path = am.group(1)
             else:
                 raise SystemExit(f"line {line_no}: unrecognized {name} statement: {rest!r}")
             handlers[name] = simple
@@ -255,110 +198,117 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
     return handlers
 
 
-def gen_simple(name: str, handler: SimpleHandler, out: list[str]) -> None:
-    if handler.kind == "asm":
-        # The escape hatch: splice the named .s fragment's own text in
-        # verbatim (it supplies its own .export _NAME, label, and body) -
-        # this keeps every room's code in one object file, so no change is
-        # needed to the linker inputs that assemble/link a room overlay.
-        fragment_path = Path(handler.asm_path)
-        if not fragment_path.exists():
-            raise SystemExit(f"{name}: asm fragment not found: {handler.asm_path}")
-        out.append(f"; {name}: spliced in verbatim from {handler.asm_path}")
-        out.append(fragment_path.read_text(encoding="utf-8").rstrip("\n"))
-        out.append("")
+def splice_fragment(path_str: str, prefix: str, out: list[str]) -> None:
+    """Reads a rooms/c/*.c fragment (a full function definition using one of
+    FRAGMENT_NAMES) and appends it with its function name replaced by
+    `prefix` + that name, so it becomes a uniquely-named symbol in the
+    whole-program build instead of colliding with every other room's
+    identically-named fragment."""
+    fragment_path = Path(path_str)
+    if not fragment_path.exists():
+        raise SystemExit(f"fragment not found: {path_str}")
+    text = fragment_path.read_text(encoding="utf-8")
+    renamed = False
+    for name in FRAGMENT_NAMES:
+        # Rename the function and mark it __noinline: every function placed
+        # in a bank's #pragma code() section must be, or oscar64's
+        # whole-program optimizer can inline it into resident code and
+        # silently defeat the bank switch (see memmap.h's far_call_bank()
+        # comment). Matches "void enter_tile(void) {" / "uint8_t
+        # look_at_fallback(uint8_t tile_x, uint8_t tile_y) {" - the return
+        # type token immediately before the function name.
+        pattern = re.compile(
+            rf"^((?:void|uint8_t)\s+){name}(\s*\()", re.MULTILINE
+        )
+        new_text, count = pattern.subn(rf"__noinline \1{prefix}{name}\2", text)
+        if count:
+            text = new_text
+            renamed = True
+            break
+    if not renamed:
+        raise SystemExit(
+            f"{path_str}: no recognized function name found "
+            f"(expected one of {FRAGMENT_NAMES})"
+        )
+    out.append(f"/* spliced from {path_str} */")
+    out.append(text.rstrip("\n"))
+    out.append("")
+
+
+def gen_simple(name: str, room_prefix: str, handler: SimpleHandler, out: list[str]) -> None:
+    fn_name = f"{room_prefix}{name}"
+    if handler.kind == "fragment":
+        splice_fragment(handler.fragment_path, room_prefix, out)
         return
-    out.append(f".export _{name}")
-    out.append('.segment "CODE"')
-    out.append(f"_{name}:")
-    if handler.kind == "default":
-        out.append("    rts")
-    elif handler.kind == "flag":
-        addr = f"_game_state+{GAME_STATE_FLAGS_OFFSET + handler.flag_index}"
+    out.append(f"__noinline void {fn_name}(void) {{")
+    if handler.kind == "flag":
         if handler.flag_op == "increment":
-            out.append(f"    inc {addr}")
+            out.append(f"    ++game_state.flags[{handler.flag_index}];")
         else:
-            out.append(f"    lda #{handler.flag_value}")
-            out.append(f"    sta {addr}")
-        out.append("    rts")
+            out.append(f"    game_state.flags[{handler.flag_index}] = {handler.flag_value};")
+    out.append("}")
     out.append("")
 
 
 def gen_dispatch(
-    name: str, handler: DispatchHandler, out: list[str], symbols: dict[str, int]
+    name: str, room_prefix: str, handler: DispatchHandler, out: list[str],
+    symbols: dict[str, int],
 ) -> None:
-    # Confirmed against cc65's own compiled output for this exact ABI
-    # (rooms/00.c's look_at/use_at): fastcall passes tile_y in A; `jsr
-    # pusha` pushes it, so after that call the stack holds (offset 1)
-    # tile_x - pushed by the caller before the call - and (offset 0)
-    # tile_y - just pushed here. Both handlers pop exactly those 2 bytes
-    # via `jmp incsp2` on every return path.
     handled_name = "GAME_LOOK_HANDLED" if name == "look_at" else "GAME_USE_HANDLED"
-    ret_handled = resolve(handled_name, symbols, 0)
-    out.append(f".export _{name}")
-    out.append('.segment "CODE"')
-    out.append(f"_{name}:")
-    out.append("    jsr pusha")
-    for n, entry in enumerate(handler.entries):
-        out.append(f"    ldy #1")
-        out.append(f"    lda (sp),y")
-        out.append(f"    cmp #{entry.x}")
-        out.append(f"    bne @miss{n}")
-        out.append(f"    ldy #0")
-        out.append(f"    lda (sp),y")
-        out.append(f"    cmp #{entry.y}")
-        out.append(f"    bne @miss{n}")
-        out.append(f"    lda #{entry.key}")
-        out.append("    jsr _game_room_script_entry")
-        out.append("    ldx #0")
-        out.append(f"    lda #{ret_handled}")
-        out.append("    jmp incsp2")
-        out.append(f"@miss{n}:")
-    if handler.default_asm_path:
-        fragment_path = Path(handler.default_asm_path)
-        if not fragment_path.exists():
-            raise SystemExit(
-                f"{name}: asm fragment not found: {handler.default_asm_path}"
-            )
-        out.append(f"    jsr _{name}_fallback")
-        out.append("    ldx #0")
-        out.append("    jmp incsp2")
-        out.append("")
-        out.append(f"; {name} fallback: spliced in verbatim from {handler.default_asm_path}")
-        out.append(fragment_path.read_text(encoding="utf-8").rstrip("\n"))
-        out.append("")
+    fn_name = f"{room_prefix}{name}"
+    default_call = f"{room_prefix}{name}_fallback(tile_x, tile_y)"
+
+    if handler.default_fragment_path:
+        splice_fragment(handler.default_fragment_path, room_prefix, out)
+
+    out.append(f"__noinline uint8_t {fn_name}(uint8_t tile_x, uint8_t tile_y) {{")
+    for entry in handler.entries:
+        out.append(f"    if (tile_x == {entry.x} && tile_y == {entry.y}) {{")
+        out.append(f"        (void)game_room_script_entry({entry.key});")
+        out.append(f"        return {handled_name};")
+        out.append("    }")
+    if handler.default_fragment_path:
+        out.append(f"    return {default_call};")
     else:
-        out.append("    ldx #0")
-        out.append(f"    lda #{handler.default_value}")
-        out.append("    jmp incsp2")
-        out.append("")
+        out.append(f"    return {handler.default_value};")
+    out.append("}")
+    out.append("")
 
 
-def generate(handlers: dict[str, object], symbols: dict[str, int]) -> str:
+def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int]) -> str:
+    room_prefix = f"room{room_id:02x}_"
+    bank_region = f"room{room_id:02x}"
     out: list[str] = [
-        "; Generated by tools/compile_room.py - do not edit by hand.",
-        ".setcpu \"6502\"",
+        "/* Generated by tools/compile_room.py - do not edit by hand. */",
+        "#include <stdint.h>",
+        '#include "game.h"',
+        '#include "banks.h"',
         "",
-        ".import _game_room_script_entry",
-        ".import _game_state",
-        ".import incsp2",
-        ".importzp sp",
-        ".import pusha",
+        f'#pragma section( {bank_region}code, 0 )',
+        f'#pragma section( {bank_region}data, 0 )',
+        f'#pragma region( {bank_region}bank, 0x8000, 0xc000, , '
+        f'BANK_ROOM_FIRST + {room_id}, {{ {bank_region}code, {bank_region}data }} )',
+        f"#pragma code({bank_region}code)",
+        f"#pragma data({bank_region}data)",
         "",
     ]
-    gen_simple("enter_tile", handlers["enter_tile"], out)  # type: ignore[arg-type]
-    gen_simple("enter_room", handlers["enter_room"], out)  # type: ignore[arg-type]
-    gen_dispatch("look_at", handlers["look_at"], out, symbols)  # type: ignore[arg-type]
-    gen_dispatch("use_at", handlers["use_at"], out, symbols)  # type: ignore[arg-type]
+    gen_simple("enter_tile", room_prefix, handlers["enter_tile"], out)  # type: ignore[arg-type]
+    gen_simple("enter_room", room_prefix, handlers["enter_room"], out)  # type: ignore[arg-type]
+    gen_dispatch("look_at", room_prefix, handlers["look_at"], out, symbols)  # type: ignore[arg-type]
+    gen_dispatch("use_at", room_prefix, handlers["use_at"], out, symbols)  # type: ignore[arg-type]
+    out.append("#pragma code(code)")
+    out.append("#pragma data(data)")
+    out.append("")
     return "\n".join(out) + "\n"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compile a room-code DSL source file into 6502 assembly."
+        description="Compile a room-code DSL source file into oscar64 C."
     )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--room-id", type=lambda s: int(s, 0), required=True)
     parser.add_argument(
         "--flags",
         type=Path,
@@ -372,7 +322,7 @@ def main() -> None:
     flag_files = args.flags if args.flags else list(DEFAULT_FLAG_FILES)
     symbols = load_symbols(flag_files)
     handlers = parse(args.input.read_text(encoding="utf-8"), symbols)
-    output = generate(handlers, symbols)
+    output = generate(args.room_id, handlers, symbols)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(output, encoding="utf-8")
     print(f"{args.input} -> {args.output} ({len(output)} chars)")

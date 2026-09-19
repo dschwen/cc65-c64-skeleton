@@ -1,5 +1,5 @@
 enter_room: default
-enter_tile: asm "rooms/asm/00_enter_tile.s"
+enter_tile: asm "rooms/c/00_enter_tile.c"
 
 look_at:
     at 18,3 -> script STORY_ROOM00_LOOK_TREE

@@ -1,10 +1,7 @@
 #include "game.h"
 #include "world.h"
 
-#pragma code-name ("UPPERCODE")
-#pragma rodata-name ("UPPERRODATA")
-
-void __fastcall__ platform_text_output_native(const char* text);
+void platform_text_output_native(const char* text);
 uint8_t platform_text_output_color;
 uint8_t platform_text_output_line;
 
@@ -15,7 +12,6 @@ uint8_t platform_text_output_line;
  * caller can tell "nothing here" from "something here, but not takeable"
  * even when the takeable count is zero.
  */
-#pragma code-name (push, "HIGHCODE")
 static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
                                 uint8_t wanted, uint8_t* found_slot,
                                 uint8_t* any_present) {
@@ -44,7 +40,6 @@ static uint8_t take_object_find(uint8_t tile_x, uint8_t tile_y,
     }
     return count;
 }
-#pragma code-name (pop)
 
 uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
     uint8_t count;
@@ -165,22 +160,51 @@ uint8_t game_inventory_remove(uint8_t type, uint8_t quantity) {
     return PLATFORM_OK;
 }
 
-uint8_t __fastcall__ game_inventory_has_one(uint8_t type) {
+uint8_t game_inventory_has_one(uint8_t type) {
     return game_inventory_has(type, 1u);
 }
 
-void __fastcall__ game_inventory_remove_one(uint8_t type) {
+void game_inventory_remove_one(uint8_t type) {
     (void)game_inventory_remove(type, 1u);
 }
 
-void __fastcall__ game_inventory_add_one(uint8_t type) {
+void game_inventory_add_one(uint8_t type) {
     (void)game_inventory_add(type, 1u);
 }
 
-/* game_ignite_brazier() lives in src/brazier.s, hand-written - cc65's
- * codegen for the equivalent C loop (reloading the object pointer from the
- * software stack on every single field access) ran to ~500 bytes, blowing
- * HIGHCODE's already-tight budget for what should be a small function. */
+/*
+ * Locate an unlit Brazier (object type 41) at tile_x/tile_y and, if the
+ * player carries a Lit Taper (type 53), swap it for a Lit Brazier (type
+ * 40) - see rooms/asm/04_use_at.s and MOONFEN_STORY_DESIGN.md's "Lighting
+ * the sconces". Returns GAME_USE_DEFAULT when no unlit brazier occupies
+ * the tile. Was hand-written 6502 (src/brazier.s) purely because cc65's
+ * codegen for this loop ran to ~500 bytes reloading the object pointer
+ * from the software stack on every field access - oscar64 does not share
+ * that weakness (Phase 0 measured ~2x denser codegen for comparable
+ * loops), so this is ordinary C over the real room->objects array.
+ */
+uint8_t game_ignite_brazier(uint8_t tile_x, uint8_t tile_y) {
+    uint8_t has_taper = game_inventory_has_one(53u); /* LIT_TAPER_TYPE */
+    uint16_t i;
+    uint16_t limit = platform_room_object_limit(&platform_room);
+
+    for (i = 0u; i < limit; ++i) {
+        PlatformObject* object = &platform_room.objects[i];
+        if (object->type != 41u) continue; /* BRAZIER_UNLIT_TYPE */
+        if ((object->x >> 1) != tile_x || (object->y >> 1) != tile_y) continue;
+
+        if (has_taper) {
+            object->type = 40u; /* BRAZIER_LIT_TYPE */
+            (void)game_world_capture_current();
+            platform_room_draw(&platform_room, platform_player);
+            (void)game_room_script_entry(3u); /* STORY_ROOM04_LIGHT_BRAZIER */
+        } else {
+            (void)game_room_script_entry(4u); /* STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM */
+        }
+        return GAME_USE_HANDLED;
+    }
+    return GAME_USE_DEFAULT;
+}
 
 uint8_t game_take_object(uint8_t slot) {
     PlatformObject* object;

@@ -67,37 +67,6 @@ void platform_irq_restore(uint8_t status) {
     }
 }
 
-/* Clear the hot-object-type arena (all 256 PlatformObjectType records) to
- * all zero, used only for the no-cartridge PRG fallback path before the
- * first two initial records are copied in. */
-void platform_object_types_clear(void) {
-    uint8_t i;
-    for (i = 0u; i < OBJECT_TYPE_ZONE_A_COUNT; ++i) {
-        object_types_a[i] = (PlatformObjectType){0};
-    }
-    for (i = 0u; i < OBJECT_TYPE_ZONE_B_COUNT; ++i) {
-        object_types_b[i] = (PlatformObjectType){0};
-    }
-    for (i = 0u; i < OBJECT_TYPE_ZONE_C_COUNT; ++i) {
-        object_types_c[i] = (PlatformObjectType){0};
-    }
-}
-
-/* Detects the EasyFlash cartridge boot marker cart/ef_boot equivalent
- * writes before jumping to main() - see the oscar64 startup/boot section.
- * Clears the marker so a warm reset doesn't misread a stale value. */
-uint8_t platform_boot_is_easyflash(void) {
-    uint8_t result;
-    if (*CART_MARKER_ADDR == CART_MARKER_0 && *(CART_MARKER_ADDR + 1) == CART_MARKER_1) {
-        result = 1u;
-    } else {
-        result = 0u;
-    }
-    *CART_MARKER_ADDR = 0u;
-    *(CART_MARKER_ADDR + 1) = 0u;
-    return result;
-}
-
 /* Copy `size` bytes from EasyFlash bank `bank`, offset `offset` within the
  * ROML (8000-9FFF) or ROMH (A000-BFFF) half, to `destination`. Replaces
  * src/banking.s's easyflash_copy_roml/romh, which used the FAR_CALL

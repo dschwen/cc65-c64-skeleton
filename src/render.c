@@ -12,8 +12,8 @@
  * self-modifying code.
  */
 
-extern uint8_t tile_data[];
-extern uint8_t tile_properties[];
+extern const uint8_t tile_data[];
+extern const uint8_t tile_properties[];
 
 /* Tile/color draw loop - one pass over the 20x11 tile grid, each tile
  * expanding to a 2x2 screen/color cell. TILE_DATA is 8 bytes/tile: top-left

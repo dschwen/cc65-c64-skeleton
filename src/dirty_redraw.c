@@ -113,7 +113,7 @@ static uint8_t object_cell_try(const PlatformObject* object, uint8_t curx, uint8
 /* Sets *out_ch/*out_color from the room tile under (curx,cury). */
 static void base_cell(const PlatformRoom* room, uint8_t curx, uint8_t cury,
                       uint8_t* out_ch, uint8_t* out_color) {
-    extern uint8_t tile_data[];
+    extern const uint8_t tile_data[];
     uint16_t tile_offset = (uint16_t)(cury >> 1) * MAP_WIDTH_TILES + (curx >> 1);
     uint8_t tile = room->tiles[tile_offset];
     const uint8_t* def = tile_data + ((uint16_t)tile << 3);

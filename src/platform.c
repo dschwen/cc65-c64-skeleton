@@ -24,7 +24,6 @@
  */
 
 #define P_OBJECT_TYPE_STAGE ((uint8_t*)0xb000u)
-#define INITIAL_OBJECT_TYPE_COUNT 2u
 
 #define WALL_CACHE_QUADRANT_NW 0x01u
 #define WALL_CACHE_QUADRANT_NE 0x02u
@@ -36,14 +35,9 @@
 #define HOTSPOT_X(t)     ((uint8_t)((t)->hotspot >> 4))
 #define HOTSPOT_Y(t)     ((uint8_t)((t)->hotspot & 0x0fu))
 
-/* Reserved destinations platform_init() fetches
- * PLATFORM_RESOURCE_KIND_ASSET resources into - see src/assets.c. */
-extern uint8_t charset_tile[];
-extern uint8_t charset_text[];
-extern uint8_t tile_data[];
-extern uint8_t tile_properties[];
-extern const uint8_t initial_room_data[];
-extern const uint8_t initial_object_type_data[];
+/* Tile bitmaps/properties - compile-time data, see src/assets_data.c. */
+extern const uint8_t tile_data[];
+extern const uint8_t tile_properties[];
 
 void raster_irq_install(void);
 void raster_irq_vectors_restore(void);
@@ -57,8 +51,6 @@ void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destinati
 void platform_easyflash_copy_romh(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
 uint8_t platform_irq_save_disable(void);
 void platform_irq_restore(uint8_t status);
-void platform_object_types_clear(void);
-uint8_t platform_boot_is_easyflash(void);
 
 /* render.c */
 void platform_map_draw_native(const PlatformRoom* room);
@@ -126,6 +118,7 @@ PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
 /* Filled in by the banked TypeInfo service (bank 1) - see
  * platform_object_type_info_get() below. */
 PlatformObjectTypeInfo platform_object_type_info_scratch;
+uint8_t typeinfo_query_type_id;
 
 const PlatformObjectType* native_object_type;
 uint8_t native_object_source;
@@ -396,10 +389,15 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
     return limit;
 }
 
+/*
+ * Object types, charsets, and tile data no longer need a boot-time fetch
+ * or a non-cartridge PRG fallback: under oscar64's whole-program model
+ * they are ordinary compile-time-embedded program data (see
+ * src/object_types_data.c, src/assets_data.c), always present exactly as
+ * shipped in the cartridge image. Room 0 is loaded from its own bank the
+ * same way every other room transition works.
+ */
 void platform_init(void) {
-    uint8_t cartridge;
-
-    cartridge = platform_boot_is_easyflash();
     *((volatile uint8_t*)0xdd00u) &= 0xfcu;
     ((volatile uint8_t*)0xd000u)[0x20] = 0u;
     ((volatile uint8_t*)0xd000u)[0x21] = 0u;
@@ -412,26 +410,8 @@ void platform_init(void) {
     platform_room_light_level = PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL;
     platform_room_los_enabled = 1u;
     (void)platform_irq_save_disable();
-    if (!cartridge) {
-        platform_object_types_clear();
-        memcpy(object_types_a, initial_object_type_data,
-               INITIAL_OBJECT_TYPE_COUNT * sizeof(PlatformObjectType));
-    }
     platform_memory_game();
-    memcpy(&platform_room, initial_room_data, sizeof(platform_room));
-    if (cartridge) {
-        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
-                                      PLATFORM_ASSET_CHARSET_TILE,
-                                      charset_tile, 2048u);
-        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
-                                      PLATFORM_ASSET_CHARSET_TEXT,
-                                      charset_text, 2048u);
-        (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_ASSET,
-                                      PLATFORM_ASSET_TILES,
-                                      tile_data, 2048u + 256u);
-        (void)platform_object_types_load();
-        (void)platform_room_load(&platform_room, 0u);
-    }
+    (void)platform_room_load(&platform_room, 0u);
     platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
     env_install_null();
@@ -494,21 +474,6 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
     status = room_stage_load(room_id);
     if (status != PLATFORM_OK) return status;
     room_commit(room, room_id);
-    return PLATFORM_OK;
-}
-
-uint8_t platform_object_types_load(void) {
-    platform_easyflash_copy_roml(BANK_TYPEINFO, 0u, object_types_a,
-                                 OBJECT_TYPE_ZONE_A_COUNT * sizeof(PlatformObjectType));
-    platform_easyflash_copy_roml(BANK_TYPEINFO,
-                                 OBJECT_TYPE_ZONE_A_COUNT * sizeof(PlatformObjectType),
-                                 object_types_b,
-                                 OBJECT_TYPE_ZONE_B_COUNT * sizeof(PlatformObjectType));
-    platform_easyflash_copy_roml(BANK_TYPEINFO,
-                                 OBJECT_TYPE_ZONE_AB_COUNT * sizeof(PlatformObjectType),
-                                 object_types_c,
-                                 OBJECT_TYPE_ZONE_C_COUNT * sizeof(PlatformObjectType));
-    raster_irq_vectors_restore();
     return PLATFORM_OK;
 }
 

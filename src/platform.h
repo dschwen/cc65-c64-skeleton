@@ -238,9 +238,6 @@ uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
 uint8_t* platform_room_scratch(void);
 uint16_t platform_room_scratch_bytes(void);
 
-/* Load all 256 fixed-size object types from EasyFlash. */
-uint8_t platform_object_types_load(void);
-
 /*
  * Resolve the resident hot record. Most IDs point directly into resident
  * RAM; a middle range is staged from RAM beneath I/O and a high range from

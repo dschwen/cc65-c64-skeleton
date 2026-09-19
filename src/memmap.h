@@ -34,8 +34,17 @@
 #pragma section( hote000, 0, , , bss )
 #pragma region( hote000region, 0xe000, 0xe800, , , { hote000 } )
 
-#pragma section( vicassets, 0, , , bss )
-#pragma region( vicassetsregion, 0xe800, 0xfe00, , , { vicassets } )
+/* VIC bank 3 fixed layout: the VIC-II reads charset/screen memory from
+ * exact physical addresses selected by $D018 (see src/irq.c's
+ * TILE_MEMPTR/TEXT_MEMPTR), so these need precise placement, not just
+ * "somewhere in a region" - two separate regions rather than one shared
+ * one. Screen RAM/sprite data are addressed directly via SCREEN_RAM/
+ * SPRITE_DATA below (no C array is declared there, so no region/section
+ * is needed for them). */
+#pragma section( charsettile, 0, , , data )
+#pragma region( charsettileregion, 0xe800, 0xf000, , , { charsettile } )
+#pragma section( charsettext, 0, , , data )
+#pragma region( charsettextregion, 0xf000, 0xf800, , , { charsettext } )
 
 /* Fixed hardware addresses, same choices as the original cc65 build. */
 #define SCREEN_RAM          ((uint8_t*)0xf800u)
@@ -52,10 +61,6 @@
 #define MAP_HEIGHT_CHARS    22u
 #define ROOM_OBJECTS        (ROOM_TILES + MAP_WIDTH_TILES * MAP_HEIGHT_TILES)
 #define ROOM_FILE_BYTES     (ROOM_OBJECTS + 256u * 3u)
-
-#define CART_MARKER_ADDR    ((volatile uint8_t*)0x033cu)
-#define CART_MARKER_0       0xefu
-#define CART_MARKER_1       0x64u
 
 /* The current room's environment module (weather + ambient sound) - see
  * PLATFORM_API.md's "Room environment module". Copied in from EasyFlash at

@@ -70,10 +70,27 @@
 #pragma region( envcoderegion, 0x7e00, 0x8000, , , { envcode } )
 #define ENVCODE_BASE    ((uint8_t*)0x7e00u)
 #define ENVCODE_SIZE    0x0200u
-#define ENVCODE_INIT    ((void (*)(void))0x7e00u)
-#define ENVCODE_TICK    ((void (*)(void))0x7e03u)
-#define ENVCODE_ENABLE  ((void (*)(void))0x7e06u)
-#define ENVCODE_DISABLE ((void (*)(void))0x7e09u)
+
+/* Every compiled environment module (see rooms/env/*.c) starts with this
+ * table of four function pointers - not raw JMP instructions like the old
+ * ca65 design's fixed-offset jump table, since oscar64 places a module's
+ * own init/tick/enable/disable wherever the compiler chooses. Each
+ * module's own `const EnvTable env_table = {...}` is placed first in its
+ * data section (see rooms/env/*.c) and kept alive with #pragma
+ * reference(), so it always lands at the copied blob's byte 0 - exactly
+ * the address these four macros read through once platform_resource_
+ * fetch()/game_enter_room() has copied that module here. */
+typedef struct EnvTable {
+    void (*init)(void);
+    void (*tick)(void);
+    void (*enable)(void);
+    void (*disable)(void);
+} EnvTable;
+#define ENVCODE_TABLE ((const EnvTable*)0x7e00u)
+#define ENVCODE_INIT()    (ENVCODE_TABLE->init())
+#define ENVCODE_TICK()    (ENVCODE_TABLE->tick())
+#define ENVCODE_ENABLE()  (ENVCODE_TABLE->enable())
+#define ENVCODE_DISABLE() (ENVCODE_TABLE->disable())
 
 /*
  * Switch to `bank`, call `fn`, then restore whatever bank was active before -

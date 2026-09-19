@@ -2,7 +2,11 @@
 
 #include "game.h"
 #include "world.h"
+#include "memmap.h"
+#include "banks.h"
+#include "../rooms/env_banks.h"
 
+void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
 void game_room_enter_tile_native(void);
 uint8_t game_room_look_at_native(uint8_t tile_x, uint8_t tile_y);
 void game_room_enter_room_native(void);
@@ -41,13 +45,20 @@ void game_enter_tile(void) {
  * EasyFlash bank-copy into IRQ-reachable memory (env_init(), and the
  * fetch's own destination, are both live the moment the raster IRQ's next
  * tick runs). The caller must already be inside a raster_irq_suspend()/
- * platform_screen_blank() bracket covering the whole room switch. */
+ * platform_screen_blank() bracket covering the whole room switch. Unlike
+ * the old generic resource-directory fetch, each environment module is
+ * its own small EasyFlash bank (rooms/env/*.c) looked up directly by room
+ * ID - no checksum needed, since the module is a compiled, linked part of
+ * this same program rather than a separately-packed, runtime-validated
+ * blob. */
 void game_enter_room(void) {
+    uint8_t bank;
     platform_rain_disable();
-    if (platform_resource_fetch(PLATFORM_RESOURCE_KIND_ENVIRONMENT,
-                                game_state.current_room, ENVCODE_BASE,
-                                ENVCODE_SIZE) == 0u) {
+    bank = env_bank_for_room(game_state.current_room);
+    if (bank == 0xffu) {
         env_install_null();
+    } else {
+        platform_easyflash_copy_roml(bank, 0u, ENVCODE_BASE, ENVCODE_SIZE);
     }
     env_init();
     game_room_enter_room_native();

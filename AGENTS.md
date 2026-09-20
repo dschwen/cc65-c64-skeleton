@@ -13,7 +13,8 @@ covers project-specific boot and banking.
 - Build CRT: `make` or `make cartridge`.
 - Set `OSCAR64=/home/daniel/Programs/oscar64/build/oscar64` if not on PATH.
 - Run: `make run` or `make run-cartridge`.
-- Regression: `make test` (requires VICE, Xvfb and python3-xlib).
+- Regression: `make test` (requires VICE, Xvfb, python3-xlib and c1541); it
+  includes an F1 save / F3 load round trip on a disposable D64.
 - Direct VICE commands must use `xvfb-run -a x64sc ...` in this headless environment.
 - Send test keypresses via Xvfb/XTest, not KERNAL keyboard-buffer injection.
 - Outputs: `build/game.crt`, `game.map`, `game.lbl`, `game.asm`.
@@ -42,6 +43,16 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
 - Whole-program optimization can inline across boundaries: mark banked entries
   `__noinline`, leave mutable state resident, and use `far_call_bank`.
 - Restore banks through `platform_cart_bank`; `$DE00` is write-only.
+- `far_call_bank()` may only be expanded in **resident** code. It writes `$DE00`
+  inline; from inside `$8000-$BFFF` the next instruction fetch comes from the
+  new bank and execution runs away. Banked code reaching another bank calls a
+  resident `__noinline` trampoline (`platform_disk_read()` etc. in
+  `src/disk_io.c`, `saveload_save_show()` in `modules/saveload.c`), naming its
+  target literally. `tools/check_bank_switches.py` enforces this in `make`.
+- Verify Oscar64 output for pointer-walking loops on data that gets persisted:
+  `*q++ = *src++` loops were miscompiled at `-Os` (post-loop `q` advance
+  dropped). Prefer `copy_bytes()`/`memcpy` plus an explicit advance, and
+  self-check encoded sizes. Details and repro: OSCAR64_BUG_POINTER_LOOP_ADVANCE.md.
 - Resident code/state and stacks must stay outside `$8000-$BFFF`;
   main ends before the `$7E00` environment window.
 - Keep charset, screen and sprite data in high VIC-bank-3 RAM beneath KERNAL.

@@ -195,16 +195,93 @@ def check(root, monitor, artifacts):
         assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0"
         print(f"PASS: room {room:02d} environment and frame progression", flush=True)
 
+    # Save/load round trip on the disposable D64 attached as device 8. Disk
+    # I/O suspends the raster IRQ, so no input polls (the monitor's sync
+    # points) happen for as long as the emulated 1541 takes - allow for it.
+    # F1 also crosses banks 6 -> 14 -> 7 -> 14, which crashed when banked
+    # code expanded far_call_bank() inside the $8000-$BFFF window.
+    monitor.connection.settimeout(240)
+    monitor.command("delete")
+    monitor.command(f"break exec {poll_return:04x}")
+
+    def player_bytes():
+        pointer = int.from_bytes(monitor.memory(labels["platform_player"], 2), "little")
+        return monitor.memory(pointer, 3)
+
+    saved = player_bytes()
+    press("F1", 133)
+    assert monitor.memory(labels["text_screen_active"], 1) == b"\1", "save browser not entered"
+    assert monitor.memory(labels["saveload_mode"], 1) == b"\0", "not in save mode"
+    monitor.command(f'screenshot "{artifacts / "save-browser.png"}" 2')
+    press("Down", 17)
+    press("Return", 13)
+    assert monitor.memory(labels["saveload_selected_slot"], 1) == b"\1", "slot 1 not selected"
+    monitor.command(f'screenshot "{artifacts / "save-name.png"}" 2')
+    press("a", 65)
+    press("b", 66)
+    press("Return", 13)
+    monitor.command(f'screenshot "{artifacts / "save-done.png"}" 2')
+    # "Saved." at column 2, row 10 of the screen (vs. "Save failed.").
+    assert monitor.memory(0xf800 + 10 * 40 + 2, 6, "ram") == bytes([83, 1, 22, 5, 4, 46]), \
+        "save did not report success"
+    press("space", 32)
+    assert monitor.memory(labels["text_screen_active"], 1) == b"\0", "save did not return to gameplay"
+    assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0", "bank not restored after save"
+    assert player_bytes() == saved, "save changed the player"
+    print("PASS: Xvfb F1 save (browser, name entry, write, readback, index)", flush=True)
+
+    press("Down", 17)
+    assert player_bytes() != saved, "player did not move after save"
+    press("F3", 134)
+    assert monitor.memory(labels["text_screen_active"], 1) == b"\1", "load browser not entered"
+    assert monitor.memory(labels["saveload_mode"], 1) == b"\1", "not in load mode"
+    monitor.command(f'screenshot "{artifacts / "load-browser.png"}" 2')
+    press("Down", 17)
+    press("Return", 13)
+    polls(10)
+    assert monitor.memory(labels["text_screen_active"], 1) == b"\0", "load did not return to gameplay"
+    assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0", "bank not restored after load"
+    assert player_bytes() == saved, "load did not restore the saved player position"
+    monitor.command(f'screenshot "{artifacts / "loaded.png"}" 2')
+    print("PASS: Xvfb F3 load restores the saved state", flush=True)
+
+
+def check_save_disk(disk, c1541, artifacts):
+    """After VICE exits: the disposable image holds a valid slot 1 and index."""
+    listing = subprocess.run([c1541, "-attach", str(disk), "-list"],
+                             capture_output=True, text=True, check=True).stdout
+    for name in ("s1", "sindex"):
+        assert f'"{name}"' in listing.lower(), f"{name} missing from disk:\n{listing}"
+    record = artifacts / "s1.bin"
+    # Save files are SEQ: c1541 -read defaults to PRG and needs the ",s" type.
+    subprocess.run([c1541, "-attach", str(disk), "-read", "s1,s", str(record)],
+                   capture_output=True, check=True)
+    data = record.read_bytes()
+    assert data[:4] == b"C64S" and data[4] == 1, "bad save header"
+    length = int.from_bytes(data[10:12], "little")
+    checksum = int.from_bytes(data[12:14], "little")
+    assert len(data) == 16 + length, "save size does not match its header"
+    # v1 layout: 130-byte prefix + five bytes per room delta.
+    assert length >= 130 and (length - 130) % 5 == 0, f"bad payload length {length}"
+    assert sum(data[16:]) & 0xffff == checksum, "save checksum mismatch"
+    assert data[16:18] == b"AB", "save name not stored"
+    print("PASS: save disk holds valid S1 record and SINDEX", flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vice", default="x64sc")
+    parser.add_argument("--c1541", default="c1541")
     parser.add_argument("--artifacts", type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     artifacts = (args.artifacts or Path(tempfile.mkdtemp(prefix="oscar-boot-"))).resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
     print(f"Artifacts: {artifacts}", flush=True)
+    # Disposable save disk: never the user's build/saves.d64.
+    disk = artifacts / "test-saves.d64"
+    subprocess.run([args.c1541, "-format", "TEST,00", "d64", str(disk)],
+                   capture_output=True, check=True)
     with socket.socket() as port_probe:
         port_probe.bind(("127.0.0.1", 0))
         port = port_probe.getsockname()[1]
@@ -212,7 +289,8 @@ def main():
         process = subprocess.Popen([
             args.vice, "-default", "+sound", "-pal", "-jamaction", "1", "-remotemonitor",
             "-remotemonitoraddress", f"ip4://127.0.0.1:{port}",
-            "-cartcrt", str(root / "build/game.crt")], stdout=log, stderr=log)
+            "-cartcrt", str(root / "build/game.crt"), "-8", str(disk)],
+            stdout=log, stderr=log)
         monitor = None
         try:
             deadline = time.monotonic() + 10
@@ -242,6 +320,7 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+    check_save_disk(disk, args.c1541, artifacts)
 
 
 if __name__ == "__main__":

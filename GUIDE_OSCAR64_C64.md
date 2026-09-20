@@ -101,7 +101,10 @@ Manual sections: “Linker control”, “Placement”, “Additional BSS sectio
 register write. Use the compiler's mapping-aware hardware declarations or
 the established resident helpers, not an ordinary byte pointer to a bank port.
 
-Use `far_call_bank` from `src/memmap.h` and `__noinline` banked entries.
+Use `far_call_bank` from `src/memmap.h` and `__noinline` banked entries, but
+expand it only in resident code (it writes `$DE00` inline; inside the window
+the next fetch would come from the new bank). Bank-to-bank calls go through a
+resident `__noinline` trampoline.
 The software shadow `platform_cart_bank` is authoritative: `$DE00` is
 write-only. Ordinary pointers contain no bank identity; a pointer into ROM
 is usable only while its bank is selected. Never return a bank-local string

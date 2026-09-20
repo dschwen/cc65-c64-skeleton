@@ -26,8 +26,8 @@
  * because oscar64's krnio_* library (c64/kernalio.h) it's built on pulls in
  * enough code to overflow the resident "main" region (see memmap.h)
  * alongside everything else that now needs to be resident. Called from the
- * SL/SV banks with an ordinary far_call_bank(), same as any other
- * cross-bank call. */
+ * SL/SV banks through resident trampolines (platform_disk_read() etc. in
+ * src/disk_io.c) - far_call_bank() itself may not be expanded inside a bank. */
 #define BANK_DISK_IO        14u
 
 /* Tile/text charsets and source copy of tile_data/tile_properties

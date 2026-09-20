@@ -125,6 +125,7 @@ HEADERS := $(wildcard src/*.h modules/*.h rooms/*.h rooms/env/*.h)
 
 $(OUT_CRT): Makefile $(SRC_C) $(HEADERS) $(ROOM_ASSETS) $(ROOM_SOURCES) $(SCRIPT_SOURCES) $(OBJECTS_HOT) $(OBJECTS_COLD) assets/charset.cchr assets/tiles.ctil | $(OUTDIR)
 	$(OSCAR64) $(OFLAGS) $(INCLUDES) -i=$(OUTDIR)/scripts $(SRC_C) $(ROOM_SOURCES) $(SCRIPT_SOURCES) -o=$@
+	python3 tools/check_bank_switches.py $(OUTDIR)/game.asm || { rm -f $@; exit 1; }
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
@@ -137,7 +138,7 @@ run run-cartridge: $(OUT_CRT) $(SAVE_DISK)
 	$(XVFB_RUN) $(VICE) -cartcrt $(OUT_CRT) -8 "$(SAVE_DISK)"
 
 test: $(OUT_CRT)
-	$(XVFB_RUN) python3 tools/test_oscar_boot.py --vice "$(VICE)"
+	$(XVFB_RUN) python3 tools/test_oscar_boot.py --vice "$(VICE)" --c1541 "$(C1541)"
 
 clean:
 	rm -rf $(OUTDIR)

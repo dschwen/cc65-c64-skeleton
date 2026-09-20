@@ -49,7 +49,11 @@ typedef struct EnvTable {
 
 /* HIRAM and LORAM must be set to expose the 16 KiB cartridge window.
  * $DE00 is write-only: use a software shadow to restore nested banks.
- * Banked entries must be __noinline to keep bank-local accesses in bank. */
+ * Banked entries must be __noinline to keep bank-local accesses in bank.
+ * far_call_bank() may ONLY be expanded in resident code: it writes $DE00
+ * inline, so from inside $8000-$BFFF the next fetch comes from the new bank.
+ * Banked code reaching another bank must call a resident __noinline
+ * trampoline (see src/disk_io.c). tools/check_bank_switches.py enforces this. */
 extern uint8_t platform_cart_bank;
 #define far_call_bank(bank_, fn_) do { \
     uint8_t saved__ = platform_cart_bank; \

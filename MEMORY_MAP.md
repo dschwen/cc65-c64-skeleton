@@ -71,7 +71,8 @@ through that change. Preserve the cassette-port bits when changing mapping.
 
 `$DE00` is write-only. `platform_cart_bank` is the authoritative software
 shadow; `far_call_bank()` saves/restores it around nested banked calls.
-All banked entry functions are `__noinline`.
+All banked entry functions are `__noinline`. `far_call_bank()` is
+resident-only: banked code reaches another bank via a resident trampoline.
 
 CPU writes to `$E000-$FFFF` reach underlying RAM while KERNAL is visible,
 but reads return ROM bytes. The resident `platform_copy_vic_ram()` gate

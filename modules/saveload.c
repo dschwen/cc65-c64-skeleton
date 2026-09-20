@@ -21,6 +21,15 @@ uint8_t saveload_mode;
 uint8_t saveload_selected_slot;
 uint8_t saveload_load_pending;
 
+/* Resident trampoline into the SV bank. game_save_show() below lives inside
+ * bank 6, and far_call_bank() may only be expanded from resident code (it
+ * writes $DE00 inline; from inside the window the next fetch would come from
+ * the new bank). Target named literally, never via a pointer. */
+void saveload_save_entry(void);
+__noinline void saveload_save_show(void) {
+    far_call_bank(BANK_SAVELOAD_SAVE, saveload_save_entry);
+}
+
 #pragma section( saveload_code, 0 )
 #pragma section( saveload_data, 0 )
 #pragma region( saveload_bank, 0x8000, 0xc000, , BANK_SAVELOAD,
@@ -60,10 +69,9 @@ uint8_t saveload_load_pending;
 #define SCREEN_ROWS   25u
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 
-/* src/disk_io.c: KERNAL serial-bus block I/O. Ordinary resident functions
- * under oscar64 - EasyFlash banking only affects $8000-$BFFF, so calling
- * resident code from this banked module needs no gate, just an ordinary
- * function call (see memmap.h's header comment). */
+/* src/disk_io.c: KERNAL serial-bus block I/O, reached through the resident
+ * platform_disk_*() trampolines (saveload_abi.h) - never by expanding
+ * far_call_bank() here, which would switch banks from inside the window. */
 extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
@@ -140,7 +148,7 @@ static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = want;
-    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
+    platform_disk_read();
     return platform_disk_got;
 }
 
@@ -231,7 +239,7 @@ static void build_slot_list(void) {
 
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
-    far_call_bank(BANK_DISK_IO, platform_disk_index_read_block);
+    platform_disk_index_read();
     got = platform_disk_got;
     if (index_valid(got)) {
         decode_index();
@@ -258,7 +266,7 @@ static void build_slot_list(void) {
     decode_index();
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
-    far_call_bank(BANK_DISK_IO, platform_disk_index_write_block);
+    platform_disk_index_write();
 }
 
 /* ---- full record load + validate (does not touch game state) */
@@ -273,7 +281,7 @@ static uint8_t load_full(uint8_t slot) {
     platform_disk_slot = slot;
     platform_disk_buffer = SAVE_RECORD_RAM;
     platform_disk_want = SAVE_MAX_BYTES;
-    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
+    platform_disk_read();
     got = platform_disk_got;
     if (!header_valid(got)) return 0u;
     payload_len = get16(SAVE_RECORD_RAM + 10);
@@ -403,11 +411,12 @@ __noinline void saveload_entry(void) {
  * game_inventory_show() moving into modules/inventory.c - see that file's
  * own comment. Reached directly with far_call_bank(BANK_SAVELOAD, ...)
  * from src/main.c; saveload_entry() above is an ordinary intra-bank call
- * from here (no far_call_bank() needed, already in BANK_SAVELOAD), while
- * reaching saveload_save_entry() (a different bank) still needs one. */
+ * from here (no bank switch needed, already in BANK_SAVELOAD). Reaching
+ * another bank goes through a resident trampoline (saveload_save_show()
+ * above, platform_disk_*() in src/disk_io.c): far_call_bank() must never be
+ * expanded from inside a bank. */
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
-void saveload_save_entry(void);
 void platform_tiles_load(void);
 
 static uint16_t saveload_get16(const uint8_t* p) {
@@ -530,7 +539,7 @@ __noinline void game_save_show(void) {
     result = PLATFORM_OK;
 
     if (saveload_selected_slot != SAVELOAD_SLOT_NONE) {
-        far_call_bank(BANK_SAVELOAD_SAVE, saveload_save_entry);
+        saveload_save_show();
     }
     saveload_show_cleanup(result);
 }

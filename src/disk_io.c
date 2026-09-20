@@ -2,6 +2,7 @@
 
 #include "saveload_abi.h"
 #include "banks.h"
+#include "memmap.h"
 
 /* DOS command/filename literals use low PETSCII (ASCII letter values),
  * independently of the game's mixed-case display string mapping. */
@@ -22,9 +23,12 @@
  * internally, just written directly into this bank instead.
  *
  * Banked (BANK_DISK_IO) rather than resident for the same budget reason.
- * Reached from the SL/SV banks (modules/saveload.c, modules/saveload_save.c)
- * with an ordinary far_call_bank(), same as any other cross-bank call -
- * nothing here is KERNAL-call-specific about that. What *is* KERNAL-call-
+ * The SL/SV banks (modules/saveload.c, modules/saveload_save.c) must NOT
+ * expand far_call_bank() themselves: that macro writes $DE00 inline, and
+ * doing so from code inside $8000-$BFFF swaps the window out from under the
+ * very next instruction fetch. They call the four resident __noinline
+ * trampolines below (platform_disk_read() etc.) instead, which do the
+ * switch from resident code. What *is* KERNAL-call-
  * specific is the memory map bracket: platform_memory_kernal() exposes
  * KERNAL ROM for the calls below and platform_memory_game() restores our
  * steady-state map (RAM at $E000-$FFFF, EasyFlash-bankable $8000-$BFFF)
@@ -51,6 +55,30 @@ uint8_t platform_disk_slot;
 uint8_t* platform_disk_buffer;
 uint16_t platform_disk_want;
 uint16_t platform_disk_got;
+
+/* Bank-14 workers, defined below the region pragma. */
+void platform_disk_read_block(void);
+void platform_disk_write_block(void);
+void platform_disk_index_read_block(void);
+void platform_disk_index_write_block(void);
+
+/* Resident trampolines: the only way banked code (SL/SV) reaches bank 14.
+ * Each names its target literally - never through a pointer. */
+__noinline void platform_disk_read(void) {
+    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
+}
+
+__noinline void platform_disk_write(void) {
+    far_call_bank(BANK_DISK_IO, platform_disk_write_block);
+}
+
+__noinline void platform_disk_index_read(void) {
+    far_call_bank(BANK_DISK_IO, platform_disk_index_read_block);
+}
+
+__noinline void platform_disk_index_write(void) {
+    far_call_bank(BANK_DISK_IO, platform_disk_index_write_block);
+}
 
 #pragma section( disk_io_code, 0 )
 #pragma section( disk_io_data, 0 )
@@ -215,14 +243,18 @@ static void read_named(uint8_t name_len) {
     k_close(2u);
 }
 
+/* Read names exclude the ",W" suffix (length 2 / 6, as in the original
+ * modules/disk_io.s): opening "Sn,W" for reading would open it for WRITE,
+ * creating/truncating the file - including the save just written, which
+ * made every save's readback verification fail. */
 static void read_slot_block(void) {
     build_slot_filename();
-    read_named(4u);
+    read_named(2u);
 }
 
 static void read_index_block(void) {
     build_index_filename();
-    read_named(8u);
+    read_named(6u);
 }
 
 /* Waits for DOS to finish the preceding write and reads its two status

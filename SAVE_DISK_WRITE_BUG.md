@@ -51,5 +51,21 @@ state. After VICE exits, inspect the directory with
 header and checksum. Also test missing/corrupt-index recovery.
 
 These are manual acceptance steps, not evidence of a run in the current
-documentation update. `make test` does not cover disk persistence.
+documentation update. `make test` now covers the basic F1 save / F3 load
+round trip on a disposable D64; the index-recovery cases remain manual.
+
+## Bugs found by that round trip (2026-09-20)
+
+- **Banked code switched banks inline.** `far_call_bank()` expanded inside
+  banks 6/7 wrote `$DE00` from within the window, so F1/F3 crashed on the
+  first frame. Fixed with resident trampolines; see SAVE_GAME.md.
+- **Reads opened `Sn,W`.** The read name length included the `,W` suffix
+  (4/8 instead of 2/6), creating empty files and truncating the record that
+  was just written, so every save's readback failed ("Save failed.").
+- **Oscar64 dropped a pointer advance.** `for (...) *q++ = *src++` over the
+  flag bytes lost the post-loop `q` update at `-Os`; the delta count overwrote
+  `flags[0..1]` and the payload was 98 bytes instead of 130, which Load
+  rejected. The encoder now uses `copy_bytes()` and self-checks the size.
+  See [OSCAR64_BUG_POINTER_LOOP_ADVANCE.md](OSCAR64_BUG_POINTER_LOOP_ADVANCE.md).
+- c1541 note: save files are SEQ; extract with `-read "s1,s"`.
 See [SAVE_GAME.md](SAVE_GAME.md) for the file format and workspace contract.

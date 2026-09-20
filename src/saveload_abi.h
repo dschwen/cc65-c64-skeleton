@@ -25,13 +25,16 @@ extern uint8_t tile_data[];
 #define SAVELOAD_RECORD_BYTES 1146u
 #define saveload_record_buffer tile_data
 
-/* The two service entries (modules/saveload.c's saveload_entry(),
- * modules/saveload_save.c's saveload_save_entry()) are reached with an
- * ordinary far_call_bank(), not a dedicated gate - see
- * modules/saveload.c's game_load_show()/game_save_show(). */
-void platform_disk_read_block(void);
-void platform_disk_write_block(void);
-void platform_disk_index_read_block(void);
-void platform_disk_index_write_block(void);
+/* Banked code must never expand far_call_bank() itself: it writes $DE00
+ * inline, and doing that from inside $8000-$BFFF swaps the window under the
+ * next instruction fetch. SL/SV reach other banks only through these
+ * resident __noinline trampolines (src/disk_io.c for bank 14, and
+ * saveload_save_show() in modules/saveload.c for the SV bank). The workers
+ * they wrap (platform_disk_*_block) are private to src/disk_io.c. */
+void platform_disk_read(void);
+void platform_disk_write(void);
+void platform_disk_index_read(void);
+void platform_disk_index_write(void);
+void saveload_save_show(void);
 
 #endif

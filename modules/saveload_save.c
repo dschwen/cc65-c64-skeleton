@@ -4,7 +4,6 @@
 #include "saveload_abi.h"
 #include "world.h"
 #include "banks.h"
-#include "memmap.h"
 
 #pragma section( saveload_save_code, 0 )
 #pragma section( saveload_save_data, 0 )
@@ -105,7 +104,7 @@ static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = want;
-    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
+    platform_disk_read();
     return platform_disk_got;
 }
 
@@ -113,7 +112,7 @@ static uint8_t disk_write_bytes(uint8_t slot, uint16_t size) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = size;
-    far_call_bank(BANK_DISK_IO, platform_disk_write_block);
+    platform_disk_write();
     if (platform_disk_got != size) return 0u;
     return 1u;
 }
@@ -121,7 +120,7 @@ static uint8_t disk_write_bytes(uint8_t slot, uint16_t size) {
 static uint8_t disk_index_write(void) {
     platform_disk_buffer = index_buffer;
     platform_disk_want = SAVE_INDEX_BYTES;
-    far_call_bank(BANK_DISK_IO, platform_disk_index_write_block);
+    platform_disk_index_write();
     if (platform_disk_got != SAVE_INDEX_BYTES) return 0u;
     return 1u;
 }
@@ -214,10 +213,12 @@ static uint16_t encode_record(const uint8_t* name) {
             ++src;
         }
     }
-    {
-        const uint8_t* src = game_state.flags;
-        for (i = 0u; i < GAME_FLAG_BYTES; ++i) *q++ = *src++;
-    }
+    /* Not `for (...) *q++ = *src++`: Oscar64 (-Os) rewrites that loop to a
+     * Y-indexed copy and drops the post-loop advance of q, so the delta
+     * count below overwrote flags[0..1] and the payload came out 32 bytes
+     * short (found via the disk record: 98 instead of 130). copy_bytes()
+     * followed by an explicit advance compiles correctly. */
+    copy_bytes(q, game_state.flags, GAME_FLAG_BYTES); q += GAME_FLAG_BYTES;
     put16(q, game_world_delta_count); q += 2u;
 
     {
@@ -253,6 +254,10 @@ static uint8_t save_slot(uint8_t slot) {
     if (game_world_delta_count > SAVE_MAX_DELTAS) return 0u;
     entry = index_entry(slot);
     total = encode_record(entry + 1u);
+    /* Self-check the encoder against the v1 layout: refuse to write a
+     * record the loader would reject (see the flags note in encode_record). */
+    if (total != (uint16_t)(SAVE_HEADER_BYTES + SAVE_PREFIX_BYTES +
+                            game_world_delta_count * SAVE_DELTA_BYTES)) return 0u;
 
     ok = disk_write_bytes(slot, total);
     if (ok) ok = load_full(slot);

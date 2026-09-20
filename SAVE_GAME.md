@@ -5,9 +5,10 @@ remain the original `00` through `FF` assets in EasyFlash ROM. A running game
 stores only object slots that differ from those base assets.
 
 The Oscar64 build implements F1 Save, F3 Load, the slot browser and KERNAL
-disk I/O. Current `make test` coverage does not exercise disk persistence;
-perform a named save/readback/load round trip on a disposable D64 before
-claiming changes to this path are verified. See
+disk I/O. `make test` runs an Xvfb F1 save / F3 load round trip on a
+disposable D64 (name entry, write, readback, index, restore of the player
+position, then inspects `S1`/`SINDEX` with c1541). Missing/corrupt-index
+recovery and non-empty room deltas are still manual checks. See
 [SAVE_DISK_WRITE_BUG.md](SAVE_DISK_WRITE_BUG.md) for DOS encoding/completion checks.
 
 ## Implemented runtime layer
@@ -158,8 +159,17 @@ It temporarily disables leaving-room capture, enters the saved room, sets
 - `src/disk_io.c`: bank 14, KERNAL sequential-file operations.
 
 `src/main.c` reaches the bank-6 save/load entries through `far_call_bank`.
-Cross-bank save and disk calls use the same resident gate and restore the
-caller bank. Mutable request fields and workspace remain resident.
+Code inside banks 6/7 must not expand `far_call_bank()` itself (it writes
+`$DE00` inline, which swaps the window under the next instruction fetch).
+The onward hops go through resident `__noinline` trampolines:
+`saveload_save_show()` (bank 6 -> 7, in `modules/saveload.c`) and
+`platform_disk_read/write/index_read/index_write()` (-> bank 14, in
+`src/disk_io.c`). Each restores the caller bank via `platform_cart_bank`.
+`tools/check_bank_switches.py` fails the build if a bank switch is emitted
+inside banked code. Mutable request fields and workspace remain resident.
+
+Read opens use the bare name (`Sn`, `SINDEX`, lengths 2 and 6); only writes
+append `,W`. Opening a read with `,W` creates/truncates the file.
 
 `src/saveload_abi.h` aliases the 146-byte workspace to `tile_properties`
 and the maximum 1,146-byte record to `tile_data`; the slot index also uses

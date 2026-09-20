@@ -428,6 +428,12 @@ for what it actually contains, up to a compiled ceiling of 8 KiB per room
 (`PLATFORM_RESOURCE_MAX_BYTES` - see `PLATFORM_API.md`'s "Generic cartridge
 resources"), far more than any room script has needed so far.
 
+Inside any script string, `<runes>` switches to the rune alphabet (letters
+print as rune glyphs; spaces, digits and punctuation are unchanged) and
+`<text>` switches back, e.g. `text "It reads: <runes>fenwick<text>."`. A
+string always starts in Latin text and the mode ends with the string; write
+`\<` for a literal `<`. See `tools/compile_script.py`'s module docstring.
+
 Speaker portraits (`portrait_show`/`portrait_hide` inside a script, or
 `platform_portrait_show()`/`platform_portrait_hide()` directly from room
 code - see `PLATFORM_API.md` and the asset editor's Portrait mode) show

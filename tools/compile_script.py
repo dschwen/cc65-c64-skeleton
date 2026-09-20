@@ -118,6 +118,22 @@ of a CHECK_FLAG) always ends with END; there is no separate "return"
 opcode. What "the block ended" means - resume the game, or show the topic
 prompt again - is the interpreter's job, not the format's.
 
+String syntax (every string literal, including text/room-transition
+messages):
+
+    "plain text <runes>fenwick was here<text> plain again"
+
+    <runes>  switch to the rune alphabet: letters (either case) print as the
+             rune glyphs at screen codes $81-$9A ('a' = $81 ... 'z' = $9A).
+             Spaces, digits, punctuation and \\n are unchanged, so word
+             wrapping still works.
+    <text>   switch back to the Latin alphabet.
+    \\<       a literal '<'. Any other <tag> is a compile error.
+
+A string always starts in text mode and the mode ends with the string, so a
+trailing <text> is optional and tags never carry over between strings. Tags
+are not allowed in conversation topic keywords (those match typed input).
+
 DSL syntax:
 
     script intro {
@@ -244,7 +260,15 @@ TOKEN_RE = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 
-STRING_ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}
+STRING_ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "<": "<"}
+
+# In-string alphabet switches: <runes> ... <text>. decode_string() turns the
+# tags into these private-use sentinels (no source character can produce
+# them), and encode_string() consumes them when the string table is built.
+# Strings always start in text mode; the mode ends with the string.
+RUNES_ON = ""
+TEXT_ON = ""
+STRING_TAGS = {"<runes>": RUNES_ON, "<text>": TEXT_ON}
 
 
 class Token:
@@ -298,6 +322,19 @@ def decode_string(raw: str, line: int) -> str:
                 raise SystemExit(f"line {line}: unknown escape \\{esc}")
             out.append(STRING_ESCAPES[esc])
             i += 2
+        elif ch == "<":
+            for tag, sentinel in STRING_TAGS.items():
+                if body.startswith(tag, i):
+                    out.append(sentinel)
+                    i += len(tag)
+                    break
+            else:
+                end = body.find(">", i)
+                shown = body[i:end + 1] if end != -1 else body[i:i + 8]
+                raise SystemExit(
+                    f"line {line}: unknown tag {shown!r} in string "
+                    f"(valid tags: <runes>, <text>; write \\< for a literal <)"
+                )
         else:
             out.append(ch)
             i += 1
@@ -492,6 +529,11 @@ class Parser:
             # designer can write a full word here for readability; only the
             # prefix is stored and compared.
             keyword = keyword_tok.value
+            if RUNES_ON in keyword or TEXT_ON in keyword:
+                raise SystemExit(
+                    f"line {keyword_tok.line}: topic keywords are matched "
+                    f"against typed text and cannot contain <runes>/<text>"
+                )
             body = self.parse_block()
             topics.append(Topic(keyword, body))
             self.skip_semi()
@@ -833,6 +875,34 @@ def ascii_to_petscii(value: int) -> int:
     return value
 
 
+RUNE_BASE = 0x81  # 'a' -> $81 ... 'z' -> $9A: screen code of a-z ($01-$1A) | $80
+
+
+def encode_string(text: str) -> bytes:
+    """Encode one decoded string for the string table (without the NUL).
+
+    Text mode uses ascii_to_petscii(). In rune mode letters (either case)
+    become the rune glyphs at screen codes $81-$9A - bytes the renderer
+    (src/text.c write_character) passes through untouched - and every other
+    character (space, digits, punctuation, newline) is encoded as usual so
+    word wrapping keeps working.
+    """
+    out = bytearray()
+    runes = False
+    for ch in text:
+        if ch == RUNES_ON:
+            runes = True
+        elif ch == TEXT_ON:
+            runes = False
+        elif runes and ch.isascii() and ch.isalpha():
+            out.append(RUNE_BASE + ord(ch.lower()) - ord("a"))
+        elif ord(ch) > 0x7F:
+            raise SystemExit(f"non-ASCII character {ch!r} in string {text!r}")
+        else:
+            out.append(ascii_to_petscii(ord(ch)))
+    return bytes(out)
+
+
 def link_strings(bytecode: bytearray, patches: list[Patch]) -> bytes:
     pool: dict[str, int] = {}
     string_table = bytearray()
@@ -840,8 +910,7 @@ def link_strings(bytecode: bytearray, patches: list[Patch]) -> bytes:
     for patch in patches:
         if patch.text not in pool:
             pool[patch.text] = table_start + len(string_table)
-            encoded = bytes(ascii_to_petscii(b) for b in patch.text.encode("ascii"))
-            string_table += encoded + b"\0"
+            string_table += encode_string(patch.text) + b"\0"
     for patch in patches:
         struct.pack_into("<H", bytecode, patch.position, pool[patch.text])
     return bytes(bytecode) + bytes(string_table)

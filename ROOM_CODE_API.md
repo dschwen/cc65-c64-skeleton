@@ -1,24 +1,26 @@
 # Room-specific code API
 
-Every room asset has one independently linked C overlay:
+Each compiled room has a native code/data bank:
 
 ```text
-assets/00  <->  rooms/00.c  <->  build/rooms/C00
-assets/7F  <->  rooms/7F.c  <->  build/rooms/C7F
+assets/00 + rooms/00.rc -> build/rooms/room00.c -> EasyFlash bank 8
 ```
 
-`make cartridge` packs each `CXX` file into EasyFlash ROMH and writes an eight-byte directory
-entry for every room. A room asset without a matching source fails the build.
+The Makefile prepares the room record and compiles the DSL to C; Oscar64 links
+that C with the rest of the game. `rooms/room_table.h` supplies the resident
+dispatch table. The current build includes rooms 00-05.
 
 ## Required handlers
 
-Every `rooms/XX.c` includes `game.h` and defines exactly these functions:
+The DSL generates room-prefixed versions of these handlers. C fragments use
+the generic names below; the generator adds the room prefix and includes
+`game.h`. Externally callable banked entries must remain `__noinline`:
 
 ```c
-void enter_room(void);
-void enter_tile(void);
-uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y);
-uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y);
+__noinline void enter_room(void);
+__noinline void enter_tile(void);
+__noinline uint8_t look_at(uint8_t tile_x, uint8_t tile_y);
+__noinline uint8_t use_at(uint8_t tile_x, uint8_t tile_y);
 ```
 
 `enter_room()` runs once after the destination room data and code are active,
@@ -51,20 +53,20 @@ Example:
 ```c
 #include "game.h"
 
-void enter_room(void) {
+__noinline void enter_room(void) {
     if (game_entry_reason == GAME_ENTRY_STARTUP) {
         game_text_write(PLATFORM_TEXT_LINE_TOP, "You wake by the sea.", 1u);
     }
 }
 
-void enter_tile(void) {
+__noinline void enter_tile(void) {
     if ((game_state.player_x >> 1) == 4u &&
         (game_state.player_y >> 1) == 2u) {
         game_state.flags[3] = 1u;
     }
 }
 
-uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
+__noinline uint8_t look_at(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 4u && tile_y == 2u) {
         game_text_write(PLATFORM_TEXT_LINE_TOP,
                         "The sea is rough today.", 1u);
@@ -73,7 +75,7 @@ uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
     return GAME_LOOK_DEFAULT;
 }
 
-uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
+__noinline uint8_t use_at(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 7u && tile_y == 3u) {
         game_text_write(PLATFORM_TEXT_LINE_TOP, "The door opens.", 1u);
         return GAME_USE_HANDLED;
@@ -84,14 +86,11 @@ uint8_t __fastcall__ use_at(uint8_t tile_x, uint8_t tile_y) {
 
 ## Room-code DSL (.rc files)
 
-Most room code turns out to be one of three mechanical shapes: an empty
-handler, an unconditional flag bump on tile entry, or a tile-coordinate
-dispatch to a room script. A room can be authored as `rooms/XX.rc` in a
-small declarative DSL instead of `rooms/XX.c` - `tools/compile_room.py`
-compiles it straight to the same `.s` a hand-written room would produce.
-The Makefile picks whichever source file exists (`rooms/XX.c` or
-`rooms/XX.rc`) for a given room ID; both forms coexist in this project,
-room by room.
+The room DSL in `rooms/XX.rc` covers empty handlers, flag changes and
+coordinate dispatch to script entries. `tools/compile_room.py` emits
+`build/rooms/roomXX.c`, including the prepared room asset with `#embed`.
+The current Makefile requires the DSL source; it does not select a standalone
+`rooms/XX.c` alternative.
 
 ```
 enter_room: default
@@ -115,47 +114,36 @@ hatch, see below). `X`, `Y`, `KEY`, and `RETURN_CONST` may be
 decimal/hex literals or `#define` symbols from `src/story.h`/`src/game.h`
 (or files passed via `--flags`).
 
-This does not solve a space problem - compiled room overlays are nowhere
-near their `$0400` ceiling. The point is authoring simplicity: a room's
-flag-bump/dispatch logic becomes one declarative line each, instead of
-hand-written (and hand-copied) C.
+The DSL keeps repetitive dispatch logic concise. The room's record, constants
+and handlers share one 16 KiB ROM bank; there is no separate 1 KiB overlay limit.
 
 ### Escape hatch: genuinely custom logic
 
-`enter_room: asm "path/to/fragment.s"` (or the same for `enter_tile`)
-splices a hand-written `.s` fragment's text verbatim into the generated
-output. The fragment supplies its own `.export _enter_room` (or
-`_enter_tile`), label, and body - nothing else is generated for that
-handler. Use this for logic no DSL statement covers, such as room 00's
-`enter_room()` poking VIC-II sprite registers directly for the rain
-effect (`rooms/asm/00_enter_room.s`, referenced from `rooms/00.rc`), or
-room 01's `enter_tile()` swapping the player's object type based on the
-tile underneath them (`rooms/asm/01_enter_tile.s`).
+The parser retains the keyword `asm`, but the referenced file is now a C
+fragment, not assembler:
 
-`look_at`/`use_at` have the same escape hatch on their mandatory
-`default` line: `default -> asm "path/to/fragment.s"`. Unlike
-`enter_room`/`enter_tile` (which replace the whole handler), this only
-replaces the *fallback* - any `at X,Y -> script KEY` entries above it
-still run first. The fragment must `.export _look_at_fallback` (or
-`_use_at_fallback`) as an ordinary subroutine reached via `jsr`: the
-look/use target's `tile_x`/`tile_y` are on the software stack exactly as
-the generated dispatch's own `jsr pusha` left them at function entry
-(offset 1 = `tile_x`, offset 0 = `tile_y`), and the fragment must return
-its result in `A` (the caller zeroes `X` and pops the stack) using the
-same `GAME_LOOK`/`GAME_USE` `DEFAULT`/`HANDLED` convention a matched `at`
-entry would, ending every path in `rts`. See
-`rooms/asm/01_look_at.s`/`01_use_at.s` (room 01's water-tile search logic
-- neither a bare tile match nor the player's own position is expressible
-as a plain `at X,Y` entry) for a worked example.
+```text
+enter_tile: asm "rooms/c/01_enter_tile.c"
 
-Every fragment referenced by a room's `.rc` file is picked up
-automatically: the room-code build rule depends on `rooms/asm/*.s` as a
-whole, so editing any fragment triggers a rebuild of every room that
-might reference it - no per-room Makefile prerequisite needed.
+look_at:
+    default -> asm "rooms/c/01_look_at.c"
+```
+
+Entry fragments define `__noinline void enter_room(void)` or
+`__noinline void enter_tile(void)`. Fallback fragments define
+`__noinline uint8_t look_at_fallback(uint8_t tile_x, uint8_t tile_y)`
+or `use_at_fallback` with the same signature. Return the usual
+`GAME_LOOK_*`/`GAME_USE_*` result.
+
+The generator substitutes the room-prefixed names and splices the C into the
+room's code section. Explicit coordinate matches run before fallback code.
+Use normal C parameters/results, not a hand-coded stack ABI. See
+`rooms/c/01_enter_tile.c`, `01_look_at.c` and `01_use_at.c`.
+The Makefile tracks `rooms/c/*.c` changes as generator dependencies.
 
 ## Global game state
 
-`game_state` is resident at `$C100` and survives overlay replacement:
+`game_state` is compiler-allocated in resident main RAM and survives bank changes:
 
 ```c
 typedef struct GameState {
@@ -209,13 +197,13 @@ game_state.flags[GAME_FLAGS_HOUSE] &= (uint8_t)~GAME_FLAG_DOOR_OPEN;
 ```
 
 Direct reads and writes are the current public API. These bytes are part of
-`GameState`, so they survive room overlay replacement and are included in save
+`GameState`, so they survive room transitions and are included in save
 records.
 
 ## Room-callable API
 
 The following functions are implemented by resident `src/game_support.c`.
-Room overlays import them through the generated resolver; they are not copied
+Room handlers call their declared interfaces in the whole-program build; they are not copied
 into every room binary:
 
 ```c
@@ -249,12 +237,11 @@ room's own text (and any accompanying logic - flag checks, giving an
 object, branching) is not a literal string in room code at all; it's a
 *room script* instead - see the next section.
 
-`game_transition_request()` queues a transition because a room-code overlay
-must not replace itself while one of its functions is executing. The resident
-main loop processes the request on the next frame, calls `platform_room_enter()`,
-loads the destination room-code overlay, synchronizes `game_state`, and calls
-its `enter_room()` followed by `enter_tile()`. Coordinates are half-tile
-coordinates and must be within `40x22`.
+`game_transition_request()` defers the transition until the next main-loop
+frame, so current handlers can return before the active room/environment
+changes. The engine loads the destination record, selects its handler bank,
+synchronizes `game_state`, and calls `enter_room()` then `enter_tile()`.
+Coordinates are half-tile coordinates within `40x22`.
 
 `game_take_object()` is a transactional persistent mutation. It accepts a
 non-actor object slot, adds one item of that type to inventory, removes the map
@@ -264,15 +251,16 @@ failure restores both the object and inventory before returning an error.
 `game_take_tile()` finds non-actor objects by their rendered intersection with
 the selected tile rather than by hotspot alone. With multiple matches it runs
 the resident object selector before delegating to `game_take_object()`.
-`game_inventory_show()` far-calls the bank-48 Inventory service in place. It
+The main loop reaches `game_inventory_show()` in bank 5 through `far_call_bank`. It
 prepares a 40x25 text screen and lists all 32 inventory slots in two columns.
 Cursor keys move the selection marker, `U` dispatches the selected slot to
-`story_use_inventory()`, and `I` closes the screen. The resident wrapper then
+`story_use_inventory()`, and `I` closes the screen. The service cleanup then
 restores the charset split and redraws the current room.
 
-All public platform APIs in `platform.h` are also callable when the generated
-resolver finds a resident symbol. A missing import is a build error, not a
-late runtime failure.
+Banked handlers can call resident APIs and functions within their selected
+bank. Cross-bank services need the established resident wrappers/gates;
+ordinary pointers and declarations do not select a bank. See
+[EASYFLASH_CARTRIDGE.md](EASYFLASH_CARTRIDGE.md).
 
 ## Room scripts
 
@@ -282,10 +270,10 @@ code - is authored as a *room script*: DSL source at
 `assets/scripts/<hex room id>.script` (`tools/compile_script.py`, edited in
 the asset editor's Script mode), compiled to the room-kind resource with
 the same ID as the room itself (`PLATFORM_RESOURCE_KIND_ROOM` - an
-independent 0x00-0xFF ID space from conversations and standalone scripts,
-which live under `assets/scripts/conversations/` and
-`assets/scripts/cutscenes/` respectively - see `PLATFORM_API.md`'s
-"Generic cartridge resources").
+ID space reserved separately from conversations and standalone scripts).
+Only room scripts are currently compiled/embedded and supported by the resource
+fetch path; the other kinds are not yet wired up. See `PLATFORM_API.md`'s
+"Generic cartridge resources".
 
 A room script declares one or more numbered *entries*:
 
@@ -304,7 +292,7 @@ room 00 {
 Room code runs one by key:
 
 ```c
-uint8_t __fastcall__ look_at(uint8_t tile_x, uint8_t tile_y) {
+__noinline uint8_t look_at(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 18u && tile_y == 3u) {
         (void)game_room_script_entry(STORY_ROOM00_LOOK_TREE);
         return GAME_LOOK_HANDLED;
@@ -327,9 +315,7 @@ An entry's `text` output waits for a fresh keypress before the engine clears
 it and redraws the room, the same way the bottom pager already waits between
 pages of a message longer than two lines - so a room's own description text
 is always given a chance to be read, however long it is, with no `wait_key`
-needed just to keep it on screen. (This was a real bug, fixed in
-`MEMORY_MAP_TARGET.md`'s "Overlay-load visual glitch" section: the last page
-used to be cleared immediately, before the player could read it.) An entry
+needed just to keep it on screen. An entry
 that only runs effects or a transition, with no `text` at all, does not add
 this wait.
 
@@ -340,48 +326,29 @@ when the Look cursor is pushed off an edge.
 
 ## Room-code ABI and memory
 
-Room code runs at `$9900-$9CFF`, a maximum of `$0400` bytes including BSS. The
-first 24 file bytes are:
+`src/room_dispatch.c` looks up a room ID in `rooms/room_table.h` and calls its
+native handlers through `far_call_bank`. There is no runtime room-code header,
+checksum, relocation copy or per-entry BSS clear. Mutable state remains in
+resident RAM; use `game_state` flags/deltas for state that must persist in saves.
 
-| Offset | Content |
-|---:|---|
-| 0 | `JMP enter_tile` |
-| 3 | `JMP look_at` |
-| 6 | `JMP enter_room` |
-| 9 | `RC` magic |
-| 11 | ABI version, currently 4 |
-| 12 | room ID |
-| 13 | loaded file size, little-endian |
-| 15 | BSS offset from `$9900` |
-| 17 | BSS size |
-| 19 | 16-bit sum of bytes 24 through end |
-| 21 | `JMP use_at` |
-
-`tools/finalize_room_code.py` patches and validates this header. Resident calls
-go through the four jump vectors, so adding private functions does not change
-the ABI. ABI 4 added `use_at`; ABI 3 added `enter_room`; ABI 2 changed
-`look_at` from one cardinal direction byte to the two tile-coordinate bytes
-documented above. The loader rejects older room code.
-
-A small assembly copier stages the file at `$B000` while 16 KiB EasyFlash ROM
-is visible; it touches only hardware stack, zero page, and low DATA until the
-cartridge is disabled. Activation copies the validated overlay to `$9900` and
-zeros its BSS.
-
-Room-code staging reuses rebuildable render/lighting work RAM. Therefore a
-failed room-code prepare redraws the current room, and a successful room change
-activates the overlay before the normal room draw rebuilds those buffers.
+The generated room record must remain at offset zero in its bank because the
+data fetch uses that offset. Keep its data section first and verify the map
+when adding constants. Do not retain bank-local pointers for later use with a
+different bank selected.
 
 ## Adding a room
 
-1. Create/export `assets/XX` in Room mode.
-2. Copy `rooms/template.c` to `rooms/XX.c` and implement the four handlers,
-   or write `rooms/XX.rc` in the DSL above if the room's logic is one of
-   the three mechanical shapes it covers.
-3. Run `make cartridge`.
-4. Check `build/rooms/room-XX.map` if the `$0400` window overflows or an import
-   cannot be resolved.
+1. Export `assets/XX`, write `rooms/XX.rc`, and add any C fragments under `rooms/c/`.
+2. Add `assets/scripts/XX.script` (even an empty room script if appropriate)
+   and its symbols in `src/story.h`.
+3. Add the ID to Makefile `ROOM_IDS` and declarations/table entries in
+   `rooms/room_table.h`. Generated symbols use lowercase hexadecimal IDs.
+4. Check the generator's `BANK_ROOM_FIRST + room_id` assignment against
+   `src/banks.h`. The next sequential room currently collides with bank 14;
+   extending the list requires an explicit allocation change, not just a new file.
+5. Update `rooms/env_banks.h` if the room needs an environment.
+6. Build and inspect `build/game.map` for room data/code and any new resident
+   state, then test entry, exit, input, narration and the environment in VICE.
 
-Do not keep pointers into an old room overlay or its BSS across a transition.
-Store persistent values in `game_state` or mutate objects through the
-save-aware APIs described in `SAVE_GAME.md`.
+Use save-aware mutation APIs from [SAVE_GAME.md](SAVE_GAME.md); ordinary
+resident globals survive room changes but are not automatically serialized.

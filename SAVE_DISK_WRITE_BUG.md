@@ -1,92 +1,55 @@
-# Save-game disk write bug
+# Save-disk encoding and completion checks
 
-Status as of 2026-08-27, branch `rpg`: **resolved**.
+A prior failure looked like successful KERNAL output but produced no file:
+DOS returned `62, FILE NOT FOUND`. The filename mode byte was high PETSCII
+`$D7` rather than the required `$57` (`W`), so DOS did not recognize write
+mode. The useful diagnostic is the actual byte sequence passed to SETNAM,
+not the appearance of the source literal.
 
-## Symptom
+## Oscar64 encoding contract
 
-F1 Save appeared to complete its KERNAL calls, but no save file appeared on
-the attached disk. KERNAL `READST` initially looked clean, while the 1541
-command channel reported `62, FILE NOT FOUND`. Reads and the same logical
-write sequence in a plain ca65 test program worked.
+The game uses mixed-case display literals through `#pragma charmap` in
+`src/platform.h`. Disk protocol text must not inherit that mapping.
+`src/disk_io.c` explicitly restores identity mappings for both letter ranges:
 
-## Root cause
-
-`modules/disk_io.s` was assembled through `cl65 -t c64`. The C64 target
-charmap does not encode uppercase source literals as low PETSCII:
-
-| Source token | Emitted byte | Required CBM DOS byte |
-|---|---:|---:|
-| `'S'` | `$D3` | `$53` |
-| `'W'` | `$D7` | `$57` |
-
-The write filename therefore ended in comma plus `$D7`, not the CBM DOS
-`,W` mode suffix. DOS treated the request as an attempt to open an existing
-file and returned error 62. The standalone control program did not use the
-same C64 target charmap, which is why apparently identical source behaved
-differently.
-
-The decisive diagnostic was to dump the actual filename bytes after
-`SETNAM`; they were `$D3 $30 $C1 $2C $D3` in the explicit-type experiment.
-The KERNAL logical-file tables and CIA2 state were otherwise correct:
-logical file 2, device 8, secondary address `$62`, `$DD02=$3F`.
-True-drive emulation reproduced the failure, ruling out VICE fast-drive
-traps.
-
-## Fix
-
-`modules/disk_io.s` now uses explicit low-PETSCII bytes for CBM DOS protocol
-letters:
-
-```asm
-lda #$53  ; DOS S command/name byte
-lda #$57  ; DOS W mode
+```c
+#pragma charmap(65, 65, 26)
+#pragma charmap(97, 97, 26)
 ```
 
-The current compact `Sn,W` and `S0:Sn` workspace layout uses one file per
-slot. The earlier A/B generation design was removed after the write bug was
-fixed because it doubled file count and directory reads without being needed
-for the current platform.
+CBM DOS expects `S=$53`, `W=$57`, comma `$2C`, colon `$3A`.
+Slot names are `S0` through `S7`; the directory cache is `SINDEX`.
+Inspect filename length and pointer as well as bytes: the scratch-command
+view and read/write-name view share a buffer with different offsets.
 
-During diagnostics, the pointers for those two views of the shared workspace
-were temporarily swapped. That made readback request `S0:` and scratch
-request `SnX,W...`, which looked like a post-close race until the final diff
-review caught it. Production uses `filename` for the six-byte scratch command
-and `filename+3` for the three-byte read name.
+## Drive completion is separate from KERNAL completion
 
-After `CLOSE`, the save path reads the complete record back and validates its
-declared length and checksum. This catches failures that `READST` cannot
-report. The code uses drive status rather than an arbitrary timed delay; one
-apparent readback failure during the initial investigation was also caused by
-the swapped read/scratch filename pointer described above.
+KERNAL CLOSE finishes sending the close request before the drive necessarily
+finishes its final block and directory update. The disk writer reads status
+channel 15 after each write close; non-success status fails the operation.
+Do not replace this with an arbitrary delay or trust READST alone.
 
-A later end-to-end test exposed a second completion issue: KERNAL `CLOSE`
-returns after sending the close request, while the 1541 can still be writing
-the final block and directory entry. Quitting VICE at the initial success
-screen left `SINDEX` as a zero-block splat file. `modules/disk_io.s` now reads
-DOS status channel 15 after every write close and treats non-success status as
-a failed write. The UI does not report `Saved.` until the drive has finished.
+The save workflow reads the complete record back and validates length/checksum
+before updating SINDEX and reporting success. There is one file per slot:
+an interrupted overwrite can lose that slot. Index corruption triggers the
+browser's recovery scan.
 
-## Verification
+## Verification procedure
 
-The full cartridge save path was exercised headlessly with:
+Use a disposable D64, never the user's save disk:
 
 ```sh
 c1541 -format "TEST,00" d64 /tmp/save-test.d64
-xvfb-run -a x64sc -console -default -warp -sounddev dummy \
-  -cartcrt build/game.crt -8 /tmp/save-test.d64 \
-  -limitcycles 50000000 -exitscreenshot /tmp/save-test.png
-c1541 -attach /tmp/save-test.d64 -list
+xvfb-run -a x64sc -console -default -sounddev dummy \
+  -cartcrt build/game.crt -8 /tmp/save-test.d64
 ```
 
-The normal UI flow encoded a 146-byte empty-journal record, wrote `S0`, read
-it back successfully, updated the one-block `SINDEX` cache, and displayed
-`Saved.`. `c1541` extraction confirmed both files' declared lengths and
-checksums. Missing-index recovery and the full Load return to gameplay were
-also exercised. All temporary bypass and diagnostic code was removed.
+Send real Xvfb key events to open Save, enter a name and confirm. Wait for
+completion, return to gameplay, alter state, then Load and check restored
+state. After VICE exits, inspect the directory with
+`c1541 -attach /tmp/save-test.d64 -list`; extract records and check size,
+header and checksum. Also test missing/corrupt-index recovery.
 
-## General rule
-
-Do not use target-charmapped character literals for external binary
-protocol tokens unless the receiver expects that target encoding. For CBM
-DOS commands and mode/type suffixes, spell the required byte values
-explicitly and document why.
+These are manual acceptance steps, not evidence of a run in the current
+documentation update. `make test` does not cover disk persistence.
+See [SAVE_GAME.md](SAVE_GAME.md) for the file format and workspace contract.

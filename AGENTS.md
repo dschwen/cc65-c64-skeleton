@@ -1,53 +1,53 @@
 # AGENTS.md
 
 ## Purpose
+
 This repository is a Commodore 64 RPG/adventure using Oscar64 and EasyFlash.
+Read [GUIDE_OSCAR64_C64.md](GUIDE_OSCAR64_C64.md) for an agent-oriented summary
+of the local compiler manual. [MEMORY_MAP.md](MEMORY_MAP.md) is the
+authoritative allocation; [EASYFLASH_CARTRIDGE.md](EASYFLASH_CARTRIDGE.md)
+covers project-specific boot and banking.
 
-Use this file for quick operational rules. Read `MEMORY_MAP.md` for the
-current layout and boot contract. `GUIDE_cc65_C64.md` retains historical
-cc65 notes alongside a current Oscar64 layout summary.
+## Build, run and test
 
-## Build and run
-- Build EasyFlash CRT: `make` or `make cartridge`
-- Set `OSCAR64=/home/daniel/Programs/oscar64/build/oscar64` if it is not on PATH.
-- Cold-boot/input/raster regression: `make test` (requires python3-xlib).
-- Run cartridge in VICE: `make run`
-- Run EasyFlash in VICE: `make run-cartridge`
-- This is a headless environment. Run VICE through Xvfb, using
-  `xvfb-run -a x64sc ...` for direct emulator/debugging commands.
+- Build CRT: `make` or `make cartridge`.
+- Set `OSCAR64=/home/daniel/Programs/oscar64/build/oscar64` if not on PATH.
+- Run: `make run` or `make run-cartridge`.
+- Regression: `make test` (requires VICE, Xvfb and python3-xlib).
+- Direct VICE commands must use `xvfb-run -a x64sc ...` in this headless environment.
+- Send test keypresses via Xvfb/XTest, not KERNAL keyboard-buffer injection.
+- Outputs: `build/game.crt`, `game.map`, `game.lbl`, `game.asm`.
+- `make clean` removes `build/`, including the default save disk; preserve saves first.
 
-Build outputs are in `build/`:
-- `game.map`
-- `game.lbl`
-- `game.asm`
-- `game.crt`
+Runtime assets come from EasyFlash. Disk is only for saves.
+Run targets create/attach device 8 using `SAVE_DISK` (default
+`build/saves.d64`) and `SAVE_DISK_NAME` (default `SAVES`).
+Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
 
-## Save disk
-The game runtime is EasyFlash-only. Disk is used only for save games.
-`make run`/`make run-cartridge` creates `build/saves.d64` when needed and
-attaches it as unit 8.
+## Source locations
 
-Configurable variables:
-- `SAVE_DISK` (default: `build/saves.d64`)
-- `SAVE_DISK_NAME` (default disk label: `SAVES`)
-
-Examples:
-- `make run`
-- `make SAVE_DISK=/path/to/saves.d64 run-cartridge`
-
-## Project structure
-- `src/`: C and assembly source files
-- `cfg/`: linker configuration (`myc64.cfg`)
-- `assets/`: optional binary assets
+- `src/`: resident engine, hardware wrappers, memory and bank declarations.
+- `modules/`: banked services; `rooms/*.rc`: room DSL;
+  `rooms/c/`: C handler fragments; `rooms/env/`: relocated environments.
+- `assets/`: editor data and script sources; `tools/`: generators and tests.
+- `src/memmap.h`, `src/banks.h` and source pragmas define placement.
+  There is no separate linker configuration or cartridge-packing step.
+- Generated room/script C and prepared assets live in `build/`; edit their sources.
 
 ## Change guidance
-- Keep the Makefile simple and override-friendly via variables.
-- Preserve `.map` generation for memory/layout debugging.
-- When changing memory layout or fixed addresses, update `src/memmap.h` and
-  keep `MEMORY_MAP.md` (the authoritative allocation table) in sync, plus the
-  summary tables in `GUIDE_cc65_C64.md` and `PLATFORM_API.md`.
-- Code runs directly from EasyFlash via `far_call_bank`. Keep entries
-  `__noinline`; use its software bank shadow because `$DE00` is write-only.
-  Resident code/state and both stacks must be outside `$8000-$BFFF` and
-  below the environment window at `$7E00`. CPU reads beneath KERNAL must
-  use the resident RAM gate; VIC assets stay in bank 3 beneath KERNAL.
+
+- Keep Makefile variables override-friendly and preserve map/listing generation.
+- Update memory/bank declarations and MEMORY_MAP when changing allocation;
+  keep the guide, cartridge notes and relevant API docs consistent.
+- Whole-program optimization can inline across boundaries: mark banked entries
+  `__noinline`, leave mutable state resident, and use `far_call_bank`.
+- Restore banks through `platform_cart_bank`; `$DE00` is write-only.
+- Resident code/state and stacks must stay outside `$8000-$BFFF`;
+  main ends before the `$7E00` environment window.
+- Keep charset, screen and sprite data in high VIC-bank-3 RAM beneath KERNAL.
+  CPU reads require the resident RAM gate; stores already reach RAM.
+- Explicitly initialize non-main RAM regions. CRT startup does not populate them.
+- Environments begin with four native pointers in an entry section, not opcodes.
+  Keep that section before all constants/code.
+- Use assembly expressions/`accu` for assembly return values, and the correct
+  Oscar64 interrupt qualifier for each actual entry path.

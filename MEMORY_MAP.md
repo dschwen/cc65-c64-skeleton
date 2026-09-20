@@ -3,7 +3,6 @@
 This is the authoritative allocation for the Oscar64 EasyFlash build.
 Layout is defined by pragmas in `src/memmap.h` and the banked source files;
 `build/game.map` and `build/game.lbl` contain the current symbol addresses.
-The former cc65 `cfg/*.cfg` layouts no longer apply.
 
 ## Resident RAM and VIC assets
 
@@ -31,8 +30,8 @@ The former cc65 `cfg/*.cfg` layouts no longer apply.
 | `$FFFA-$FFFB`, `$FFFE-$FFFF` | RAM NMI/IRQ vectors for brief KERNAL-out access |
 
 Main includes object records 0-105, room buffers, tile data/properties,
-world deltas and all service state. These are compiler-allocated, not the old
-cc65 fixed addresses. The software stack reservation is 2 KiB; both it and
+world deltas and all service state. These addresses are compiler-allocated;
+look them up in the current map/labels rather than hard-coding them. The software stack reservation is 2 KiB; both it and
 Oscar64's static frames must end before `$7E00`. Banked code may call
 resident functions and use resident state, but cannot read another bank's
 code/data without switching banks.
@@ -48,6 +47,7 @@ main BSS. Merely declaring an initialized array in another RAM region does
 not put that region into the boot image.
 
 `platform_init()` runs with interrupts masked and:
+
 1. Calls KERNAL IOINIT and RESTOR; sets the KERNAL screen page to `$04`
    before CINT initializes editor/keyboard state.
 2. Disables CIA interrupts and initializes the default I/O channels.

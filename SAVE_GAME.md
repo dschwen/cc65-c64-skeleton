@@ -4,27 +4,24 @@ The save system separates immutable assets from mutable game state. Room files
 remain the original `00` through `FF` assets in EasyFlash ROM. A running game
 stores only object slots that differ from those base assets.
 
-**Current status:** F1 Save, F3 Load, the slot-list browser, and disk I/O all
-work and are verified in VICE against real `.d64` images. The former save
-failure was a target-character-set bug: `cl65 -t c64` encoded assembly
-`'W'` as high PETSCII `$D7`, so CBM DOS did not recognize `,W` as write mode.
-`modules/disk_io.s` now emits DOS command/mode letters as explicit low
-PETSCII bytes. After closing a save file, it reads the complete record back
-and validates its length and checksum. See `SAVE_DISK_WRITE_BUG.md` for the
-investigation.
+The Oscar64 build implements F1 Save, F3 Load, the slot browser and KERNAL
+disk I/O. Current `make test` coverage does not exercise disk persistence;
+perform a named save/readback/load round trip on a disposable D64 before
+claiming changes to this path are verified. See
+[SAVE_DISK_WRITE_BUG.md](SAVE_DISK_WRITE_BUG.md) for DOS encoding/completion checks.
 
 ## Implemented runtime layer
 
-`src/world.c` installs the room store/restore hooks used by
-`platform_room_enter()`:
+`src/world.c` provides bank-17 store/restore operations called by
+`platform_room_enter()`, using resident buffers:
 
-- `$9D00-$9FFF` holds the pristine 768-byte object list for the current room;
-- `$2800-$2BE7` holds up to 200 five-byte `GameWorldDelta` records;
+- `room_object_baseline` holds the pristine 768-byte object list for the current room;
+- `game_world_deltas` holds up to 200 five-byte `GameWorldDelta` records;
 - each record contains room ID, exact object slot, and the three-byte object;
 - a type-0 object is a deletion record, so taken items stay removed;
 - returning to a room loads its immutable asset, captures that object list as
   the new baseline, and applies matching records by slot;
-- the assembly slot preflight rejects a full effective destination before the
+- the slot preflight rejects a full effective destination before the
   restore hook replaces the leaving-room baseline;
 - the active player slot is excluded because the player's type and hotspot are
   stored in `GameState` and transferred separately.
@@ -64,7 +61,7 @@ room mutations and establishes the currently loaded room as pristine.
 
 ## Version 1 serialized record
 
-The disk/flash backend should encode fields explicitly. Do not write the C
+The disk backend encodes fields explicitly. Do not write the C
 structures directly: compiler padding and later in-memory layout changes must
 not silently change the file format. All multi-byte values are little-endian.
 
@@ -134,7 +131,7 @@ overwrite can lose that slot. A failed or partial index write is detected on
 the next browser open and triggers the recovery scan.
 
 KERNAL `CLOSE` only finishes sending the close request; a 1541 may still be
-writing its final block and directory entry. The assembly writer therefore
+writing its final block and directory entry. The disk writer therefore
 opens and reads DOS status channel 15 after every data-file close. Record
 readback and the final `Saved.` result occur only after DOS reports completion.
 
@@ -147,54 +144,34 @@ and new caret cells. The in-place Inventory service uses the same incremental-ca
 approach; it redraws the list only after `use` because story code may have
 changed inventory contents.
 
-Loading reads and validates the complete `Sn` record into `$3000-$3479`,
-temporarily replacing the immutable tile-definition source data. The banked
-browser then returns. Resident code in `src/saveload_runtime.c` copies the
-decoded game state and journal to their permanent locations and restores the
-entire 2,304-byte tile/property resource before any room draw or transition.
-It then disables the leaving-room capture hook, enters the saved room,
-restores the hook, sets `GAME_ENTRY_LOAD`, and invokes the room's
-`enter_room()` and `enter_tile()` hooks.
+Loading validates the complete record in `saveload_record_buffer`, an alias
+for `tile_data`. After the browser returns, `saveload_apply_pending()` in
+`modules/saveload.c` copies decoded state/deltas to resident storage and
+reloads all 2,304 tile/property bytes before any room draw or transition.
+It temporarily disables leaving-room capture, enters the saved room, sets
+`GAME_ENTRY_LOAD`, and invokes room entry hooks.
 
 ## Save/load banked services
 
-The implementation uses two independently linked, execute-in-place services
-because their combined UI and encoding code does not fit one contiguous area:
+- `modules/saveload.c`: bank 6, browser, load application and cleanup.
+- `modules/saveload_save.c`: bank 7, name entry, encoding, write/readback/index.
+- `src/disk_io.c`: bank 14, KERNAL sequential-file operations.
 
-- `modules/saveload.c` (`SL`) provides the slot browser and full Load read;
-- `modules/saveload_save.c` (`SV`) provides name entry, encoding, Save,
-  readback verification, and index update.
+`src/main.c` reaches the bank-6 save/load entries through `far_call_bank`.
+Cross-bank save and disk calls use the same resident gate and restore the
+caller bank. Mutable request fields and workspace remain resident.
 
-Both live in EasyFlash bank 48 ROML: `SL` at `$8000-$894D` and `SV` at
-`$8A00-$96EE`. They are immutable ROM and have no linked BSS or writable data.
-The build validates their entry vectors, read-only segments, imported symbol
-visibility, packed addresses, and lack of overlap. There is no run-time copy,
-overlay header, or checksum validator.
+`src/saveload_abi.h` aliases the 146-byte workspace to `tile_properties`
+and the maximum 1,146-byte record to `tile_data`; the slot index also uses
+that record buffer at a disjoint time. These are compiler-allocated symbols,
+not fixed-address scratch regions. The full tile/property resource is
+restored on cleanup before drawing, including cancellation/error paths.
 
-`src/main.c` maps `PLATFORM_KEY_SAVE` (F1) and `PLATFORM_KEY_LOAD` (F3) to
-resident wrappers `game_save_show()`/`game_load_show()`. Those wrappers (in
-`src/saveload_runtime.c`) enter `SL` in the requested mode, optionally enter
-`SV`, then restore the tile resource, charset split, and room display.
-
-The services share a 146-byte resident workspace at `$0400-$0491`. SL uses it
-for decoded names/presence flags; SV preserves the raw `SINDEX` there before
-record encoding reuses `$3000`. Name entry edits the selected 17-byte index
-entry in place, avoiding a second name buffer. The maximum record deliberately
-borrows tile RAM because `$A000-$BFFF` reads are BASIC ROM while bank 48 ROML
-is active; treating that range as ordinary RAM was the central incompatibility
-in the old design.
-
-KERNAL disk calls (`SETLFS`/`SETNAM`/`OPEN`/`CHKIN`/`CHKOUT`/`CHRIN`/
-`CHROUT`/`CLOSE`/`READST`) live once in a resident assembly driver at
-`$B800-$BA0E`. SL/SV reach four block operations through explicit resident
-gates. Each gate temporarily disables EasyFlash and selects `$01=$36`, calls
-the driver, and restores the exact bank-48 ROML mapping before returning. The
-driver suspends the VIC raster source around each complete IEC transaction
-and resynchronizes it afterward; this prevents raster work from disrupting a
-write while leaving the CPU interrupt state suitable for KERNAL serial I/O.
-Assembly reloads cc65's `ptr1` after every KERNAL call because KERNAL owns low
-zero page. `SV` similarly calls `game_world_capture_current()` through a
-cartridge-off `$35` host gate rather than importing upper RAM code directly.
+Disk entries suspend raster work around IEC transactions and call KERNAL via
+Oscar64 inline-assembly wrappers with explicit results through `accu`.
+KERNAL and cartridge ROM remain visible. DOS literals use an identity
+letter charmap, independently of the display-text mapping.
+Do not reintroduce hidden-RAM buffers or assume a compiler zero-page ABI.
 
 ## No EasyFlash-flash save backend
 
@@ -211,7 +188,7 @@ storage.
 ## Capacity policy
 
 The global journal and v1 file format both support 200 changed object slots.
-The maximum record is 1,146 bytes and fits at `$3000-$3479` while save/load
+The maximum record is 1,146 bytes and fits in the borrowed `tile_data` buffer while save/load
 temporarily owns tile source RAM. Type 0 slots cost a record just like
 additions or movement.
 When the journal is full, save-aware mutations and room transitions fail

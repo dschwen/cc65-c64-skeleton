@@ -1,13 +1,13 @@
 # C64 Game Platform API
 
 The public runtime API is declared in `src/platform.h` and implemented in
-`src/platform.c`. It provides fixed-size room storage, tile and object
+the C modules in `src/` and banked services in `modules/`. It provides fixed-size room storage, tile and object
 rendering, minimal object movement redraws, room-transition detection, bottom
 status text, lighting/visibility, and a sprite tile cursor without dynamic
 allocation.
 
-See `MEMORY_MAP.md` for the complete CPU-layer map, current linker occupancy,
-RAM beneath BASIC/I/O/KERNAL, and portrait-sprite allocation.
+See `MEMORY_MAP.md` for memory ownership and `build/game.map` for exact
+compiler-allocated addresses. `GUIDE_OSCAR64_C64.md` summarizes the compiler.
 
 ## Coordinate systems
 
@@ -53,11 +53,11 @@ including both stacks. See `MEMORY_MAP.md` for the complete current contract.
 
 The platform preallocates:
 
-- one 1,001-byte `PlatformRoom` in a 1 KiB linker region;
+- one 1,001-byte `PlatformRoom` plus resident staging;
 - one byte each for `platform_current_room` and `platform_player_slot`;
 - one `PlatformObject* platform_player` pointing into the current room list;
-- 256 resident 35-byte hot object-type records (8,960 bytes), with names and
-  flags retained as cold cartridge data;
+- 256 logical 35-byte hot object-type records: IDs 0-222 in RAM, 223-255
+  in ROM with a resident one-record cache; names/flags remain cold ROM data;
 - a 110-byte dirty-cell bitmap.
 
 No API allocates heap memory.
@@ -78,8 +78,8 @@ through `FF`. Each file is exactly 1,001 bytes.
 | `6` | 1 | east neighbor room ID |
 | `7` | 1 | west neighbor room ID |
 | `8` | 1 | south neighbor room ID |
-| `9` | 1 | north exit-description byte - currently unread, reserved |
-| `10` | 1 | east exit-description byte - reserved |
+| `9` | 1 | room lighting level (`north_text` field) |
+| `10` | 1 | line-of-sight enabled (`east_text` field) |
 | `11` | 1 | west exit-description byte - reserved |
 | `12` | 1 | south exit-description byte - reserved |
 | `13` | 220 | tile IDs, 20x11 row-major |
@@ -95,12 +95,12 @@ An object slot is:
 
 A room's text and simple logic (Look/Use/room-entry/tile-entry hooks) is not
 part of this file at all: it's a compiled *room script*, a same-ID resource
-(`assets/resources/<hex room id>`) authored as DSL source
+compiled into bank 32 from DSL source
 (`assets/scripts/<hex room id>.script`, `tools/compile_script.py`) and run via
 `game_room_script_entry()` (see "Room-code helper API" below and
-`ROOM_CODE_API.md`). The four exit-description bytes above are reserved for a
-future version of this same mechanism applied to exit descriptions - not
-wired up yet, so `platform_look_exit()` always shows a generic message.
+`ROOM_CODE_API.md`). Offsets 9 and 10 now carry lighting/line-of-sight settings (see Lighting).
+Custom exit descriptions are not wired up; `platform_look_exit()` shows a
+generic message.
 
 The exit mask is separate from the four neighbor bytes because every byte
 value, including room `FF`, is a valid destination. Links may be one-way. The
@@ -135,7 +135,7 @@ The 16 color bytes resolve an ambiguity in the original proposed record: an
 object graphic needs both a full eight-bit character code and a color. They
 occupy half of the originally proposed 32 future bytes.
 
-This file format is authoring-only. `tools/pack_easyflash.py` splits every
+This file format is authoring-only. `tools/prepare_c64_assets.py` splits every
 64-byte record at build time into the resident `PlatformObjectType` (35
 bytes: width/height, hotspot, chars, colors, light) and the cartridge-only
 `PlatformObjectTypeInfo` (15 bytes: name, flags); see "Object types: hot/cold
@@ -157,40 +157,20 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
 ```
 
-Both state hooks return a platform status. The store hook runs while the
-leaving-room baseline is current; the restore hook runs on the staged
-destination and may reject it before commit. Any non-`PLATFORM_OK` result
-aborts the transition without removing the current player.
+Call `platform_init()` once before other APIs. It establishes KERNAL/CIA
+keyboard state, selects VIC bank 3, explicitly loads high-RAM assets, loads
+room 00 and installs the raster/NMI handlers. The player binds to slot 0 in
+the initial room record; there is no disk/PRG fallback runtime.
 
-Call `platform_init()` once before other platform APIs. It selects VIC bank 3,
-sets border/background black, selects the tile charset, installs the raster IRQ,
-and initializes the platform. Room `00` and types 0-1 baked into the PRG are a
-placeholder fallback for the (unexpected) case where the EasyFlash cartridge
-boot marker is absent; the real room/type data always loads from EasyFlash.
-These globals are established:
+`platform_room_load()` looks up the compiled room's bank, copies its
+1,001-byte record to resident staging, validates dimensions/ID/format/exit
+mask, then commits. Loading the global room also updates current-room and
+player pointers plus room lighting settings. Missing compiled IDs return
+`PLATFORM_ERR_NOT_FOUND`; invalid headers return `PLATFORM_ERR_FORMAT`.
 
-```c
-platform_current_room = 0;
-platform_player_slot = 0;
-platform_player = &platform_room.objects[0];
-```
-
-Thus the player is the actual slot-0 object from room `00`, not a detached
-copy. The current asset defines it as actor type 1, "The Hero".
-
-`platform_room_load()` selects the fixed ROML bank and offset for `room_id`,
-reads into staging RAM, validates the 1,001-byte record, and only then commits
-it to the caller's room. Loading into the global `platform_room` also updates
-`platform_current_room` and rebinds `platform_player` to `platform_player_slot`.
-`platform_object_types_load()` reads the resident hot fields for all 256
-types (see "Object types: hot/cold split" below). Both return:
-
-| Result | Meaning |
-|---|---|
-| `PLATFORM_OK` | success |
-| `PLATFORM_ERR_IO` | open/read failure or truncated input |
-| `PLATFORM_ERR_FORMAT` | invalid room header |
-| `PLATFORM_ERR_ARGUMENT` | invalid pointer/argument |
+`platform_object_types_load()` initializes zone B; zone A is part of main's
+initialized data and zone C remains banked. It returns `PLATFORM_OK`.
+See the hot/cold contract below; this is not a disk-read operation.
 
 Example:
 
@@ -200,37 +180,28 @@ uint8_t result;
 platform_init();
 result = platform_object_types_load();
 if (result == PLATFORM_OK) {
-    result = platform_room_load(&platform_room, 0x2a);
+    result = platform_room_load(&platform_room, 0x02);
 }
 ```
 
 ### Object types: hot/cold split
 
-Only the fields the render/collision path actually touches stay resident:
-`platform_object_type_get()` returns a 35-byte `PlatformObjectType`
-(dimensions, hotspot, chars, colors, light) for all 256 IDs, backed by three
-resident zones at a fixed 35-byte stride -- always-visible RAM for IDs
-0-105, RAM beneath I/O for 106-222 (copied to scratch with IRQs disabled),
-RAM beneath KERNAL for 223-255 (same). Zone A starts at `$C180` rather than
-`$C000` because the software stack and `GameState` were moved into that region
-(see "Banked code" below). The returned pointer is only valid
-until the next call to either accessor below.
+The 35-byte `PlatformObjectType` contains dimensions, hotspot, character/color
+cells and emitted light. IDs 0-105 are main data; 106-222 live at
+`$C000-$CFFE`, explicitly initialized from bank 16; 223-255 remain in bank 16
+and are copied into a one-record resident cache on a cache miss.
+`platform_object_type_get()` returns the corresponding record. Treat returned
+pointers as temporary across later lookups.
 
-Name and the actor-flag byte are not resident at all. Call
-`platform_object_type_info_get(type_id)` to fetch the 15-byte
-`PlatformObjectTypeInfo` (name, flags) directly from its fixed EasyFlash
-bank/offset -- a real cartridge bank-switch, heavier than
-`platform_object_type_get()`. This accessor is itself an in-place routine that
-*runs from a bank in place* rather than resident (see "Banked code" below), so
-a call now costs a far call plus its own nested fetch. Only call it from discrete, human-input-paced
-code (Take/Use/Look text, actor-flag checks before adding/counting objects),
-never per frame or per rendered cell. `PLATFORM_OBJECT_FLAG_ACTOR` now tests
-`info->flags`, not a field on the hot record.
+Names and flags are separate 15-byte `PlatformObjectTypeInfo` records in
+bank 1. `platform_object_type_info_get()` invokes that service through a
+resident wrapper and returns resident scratch. Use it for input-paced
+Look/Take/Use/actor checks, not per rendered cell. Copy values needed across
+subsequent calls. Actor classification uses `info->flags`.
 
-This reclaimed 7,416 bytes of RAM beneath KERNAL (`$E302-$FFF9`) that the
-previous 64-byte-per-record resident table fully occupied, without dropping
-any of the 256 logical type IDs. See `EASYFLASH_CARTRIDGE.md` for the bank
-layout `tools/pack_easyflash.py` produces.
+`tools/prepare_c64_assets.py objects-split` creates the two streams;
+`src/object_types_data.c` and `modules/typeinfo.c` embed/place them.
+See [EASYFLASH_CARTRIDGE.md](EASYFLASH_CARTRIDGE.md) for the bank table.
 
 ### Dynamic-room storage contract
 
@@ -238,8 +209,8 @@ The platform loads rooms throughout gameplay rather than preloading all 256
 rooms. Rooms are immutable base records copied from banked EasyFlash ROM into
 the single resident `platform_room`. All game-asset reads (rooms, object
 types, portraits, the in-place Inventory service, room code) are EasyFlash-only;
-disk KERNAL I/O is reserved for save games (see `SAVE_GAME.md`), which is
-specified but not yet implemented.
+disk KERNAL I/O is reserved for the implemented save-game backend
+(see `SAVE_GAME.md`; disk round trips are not covered by `make test`).
 
 A room transition using one resident buffer follows this order:
 
@@ -247,13 +218,14 @@ A room transition using one resident buffer follows this order:
 2. retain the transitioning player/NPC record outside the room buffer;
 3. load and validate the destination immutable room;
 4. remove its baked startup-player record when applicable;
-5. collision-check the arrival tile and prepare the destination room overlay;
+5. collision-check the arrival tile and select the destination room handler entry;
 6. capture modifications to the leaving room while its baseline is current;
 7. preflight an actor slot, establish the destination baseline, and apply deltas;
 8. insert the actor into the first valid empty slot;
 9. update `platform_current_room`, `platform_player_slot`, and
    `platform_player` only after success;
-10. activate the room overlay and draw tiles, objects, and the player;
+10. activate its handler bank, load/init its environment, invoke entry hooks;
+    reveal/redraw the room through the game transition helpers;
 11. resynchronize the split and reenable the raster source.
 
 Every failure after step 1 follows the same resume path, so an I/O, format,
@@ -440,7 +412,7 @@ void platform_object_move(PlatformRoom* room, PlatformObject* object,
                           uint8_t new_x, uint8_t new_y,
                           const PlatformObject* player);
 
-void __fastcall__ platform_player_set_type(uint8_t type_id);
+void platform_player_set_type(uint8_t type_id);
 
 uint8_t platform_room_object_add(PlatformRoom* room, uint8_t type,
                                  uint8_t x, uint8_t y, uint8_t* out_slot);
@@ -509,27 +481,20 @@ The bottom-of-map raster IRQ increments `platform_frame_counter` once per
 video frame. `platform_wait_frame()` waits for that byte to change, providing
 a 50 Hz PAL or 60 Hz NTSC game-loop cadence.
 
-`platform_frame_counter` cannot advance while `raster_irq_suspend()` holds the
-raster IRQ masked (every room transition does, for its whole duration - see
-`platform_room_enter()`'s contract above). `platform_wait_frame()` detects
-this and falls back to polling the VIC's raster position directly instead of
-hanging - real hardware timing, independent of whether an interrupt is
-allowed to fire. This matters for anything built on `platform_wait_frame()`:
-`game_wait_fresh_key()`, the bottom pager's between-pages wait, and the
-`wait_key` script opcode all now work correctly (they used to hang) when
-triggered from a room's `enter_room()`/`enter_tile()`, which always runs
-inside that suspended window during a transition - see
-`MEMORY_MAP_TARGET.md`'s "Transition hang" section for the full story and a
-remaining, lower-severity glitch (narration shown this way still renders
-through the wrong charset, readable but wrong, until the transition
-finishes).
+`platform_frame_counter` cannot advance while the raster source is suspended.
+`platform_wait_frame()` then polls the VIC raster directly as a fallback;
+it does not service weather/environment ticks on that path. Normal waits
+consume the pending foreground weather tick after the frame boundary.
+Keep blocking interaction outside suspended transition work when possible.
 
-Because the custom raster IRQ exits through the KERNAL IRQ restore path rather
-than running the normal KERNAL handler, it does not scan the keyboard itself.
-`platform_input_poll()` is an assembly wrapper that calls KERNAL `SCNKEY` and
-then `GETIN`. Call it once after each `platform_wait_frame()`; calling it in an
-unthrottled busy loop would advance KERNAL debounce/repeat state too quickly.
-It returns zero when no event is available. Cursor-key values are exposed as:
+The raster IRQ does not run the normal KERNAL keyboard handler.
+`platform_input_poll()` in `src/input.c` masks IRQs, calls SCNKEY then GETIN,
+captures the byte through an Oscar64 assembly expression, resynchronizes
+the next raster event, and restores processor status. Call it once after each
+frame wait; an unthrottled loop advances debounce/repeat too quickly.
+It returns zero when no event is available.
+
+Cursor-key values are exposed as:
 
 | Key | Constant | Value |
 |---|---|---:|
@@ -601,7 +566,7 @@ returns one of:
 An in-room result writes the proposed hotspot's tile ID to `stepped_tile` when
 that pointer is non-NULL. Trigger detection uses tile property bit 4.
 
-Format 3 stores the four edge destinations and descriptions.
+Format 3 stores four edge destinations; header bytes 9/10 are lighting settings.
 `platform_room_neighbor()` returns
 `PLATFORM_ERR_NOT_FOUND` when a direction is disabled. Before committing an
 edge transition, `platform_room_enter()` loads and validates the destination,
@@ -624,8 +589,7 @@ window - with `platform_screen_blank()`/`_unblank()` and
 in `src/platform.h`). There are exactly three such callers, all going through
 `game_process_pending_transition()`'s bracket shape: `src/main.c`'s startup
 sequence, `game_process_pending_transition()` itself (scripted transitions
-*and*, since the fix described in `MEMORY_MAP_TARGET.md`'s "Interrupt/banking
-safety audit", ordinary edge-of-room walking, both queued through
+and ordinary edge-of-room walking, both queued through
 `game_transition_request()`), and `saveload_apply_pending()`. Do not add a
 fourth call site that invokes `platform_room_enter()` directly outside that
 bracket - queue a transition through `game_transition_request()` instead.
@@ -771,9 +735,11 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
 void platform_portrait_hide(void);
 ```
 
-Fetches the 256-byte `portrait_id` asset (see
-`tools/asset-editor/README.md`) from its fixed EasyFlash ROML bank (8 KiB
-mode) and displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
+The rendering API is implemented, but the Makefile does not yet embed portrait
+assets into the reserved banks. Do not assume authored portraits appear in the
+CRT or that this path is regression-tested. Once supplied, the API fetches the
+256-byte `portrait_id` asset (see
+`tools/asset-editor/README.md`) from its reserved EasyFlash bank/offset and displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
 copied directly from the asset (it is exactly their memory layout), and
 sprite 5 is filled with a constant solid bitmap, colored black, and expanded
 2x horizontally and vertically to form a 48x42 backdrop exactly matching the
@@ -795,7 +761,7 @@ sprites 1-5 from the requested asset.
 ## Rain weather layer
 
 ```c
-void __fastcall__ platform_rain_enable(void (*setup)(void));
+void platform_rain_enable(void (*setup)(void));
 void platform_rain_activate(void);
 void platform_rain_disable(void);
 uint8_t platform_rain_is_active(void);
@@ -809,106 +775,48 @@ leaves the screen it respawns at a random position along the top or left
 edge. The effect never rewrites screen RAM, Color RAM, lighting, or
 visibility buffers.
 
-Because sprites 1-5 are shared with the portrait API above, rain and a shown
-portrait are mutually exclusive - `platform_portrait_show()`/`hide()` handle
-pausing and resuming rain automatically (see Portraits). `game_enter_room()`
-disables rain before dispatching the destination room's `enter_room()`, so
-whether a room ever shows rain is purely that room's own code's decision -
-there is no data-driven "this room is rainy" flag anywhere else (not in the
-room file, not in the DSL). A rainy room opts in explicitly, from its own
-`enter_room()`:
+Sprites 1-5 are shared with portraits. The portrait API pauses/resumes the
+current environment through `env_disable()`/`env_enable()`.
+`game_enter_room()` first disables rain, then selects and initializes the
+environment from `rooms/env_banks.h`. Rooms 00/01 use the rain environment.
 
-```c
-static void rain_setup(void) { /* sprite pointer/color/VIC-attribute pokes */ }
-void enter_room(void) {
-    platform_rain_enable(rain_setup);
-}
-```
+`platform_rain_enable(setup)` registers/runs a sprite-setup callback and
+activates the streaks. Passing zero reuses the saved callback; it must remain
+callable under the caller's mapping. The current rain callback lives in the
+relocated environment, not in a bank that may have been switched out.
+`platform_rain_activate()` reseeds/enables movement;
+`platform_rain_disable()` clears the active state and sprite mask.
 
-`setup` is a one-time callback that pokes the sprite pointer, color, and
-VIC-attribute registers for sprites 1-7 (see `rooms/00.c`); it is not part
-of the always-resident code because it only ever needs to run synchronously
-from room entry or the portrait-resume path, both guaranteed to still have
-the calling room's own EasyFlash bank paged in. Pass `0` to reuse whichever
-setup was last registered instead of supplying a new one - this is what the
-portrait-resume path does, since it never has a setup of its own to give.
-`platform_rain_activate()` is the lower-level "just (re)seed and turn the
-streaks on" step `platform_rain_enable()` performs after running `setup`;
-callers outside the portrait-resume path normally want
-`platform_rain_enable()`, not this directly.
-
-`platform_rain_is_active()` reports whether rain is currently on; it exists
-for callers that need to pause and later resume rain without assuming its
-prior state (the portrait code goes through `env_disable()`/`env_enable()`
-instead - see "Room environment module" below - rather than calling this
-directly).
-
-The shared streak bitmap occupies `$FD80-$FDBF`; all seven sprite pointers
-point at it (`$F6`, relative to VIC bank 3). It is initialized procedurally
-once, and only sprite position changes. Compact rain/water setup code lives at
-`$2FA0-$2FE1`; `$FDC0-$FDFF` remains an unused sprite slot.
-
-EasyFlash storage reserves banks 49-56 (8 KiB ROML mode, 32 portraits per
-bank) for the full 256-ID range, mirroring the room asset layout's fixed
-`bank = first_bank + id / per_bank` formula. See
-`EASYFLASH_CARTRIDGE.md` for the complete bank table.
+The shared streak bitmap is `$FD80-$FDBF`, sprite pointer `$F6` in VIC bank 3.
+Water/rain initialization code is compiler-placed resident code.
+`$FDC0-$FDFF` is the remaining unused sprite-data slot.
 
 ## Room environment module
 
-A room's environment module unifies its weather (the rain sprites above)
-and ambient sound (a SID rain-bed/droplet/footstep routine) behind one
-small jump-table API, refreshed per room the same way room code is:
+Environment modules in `rooms/env/*.c` combine ambient SID sound and optional
+weather. Each is linked for `$7E00-$7FFF` and copied from its own ROM bank
+on room entry. `rooms/env_banks.h` selects the bank; this does not use the
+generic resource-kind loader.
 
-```
-offset 0  JMP env_init     - once, on room entry
-offset 3  JMP env_tick     - once per frame, from the raster IRQ
-offset 6  JMP env_enable   - resume after a pause
-offset 9  JMP env_disable  - pause (e.g. a portrait/conversation)
-```
+The first eight bytes are an `EnvTable`:
 
-This is reserved, always-resident RAM (`ENVCODE_BASE`, `$7E00-$7FFF` -
-`src/platform.inc`/`cfg/myc64.cfg`), never a copied `$B000` overlay:
-the raster IRQ calls `env_tick` every frame via `weather_animate`
-(`src/irq.s`), and interrupt code can never bank-switch to reach a room's
-own EasyFlash bank to fetch it fresh. Instead, the *whole module* - init,
-tick, enable, disable, and whatever persistent state it needs - is copied
-into this one fixed, non-banked address range at room entry, and the
-existing raster IRQ, `game_enter_room()`, and `platform_portrait_show()`/
-`_hide()` all call fixed addresses within it, regardless of which room's
-module (if any) is currently loaded there.
+| Offset | Native function pointer |
+|---:|---|
+| 0 | init |
+| 2 | tick |
+| 4 | enable |
+| 6 | disable |
 
-`game_enter_room()` (`src/game.c`) fetches the new room's module via
-`platform_resource_fetch(PLATFORM_RESOURCE_KIND_ENVIRONMENT, room_id,
-ENVCODE_BASE, ENVCODE_SIZE)` - a normal generic resource fetch (see
-"Generic cartridge resources" below), keyed by room ID like
-`PLATFORM_RESOURCE_KIND_ROOM`. A room with no module of its own gets
-`env_install_null()` instead: a stub whose four vectors all just `rts`, so
-every call site can call unconditionally with no "is anything loaded"
-check. The fetch and the two init calls are bracketed by
-`raster_irq_suspend()`/`_resume()` - not just the usual safety margin: the
-fetch's own post-copy checksum verification re-enables interrupts before
-it finishes, and without this bracket the raster IRQ could fire mid-fetch
-and run the *just-copied* module's tick, which mutates its own persistent-
-state bytes - changing the very bytes still being checksummed and
-spuriously failing the fetch. Found live in VICE, not by inspection: room
-00's module kept silently reverting to the null stub even though the copy
-and checksum were each independently correct.
+A dedicated entry section precedes every constant/code section. These are
+two-byte addresses, not three-byte JMP instructions. Keep the whole relocated
+module within 512 bytes and mutable globals resident. The null module points
+all four slots at a resident no-op.
 
-`env_enable()`/`env_disable()` (`src/env_dispatch.s`, thin `jmp` trampolines
-so C code can call them like ordinary functions) are what
-`platform_portrait_show()`/`_hide()` call to pause and resume a room's
-environment unconditionally, replacing what used to be a portrait-specific
-`platform_rain_is_active()`/`_disable()`/`_enable(0)` dance. A room with no
-module simply no-ops.
-
-`rooms/env/<ID>.s` is hand-written ca65 (see `rooms/env/00.s`), not a DSL:
-VIC/SID register poking has no mechanical pattern worth one, the same
-reasoning that made room code's own `asm` escape hatch necessary before
-this. It's built like room code (assembled, resolved against the resident
-image via `tools/generate_room_resolver.py`, linked) but at the fixed
-`ENVCODE_BASE` origin (`cfg/env_module.cfg`) with no header-patching step -
-the generic resource directory already checksums and size-validates the
-linked output, so it *is* the final resource content directly.
+`game_enter_room()` copies the module and calls init within the room-switch
+raster-suspension bracket. `platform_wait_frame()` services its tick from
+foreground code; IRQ only marks work pending. `src/env_dispatch.c` supplies
+the init/enable/disable wrappers used by the platform and portrait paths.
+Replacing the module must not leave a pending call into old entry addresses.
 
 ## Generic cartridge resources
 
@@ -927,202 +835,64 @@ uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
 uint16_t platform_resource_last_size(void);
 ```
 
-Rooms, object types, and portraits all use a fixed-formula bank/offset
-because each is fixed-size and fully populated across all 256 IDs. This
-call is for content that is not: sparse, variable-size data, e.g. the
-room/cutscene/conversation scripts `modules/script.c` interprets (see
-`ROOM_CODE_API.md`'s "Room scripts" and `tools/compile_script.py`'s module
-docstring). Each `PLATFORM_RESOURCE_KIND_*` has its own independent
-256-entry directory reserved in EasyFlash banks 57-63 (see
-`EASYFLASH_CARTRIDGE.md`), so a conversation and a standalone script can
-both use `resource_id` 5 without colliding. `assets/resources/NN` raw
-resources (unstructured bytes, no ABI, unlike room code) share
-`PLATFORM_RESOURCE_KIND_SCRIPT`'s directory with compiled cutscenes, since
-neither belongs to a room or conversation; both are placed by
-`tools/pack_easyflash.py`.
+Only `PLATFORM_RESOURCE_KIND_ROOM` is currently implemented in `src/resources.c`.
+The Makefile compiles `assets/scripts/00.script` through `05.script` into
+bytecode; `tools/generate_script_bank.py` emits bank 32's arrays and dispatcher.
+The remaining kind constants reserve interfaces; they do not imply content
+is built or retrievable. Environments, charsets/tiles, rooms and object records
+use separate direct paths. There is no generic directory/checksum packer.
 
-`PLATFORM_RESOURCE_KIND_ASSET` carries the static assets that used to be
-`.incbin`'d into the program image - the tile charset, the text charset, and
-the tile definitions plus property table as one blob. `platform_init()` fetches
-them at boot straight to their reserved addresses, so they cost nothing in the
-contiguous image `cart/ef_boot.s` copies into RAM, and a different charset or
-tileset becomes a packing decision rather than a rebuild of the engine. Two
-consequences worth knowing: the fetches must complete before anything draws
-(they run before the raster IRQ is installed), and tile bitmaps and tile
-properties ship as a single resource on purpose, because a mismatch between
-them means collision silently disagreeing with what is drawn. IDs are
-`PLATFORM_ASSET_CHARSET_TILE`, `_CHARSET_TEXT` and `_TILES`.
+`platform_resource_fetch_range()` copies a window starting at `start` into
+resident destination storage and returns the bytes copied (zero if absent or
+out of range). `platform_resource_last_size()` reports the total looked-up
+resource size. `platform_resource_fetch()` starts at zero and returns zero
+if the complete resource does not fit; a partial copy may already have changed
+the destination. No runtime resource-body checksum is performed.
 
-Note this directory lives at the head of the directory bank's *ROMH* half
-rather than its ROML half: four 256-entry directories exactly fill ROML, so
-kind 4 and anything added after it continue in ROMH.
-
-`platform_resource_fetch()` copies up to `capacity` bytes from the start of
-the resource into `destination` and returns the actual length on success.
-Returns `0` if `kind`/`resource_id` is unpopulated, its stored length
-exceeds `capacity`, or the copied bytes fail the directory's stored
-checksum -- callers should treat `0` as "resource not available" and must
-not assume `destination` was left unmodified in that case. A resource
-never exceeds `PLATFORM_RESOURCE_MAX_BYTES` (one 8 KiB EasyFlash ROML/ROMH
-half), so a fetch is always a single bank selection, never a multi-bank
-copy.
-
-`platform_resource_fetch_range()` is for a resource bigger than any single
-resident buffer can hold in one piece: it copies up to `capacity` bytes
-starting at byte `start` of the resource (not necessarily its beginning)
-and returns the number of bytes actually copied (`0` for `start >=` the
-resource's size, or a lookup failure). Unlike `platform_resource_fetch()`,
-it does not verify the checksum -- that covers the whole resource, not an
-arbitrary sub-range, so a corrupt directory entry is still caught, but a
-corrupt resource body is not. `platform_resource_last_size()` returns the
-size of the resource most recently looked up by either fetch call
-(regardless of `kind`, since it just re-reads the shared lookup buffer),
-and regardless of how much of it fit in that call's `capacity` -- callers
-use it as the upper bound to keep fetching against. `modules/script.c`
-uses this pair to keep a sliding window into a script resource up to 8
-KiB, re-fetching a fresh window into its much smaller (~1 KiB) resident
-buffer whenever a read falls outside the current one.
+`modules/script.c` uses the range API for its sliding resident bytecode window.
+Do not retain a pointer to bank-local bytecode after restoring the caller bank.
 
 ## Raster IRQ and water animation
 
-The complete raster interrupt implementation is assembly in `src/irq.s`. It
-switches from tile charset bank 0 to text charset bank 1 immediately below the
-map, restores bank 0 at raster line 0, advances rain once per frame at the
-map/text split (an ordinary per-sprite position update, not a multiplexing
-event), and acknowledges every VIC interrupt. It acknowledges at handler entry,
-so a later compare that occurs during rain/environment work remains pending.
-The handler also accepts late entry and derives the correct phase from `$D011`
-bit 7 plus `$D012`.
+The raster implementation is in `src/irq.c`. It selects tile charset
+`$D018=$EA` at raster zero and text charset `$EC` at line 227
+(triggered at line 226), increments the frame counter and marks weather work
+pending. Full-screen menus retain text throughout, including late-entry and
+input-resynchronization paths.
 
-**Contract: interrupt code never bank-switches, and stays on resident data.**
-`src/irq.s` never touches `EASYFLASH_BANK`/`EASYFLASH_CONTROL`/`ef_shadow_*`
-and never will. The full per-frame closure - handler code, frame/rain state,
-water character data, and the loaded environment tick - lives below `$8000`.
-Most other engine state in `$8000-$BFFF` is hidden by ROML/ROMH and remains
-forbidden to interrupt code. Foreground bank wrappers therefore mask interrupts
-only across the short `$01`/`$DE00`/`$DE02` transition and restore the caller's
-interrupt state while the copy or banked routine runs.
+The IRQ body never switches banks. The normal KERNAL-visible path enters via
+`$0314`, uses an Oscar64 `__interrupt` body and the KERNAL restore exit.
+The RAM-vector path uses `__hwinterrupt` for CPU-register save/restore and RTI.
+NMI has its own hardware wrapper and CIA2 acknowledgment. Do not interchange
+these entry contracts.
 
-Every foreground (non-interrupt) banked call goes through the general "thin
-call wrapper" pair in `src/banking.s`: `_platform_bank_call_enter`/
-`_platform_bank_call_leave` (or the `BANK_CALL` macro in `platform.inc`),
-bracketing a `jsr` to the banked routine:
-
-```asm
-    lda #MY_BANK
-    jsr _platform_bank_call_enter
-    jsr my_banked_routine
-    jsr _platform_bank_call_leave
-```
-
-These save/restore the previous bank, EasyFlash mode, CPU memory map, and
-interrupt-flag state through a small fixed-depth array (a real bank stack,
-not the CPU hardware stack - a `jsr`'d "enter" can't leave state on the
-hardware stack for a *different* `jsr`'d "leave" to find, since `rts`
-always pops whatever is on top regardless of what pushed it), so nested
-banked calls unwind correctly. `easyflash_copy_window` (the primitive behind
-`platform_easyflash_copy_roml`/`_romh`) is itself built on this pair.
-
-The byte copy is still expensive - roughly 50 cycles per byte - but it no
-longer freezes the raster split, frame counter, rain, or environment tick.
-SL/SV no longer require a byte copy: their UI code runs directly from ROM.
+Water, rain movement and the environment tick run in
+`platform_weather_service()` from the foreground frame wait. Water rotates
+an eight-byte resident shadow of tile character 14 every other serviced frame,
+then writes it to `$E870-$E877`. Initial shadow capture uses
+`platform_copy_vic_ram()`; CPU loads with KERNAL visible would read ROM.
+The IRQ itself hides rain sprites for bottom text and restores them at the top.
 
 ### Banked code
 
-Beyond copying *data* out of a bank, code can be linked into the ROML window
-and **executed straight from its bank**, never copied into RAM. Call one with
-the `FAR_CALL` macro (`src/platform.inc`):
+Use `far_call_bank` in `src/memmap.h` and `__noinline` banked entries.
+It saves/restores `platform_cart_bank`, the software shadow of write-only
+`$DE00`. Request/result adapters live in resident memory. Nested calls restore
+the caller's bank; a native pointer does not encode the bank.
 
-```asm
-    FAR_CALL 47, $9F80, CPU_MAP_CART_8K, EASYFLASH_8K
-```
+Code/constants can be read inside the selected bank, but resident state and
+both compiler stacks must be outside `$8000-$BFFF`. Cross-bank calls and
+CPU-mapping changes must go through resident code. Keep KERNAL/cartridge
+visible while running banked instructions; only the resident RAM gate briefly
+clears HIRAM for high-RAM reads.
 
-It patches the bank, target, CPU map, and EasyFlash control into a single
-shared trampoline
-(`_platform_far_call`, `src/banking.s`) and calls it. The trampoline is
-reentrant despite the self-modification - all patched operands are consumed
-before its inner `jsr`, and nothing below that `jsr` is patched - so a banked
-routine may `FAR_CALL` again. It keeps the caller's bank, mode and map on the
-CPU hardware stack, which is why it needs none of the fixed-depth array
-`_platform_bank_call_enter`/`_leave` rely on: it brackets the call itself
-rather than being two separate `jsr`/`rts` pairs.
+No ROM self-modification, custom register ABI, packed service entry address
+or separate resolver is required. Inspect section pragmas and `build/game.map`
+for actual placement. Save/load services use banks 6/7 and disk I/O bank 14;
+their borrowed tile storage is restored before drawing.
 
-Register contract: **`A` and `X` are passed to the callee and its `A`/`X`
-return comes back**, which covers cc65's 8- and 16-bit argument and return
-passing, so a banked routine can be an ordinary `__fastcall__` C function.
-`Y` is the trampoline's scratch and is preserved in neither direction.
-
-**What a banked routine may touch.** ROML calls require CPU map `$37`. In 16
-KiB EasyFlash mode `$A000-$BFFF` is ROMH; in 8 KiB mode it is BASIC ROM. Thus
-the effective readable-RAM rule is the same: reads from `$8000-$BFFF` do not
-return underlying RAM, although writes still reach it. A banked routine may
-only use
-`$0000-$7FFF` and `$C000-$CFFF`, and may only call resident code living
-outside the window. This is why the software stack (`$C000`) and `GameState`
-(`$C100`) were moved - cc65 code touches its stack constantly - and why
-`LOWBSS` exists for state the bank machinery itself must read. `UPPERCODE`
-(`$8B48`) is inside the window and is therefore unreachable from a bank.
-Banked code is also immutable: a store to an instruction address writes the
-RAM beneath the cartridge, while instruction fetch still sees ROM. Use RAM
-pointers or tables instead of self-modifying operands.
-
-**Granularity.** Each far call still pays a fixed map/register transition and
-should not be used for inner-loop helpers. Long banked operations no longer
-stop the raster IRQ, but they still block foreground gameplay until they
-return.
-
-`platform_object_type_info_get()`, the complete Inventory UI, Room Helpers,
-Look Helpers, script interpreter, and both save/load services run this way;
-see their modules, linker files under `cfg/`, and resident stubs in
-`src/banked_api.s` for the pattern. RH deliberately performs its
-hot-type lookup before entry to keep the cartridge operation mutation-only.
-LH can call collision directly because `platform_object_type_get()` now
-restores the exact caller map after exposing RAM under I/O, rather than
-hard-coding `$01=$35` and unmapping a ROML caller.
-
-SC also demonstrates the reverse boundary. Its shared host-action dispatcher
-uses the far-call trampoline to select cartridge-off `$01=$35`/`$DE02=$04`
-while calling resident engine code hidden by ROML or dependent on `$B000`
-WORKBSS. Because the trampoline updates the readable bank/control shadows,
-nested EasyFlash operations (notably portrait fetch) restore cartridge-off
-state until the host action returns; the outer unwind then restores SC's bank
-47 `$37/$06` state. Interrupts remain enabled during both sides of the call.
-`EASYFLASH_CARTRIDGE.md`'s "Modules executed in place" covers the packing side.
-
-SL/SV use the same reverse boundary for disk I/O. Their shared mutable
-workspace is `$0400-$0491`, and their maximum record borrows `$3000-$3479`.
-Four explicit gates unmap EasyFlash, select KERNAL map `$36`, and call one
-resident assembly driver at `$B800`; a fifth selects gameplay map `$35` for
-`game_world_capture_current()`. The disk driver suspends the VIC raster source
-for each complete IEC transaction, then resynchronizes it. The outer far call
-restores bank 48 ROML before banked code resumes. Resident cleanup restores
-the tile asset on every exit before normal drawing can read `$3000`.
-
-Do not derive the 6510 port value from `$DE02`: ROML uses `$01=$37` with
-`$DE02=$06`, not `$36/$06`. `$01=$36` disables ROML along with BASIC. The
-generated layout emits both values so this hardware distinction remains
-explicit at every call site.
-
-The gameplay handler is entered directly through RAM `$FFFE/$FFFF` under the
-normal `$35` map, saves and restores A/X/Y, and ends in `RTI`. KERNAL is visible
-during either in-place cartridge mode because both require `$37`, so those IRQs
-enter through the installed `$0314` vector instead. Both entries call the same
-resident body. Keyboard polling likewise uses a short `$37` wrapper and
-restores the normal `$35` gameplay mapping before returning.
-
-A contiguous `$C000-$FFFF` object table is possible through `$01` banking, but
-records in its `$D000-$DFFF` quarter must be staged through visible scratch RAM
-while I/O is temporarily hidden. The renderer cannot update VIC or Color RAM
-in that interval. The exact per-ID access policy and the alternative
-`$8000-$BFFF` layout are documented in `EASYFLASH_CARTRIDGE.md`.
-
-The bottom-of-map branch also animates tile charset character 14. After the
-VIC switches to the text charset, it rotates an eight-byte `LOWBSS` shadow and
-writes the result to `$E870-$E877`, wrapping each byte's bit 7 into bit 0.
-This avoids reading charset RAM while KERNAL is mapped. Water-property tiles 2,
-3, and 21 all use character 14 in every quadrant. A one-byte frame divider
-runs the rotation every second bottom split: 25 updates/second on PAL and 30
-updates/second on NTSC.
+See [GUIDE_OSCAR64_C64.md](GUIDE_OSCAR64_C64.md) for the compiler model and
+[EASYFLASH_CARTRIDGE.md](EASYFLASH_CARTRIDGE.md) for the full bank table.
 
 ## Editor workflows
 
@@ -1147,7 +917,7 @@ transparent, right-click clears a cell, and the hotspot tool assigns the
 anchor by clicking a grid cell. Room mode provides a selected-object form for
 changing a room entry's type and half-tile coordinates. Room and object-type
 files can be imported/exported locally or opened/saved under `assets/` when
-using `make asset-editor`.
+using `python3 tools/asset-editor/server.py --host 127.0.0.1 --port 8000`.
 
 ## Remaining platform decisions
 

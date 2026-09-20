@@ -6,6 +6,7 @@
 #include "platform.h"
 #include "platform_native.h"
 #include "game.h"
+#include "world.h"
 #include "look_helpers_abi.h"
 
 /*
@@ -35,11 +36,14 @@
 #define HOTSPOT_X(t)     ((uint8_t)((t)->hotspot >> 4))
 #define HOTSPOT_Y(t)     ((uint8_t)((t)->hotspot & 0x0fu))
 
-/* Tile bitmaps/properties - compile-time data, see src/assets_data.c. */
-extern const uint8_t tile_data[];
-extern const uint8_t tile_properties[];
+/* Tile bitmaps/properties - loaded from a bank at boot, see
+ * src/assets_data.c's header comment. */
+extern uint8_t tile_data[];
+extern uint8_t tile_properties[];
+void platform_tiles_load(void);
 
 void raster_irq_install(void);
+void platform_weather_service(void);
 void raster_irq_vectors_restore(void);
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
@@ -107,13 +111,13 @@ uint8_t platform_current_room;
 uint8_t platform_player_slot;
 PlatformObject* platform_player;
 
-PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
-#pragma bss(hotc000)
-PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
-#pragma bss(bss)
-#pragma bss(hote000)
-PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
-#pragma bss(bss)
+/* object_types_a/b/c are defined (with their real #embed-initialized
+ * content) in src/object_types_data.c and already declared extern via
+ * platform_native.h, included above. Declaring them again here, even
+ * without an initializer, created a second, uninitialized instance that
+ * oscar64 silently accepted instead of erroring on the duplicate
+ * definition - confirmed live as one of the causes of the whole program
+ * hanging before main() ever ran. */
 
 /* Filled in by the banked TypeInfo service (bank 1) - see
  * platform_object_type_info_get() below. */
@@ -196,8 +200,6 @@ static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
-static PlatformRoomStoreHook room_store_hook;
-static PlatformRoomRestoreHook room_restore_hook;
 static uint8_t player_spawn_room;
 static uint8_t player_spawn_slot;
 static uint8_t player_spawn_type;
@@ -239,7 +241,17 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id) {
     if (type_id < OBJECT_TYPE_ZONE_AB_COUNT) {
         return &object_types_b[type_id - OBJECT_TYPE_ZONE_A_COUNT];
     }
-    return &object_types_c[type_id - OBJECT_TYPE_ZONE_AB_COUNT];
+    /* Zone C is cold, banked storage (src/object_types_data.c) - most
+     * per-frame draw calls re-request the same object across several
+     * cells/rows, so a one-entry cache turns the common case into a
+     * resident-only read and reserves the far_call_bank() for genuine
+     * type changes. */
+    if (object_type_c_cache_tag != type_id) {
+        object_type_c_query_id = type_id;
+        far_call_bank(BANK_OBJECT_TYPE_C, object_type_c_fetch);
+        object_type_c_cache_tag = type_id;
+    }
+    return &object_type_c_scratch;
 }
 
 /* platform_object_type_info_get() runs the banked TypeInfo service (bank
@@ -389,19 +401,44 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
     return limit;
 }
 
-/*
- * Object types, charsets, and tile data no longer need a boot-time fetch
- * or a non-cartridge PRG fallback: under oscar64's whole-program model
- * they are ordinary compile-time-embedded program data (see
- * src/object_types_data.c, src/assets_data.c), always present exactly as
- * shipped in the cartridge image. Room 0 is loaded from its own bank the
- * same way every other room transition works.
- */
+/* Oscar64 expands main only. Initialize KERNAL/CIA state and explicitly
+ * load high-RAM assets before drawing or enabling the raster split.
+ * Room 0 uses the same banked resource path as subsequent rooms. */
+volatile uint8_t boot_trace;
+#define TRACE(n) (boot_trace = (n))
+
 void platform_init(void) {
+    /* EasyFlash enters without a KERNAL reset. Initialize hardware,
+     * KERNAL vectors and editor/keyboard state, but do NOT call RAMTAS:
+     * it would clear the live Oscar64 zero page and software stack. */
+    __asm {
+        sei
+        jsr $ff84
+        jsr $ff8a
+        lda #$04
+        sta $0288
+        jsr $ff81
+        sei
+    }
+    /* CINT enables the CIA timer interrupt. Keep it masked until our
+     * own raster handler and all display assets are ready. */
+    *((volatile uint8_t*)0xdc0du) = 0x7fu;
+    *((volatile uint8_t*)0xdd0du) = 0x7fu;
+    __asm {
+        lda $dc0d
+        lda $dd0d
+    }
+    *((volatile uint8_t*)0x0098u) = 0u; /* no open KERNAL files */
+    *((volatile uint8_t*)0x0099u) = 0u; /* keyboard input */
+    *((volatile uint8_t*)0x009au) = 3u; /* screen output */
+    platform_cart_bank = 0u;
+    TRACE(1u);
     *((volatile uint8_t*)0xdd00u) &= 0xfcu;
     ((volatile uint8_t*)0xd000u)[0x20] = 0u;
     ((volatile uint8_t*)0xd000u)[0x21] = 0u;
     ((volatile uint8_t*)0xd000u)[0x18] = 0xeau;
+    ((volatile uint8_t*)0xd000u)[0x11] = 0x0bu; /* blank, text, scroll 3 */
+    ((volatile uint8_t*)0xd000u)[0x16] = 0x08u; /* 40-column hires text */
     ((volatile uint8_t*)0xd000u)[0x15] = 0u;
     memset(platform_base_colors, 0, sizeof(platform_base_colors));
     memset(platform_brightness, PLATFORM_LIGHT_FULL, sizeof(platform_brightness));
@@ -409,19 +446,24 @@ void platform_init(void) {
     platform_global_light = PLATFORM_LIGHT_FULL;
     platform_room_light_level = PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL;
     platform_room_los_enabled = 1u;
+    TRACE(2u);
     (void)platform_irq_save_disable();
+    TRACE(3u);
     platform_memory_game();
+    platform_charsets_load();
+    far_call_bank(BANK_OBJECT_TYPE_C, object_types_b_load);
+    TRACE(4u);
+    platform_tiles_load();
+    TRACE(5u);
     (void)platform_room_load(&platform_room, 0u);
+    TRACE(6u);
     platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
+    TRACE(7u);
     env_install_null();
+    TRACE(8u);
     raster_irq_install();
-}
-
-void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
-                               PlatformRoomRestoreHook restore_hook) {
-    room_store_hook = store_hook;
-    room_restore_hook = restore_hook;
+    TRACE(9u);
 }
 
 void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
@@ -949,6 +991,12 @@ void platform_wait_frame(void) {
     frame = platform_frame_counter;
     while (platform_frame_counter == frame) {
     }
+    /* See src/irq.c's platform_weather_service() comment: the raster IRQ
+     * only flags that a weather tick is due; this runs it from ordinary
+     * foreground code once per frame, right after the frame boundary that
+     * flagged it. Not reached in the !platform_raster_irq_active branch
+     * above, matching the original's "no weather ticks while suspended". */
+    platform_weather_service();
 }
 
 uint16_t platform_room_object_count(const PlatformRoom* room,
@@ -1045,17 +1093,21 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
     if (result != PLATFORM_OK) {
         goto transition_done;
     }
-    if (room_store_hook != 0) {
-        result = room_store_hook(&platform_room);
+    if (world_store_enabled) {
+        world_state_room = &platform_room;
+        world_state_op = WORLD_STATE_OP_STORE;
+        far_call_bank(BANK_WORLD_STATE, world_state_entry);
+        result = world_state_result;
         if (result != PLATFORM_OK) {
             goto transition_done;
         }
     }
-    if (room_restore_hook != 0) {
-        result = room_restore_hook(&room_stage);
-        if (result != PLATFORM_OK) {
-            goto transition_done;
-        }
+    world_state_room = &room_stage;
+    world_state_op = WORLD_STATE_OP_RESTORE;
+    far_call_bank(BANK_WORLD_STATE, world_state_entry);
+    result = world_state_result;
+    if (result != PLATFORM_OK) {
+        goto transition_done;
     }
     result = platform_room_object_add(&room_stage, actor.type,
                                       actor.x, actor.y, &slot);

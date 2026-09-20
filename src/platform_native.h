@@ -20,7 +20,19 @@
 
 extern PlatformObjectType object_types_a[OBJECT_TYPE_ZONE_A_COUNT];
 extern PlatformObjectType object_types_b[OBJECT_TYPE_ZONE_B_COUNT];
-extern PlatformObjectType object_types_c[OBJECT_TYPE_ZONE_C_COUNT];
+
+/* Zone C (type IDs 223-255) is cold, banked storage now - see
+ * src/object_types_data.c's header comment. platform_object_type_get()
+ * (src/platform.c) is the only intended caller of the fetch/cache below. */
+extern PlatformObjectType object_type_c_scratch;
+extern uint8_t object_type_c_cache_tag;
+extern uint8_t object_type_c_query_id;
+void object_type_c_fetch(void);
+void object_types_b_load(void);
+void platform_charsets_load(void);
+/* Resident gate; neither buffer may be inside the cartridge window. */
+void platform_copy_vic_ram(uint8_t* destination, const uint8_t* source,
+                           uint8_t size);
 
 /* platform_map_draw_native()/platform_object_draw_native() (render.c)
  * argument-passing globals - set by platform.c's object_draw_base()

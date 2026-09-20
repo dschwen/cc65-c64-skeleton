@@ -3,19 +3,21 @@
 #include "game.h"
 #include "script_format.h"
 #include "script_abi.h"
+#include "banks.h"
 
-/* Independently linked script/conversation/room interpreter service ("SC").
- * Its code and constants execute directly from bank 47 ROML at $8800; all
- * mutable state is explicitly resident below $8000 (see script_abi.h).
- * Executes the bytecode format tools/compile_script.py compiles (see that
- * tool's docstring for the exact format and opcode encoding - this file
- * must stay in sync with it by hand, there is no shared source of truth).
+/* Banked script/conversation/room interpreter service ("SC") - EasyFlash
+ * bank BANK_SCRIPT (src/banks.h). All mutable state is explicitly resident
+ * below $8000 (see script_abi.h). Executes the bytecode format tools/
+ * compile_script.py compiles (see that tool's docstring for the exact
+ * format and opcode encoding - this file must stay in sync with it by
+ * hand, there is no shared source of truth).
  *
  * Called via game_script_play()/game_room_script_entry() in
- * src/script_runtime.c. The compiled bytecode is separate from the service:
- * fetched at run time from the generic sparse resource directories
- * (room scripts, standalone scripts, and conversations each have an
- * independent 0-255 ID space), which can be up to
+ * src/script_runtime.c, through far_call_bank(BANK_SCRIPT, script_banked_
+ * run) - see script_banked_run() at the bottom of this file. The compiled
+ * bytecode is separate from the service: fetched at run time via
+ * platform_resource_fetch_range() (src/resources.c), one EasyFlash bank
+ * per resource (see BANK_SCRIPT_ROOM_FIRST), which can be up to
  * PLATFORM_RESOURCE_MAX_BYTES (8 KiB) - far more than fits at once in
  * platform_room_scratch()'s resident buffer (room_stage's memory, borrowed
  * - see platform.h, ~1 KiB). So script_buf holds a *sliding window* into
@@ -30,25 +32,14 @@
  * silent no-op, not an error), reporting back through script_entry_found
  * whether anything actually ran.
  *
- * Like the other independently linked banked modules, this service links
- * against no cc65 runtime library (the resident game binary doesn't export
- * those helpers for the overlay resolver to bind against). Beyond their
- * documented avoid-list (memcpy/memset, division/modulo by a non-power-of-2
- * constant), this file also avoids: multiplying by a non-power-of-2
- * constant (needs mulax6 etc. - see find_topic's manual accumulation
- * instead of table + i*TOPIC_ENTRY_BYTES), returning or assigning a bare
- * comparison's result as a value (needs booleq/boolne/boolult/boolugt/
- * boolule - see flag_matches/input_char_ok's explicit if/return instead of
- * `return a == b;`), shifting by a runtime (non-constant) count (needs a
- * variable-shift helper - see flag_matches's BIT_MASK table instead of
- * `1u << value`), and combining an array-indexed operand with a binary
- * bitwise/arithmetic op in one expression (needs a 16-bit stack-based
- * helper, e.g. tosanda0 for `&` - see flag_matches's cmp 6 using a
- * compound-assignment `actual &= mask;` on a separately-loaded local
- * instead of `(actual & BIT_MASK[value]) != 0u` inline). A comparison used
- * only inside an if/while condition is fine either way, since it compiles
- * to a plain branch.
- */
+ * Written under cc65 to avoid that toolchain's runtime-helper-linking
+ * restrictions (multiply by a non-power-of-2 constant, bare-comparison-as-
+ * value, runtime-variable shift counts, combining an array index with a
+ * binary op in one expression - see find_topic/flag_matches/set_bit's
+ * comments below for the specific workarounds). None of that applies to
+ * oscar64 - it's a whole-program compiler, so every helper it might need
+ * is always available - but the workarounds are harmless and left as-is
+ * rather than rewritten back to more natural C for no functional gain. */
 
 #define OP_END              0x00u
 #define OP_TEXT             0x01u
@@ -81,26 +72,42 @@ extern uint8_t script_entry_key;
 extern uint8_t script_entry_found;
 extern uint8_t script_text_shown;
 
-void __fastcall__ platform_text_output_native(const char* text);
+void platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
+
+#pragma section( script_code, 0 )
+#pragma section( script_data, 0 )
+#pragma region( script_bank, 0x8000, 0xc000, , BANK_SCRIPT,
+                 { script_data, script_code } )
+#pragma code(script_code)
+#pragma data(script_data)
 
 /* script_buf holds a sliding *window* into the resource, not the whole
  * thing - a resource can be up to PLATFORM_RESOURCE_MAX_BYTES (8 KiB; see
  * platform.h) now, far more than this service's resident buffer
- * (platform_room_scratch(), ~1 KiB) can hold at once. window_base is the
- * absolute resource offset script_buf[0] currently represents; window_len
- * is how many bytes from there are actually valid. Every byte access goes
- * through read_byte()/ensure_window(), which re-fetches a fresh window
- * (via platform_resource_fetch_range()) whenever the requested offset
- * falls outside the current one - cheap (one bank-switch+copy) and rare in
- * practice, since bytecode is read mostly sequentially and a window holds
- * many opcodes/table entries at once. script_len is the resource's total
- * size (platform_resource_last_size()), the upper bound exec_block and the
- * table scanners loop against - not how much is currently cached. */
+ * (platform_room_scratch(), ~1 KiB) can hold at once. window_win_base is
+ * the absolute resource offset script_buf[0] currently represents;
+ * window_len is how many bytes from there are actually valid. Every byte
+ * access goes through read_byte()/ensure_window(), which re-fetches a
+ * fresh window (via platform_resource_fetch_range()) whenever the
+ * requested offset falls outside the current one - cheap (one bank-
+ * switch+copy) and rare in practice, since bytecode is read mostly
+ * sequentially and a window holds many opcodes/table entries at once.
+ * script_len is the resource's total size (platform_resource_last_size()),
+ * the upper bound exec_block and the table scanners loop against - not how
+ * much is currently cached.
+ *
+ * window_win_base (not window_base) deliberately avoids naming this macro
+ * the same as the struct member its own replacement text ends in
+ * (`script_workspace.window_base`) - confirmed live this session (see
+ * memmap.h's far_call_bank() comment for the first instance of this exact
+ * pitfall) that oscar64's preprocessor, unlike a standard C preprocessor,
+ * re-scans a macro's own name inside its just-substituted replacement
+ * text, corrupting the expansion. */
 #define script_buf  script_workspace.buffer
 #define script_cap  script_workspace.capacity
-#define window_base script_workspace.window_base
+#define window_win_base script_workspace.window_base
 #define window_len  script_workspace.window_length
 #define script_len  script_workspace.resource_length
 
@@ -112,7 +119,7 @@ static void ensure_window_at(uint16_t pos) {
     window_len = platform_resource_fetch_range(script_resource_kind,
                                                script_resource_id, pos,
                                                script_buf, script_cap);
-    window_base = pos;
+    window_win_base = pos;
 }
 
 /* Written as two separate if-statements against a locally-computed
@@ -120,18 +127,18 @@ static void ensure_window_at(uint16_t pos) {
  * this file (see flag_matches's cmp 6 for why combining an operation with a
  * comparison in one expression is avoided here). */
 static void ensure_window(uint16_t pos) {
-    uint16_t window_end = window_base + window_len;
-    if (pos < window_base) { ensure_window_at(pos); return; }
+    uint16_t window_end = window_win_base + window_len;
+    if (pos < window_win_base) { ensure_window_at(pos); return; }
     if (pos >= window_end) { ensure_window_at(pos); return; }
 }
 
 static uint8_t read_byte(uint16_t pos) {
     uint16_t window_end;
     ensure_window(pos);
-    window_end = window_base + window_len;
-    if (pos < window_base) return 0u; /* before start / bad fetch */
+    window_end = window_win_base + window_len;
+    if (pos < window_win_base) return 0u; /* before start / bad fetch */
     if (pos >= window_end) return 0u; /* past end / bad fetch */
-    return script_buf[pos - window_base];
+    return script_buf[pos - window_win_base];
 }
 
 static uint16_t read_u16(uint16_t pos) {
@@ -145,15 +152,17 @@ static uint16_t read_u16(uint16_t pos) {
  * Otherwise, ensure_window_at(offset) re-centers script_buf so the string
  * starts at script_buf[0] with the window's full remaining capacity behind
  * it (same trick say() uses), then hands that contiguous pointer straight
- * through the explicit RAM host gate. Must happen now, synchronously, before
- * the service returns and script_buf's window is reused. */
+ * to game_transition_show_message() - an ordinary resident call, safe from
+ * this bank like any other (see memmap.h's header comment). Must happen
+ * now, synchronously, before the service returns and script_buf's window
+ * is reused. */
 static void set_transition_message(uint16_t offset) {
     if (offset == TRANSITION_MSG_NONE) {
         game_transition_pending_message = 0u;
         return;
     }
     ensure_window_at(offset);
-    script_host_transition_show_message((const char*)script_buf);
+    game_transition_show_message((const char*)script_buf);
 }
 
 /* Written as explicit if/return, not `return (a == b);` - a bare comparison
@@ -277,11 +286,11 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 3u;
                 break;
             case OP_PORTRAIT_SHOW:
-                (void)script_host_portrait_show(read_byte(pos + 1u), read_byte(pos + 2u));
+                (void)platform_portrait_show(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             case OP_PORTRAIT_HIDE:
-                script_host_portrait_hide();
+                platform_portrait_hide();
                 pos += 1u;
                 break;
             case OP_SET_FLAG:
@@ -318,7 +327,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * The optional message string must be copied out now too,
                  * for the same reason - see set_transition_message(). */
                 set_transition_message(read_u16(pos + 4u));
-                (void)script_host_transition_request(read_byte(pos + 1u),
+                (void)game_transition_request(read_byte(pos + 1u),
                                                      read_byte(pos + 2u),
                                                      read_byte(pos + 3u));
                 pos += 6u;
@@ -328,7 +337,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 2u;
                 break;
             case OP_GIVE_OBJECT:
-                (void)script_host_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
+                (void)game_inventory_add(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
                 break;
             case OP_ROOM_TRANSITION_HERE:
@@ -338,7 +347,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                  * the character-cell grid) - the same unit game_state.
                  * player_x/y already use, so no conversion is needed. */
                 set_transition_message(read_u16(pos + 2u));
-                (void)script_host_transition_request(read_byte(pos + 1u),
+                (void)game_transition_request(read_byte(pos + 1u),
                                                      game_state.player_x,
                                                      game_state.player_y);
                 pos += 4u;
@@ -352,7 +361,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 3u;
                 break;
             case OP_LIGHTNING:
-                script_host_lightning();
+                platform_lightning();
                 pos += 1u;
                 break;
             default:
@@ -469,12 +478,12 @@ static void run_conversation(uint8_t topic_count) {
     }
 }
 
-void script_banked_run(void) {
+static void exec_resource(void) {
     uint8_t kind;
 
     script_buf = platform_room_scratch();
     script_cap = platform_room_scratch_bytes();
-    window_base = 0u;
+    window_win_base = 0u;
     window_len = platform_resource_fetch_range(script_resource_kind,
                                                script_resource_id, 0u,
                                                script_buf, script_cap);
@@ -494,3 +503,93 @@ void script_banked_run(void) {
         exec_block(3u, script_len);
     }
 }
+
+extern volatile uint8_t platform_raster_irq_active;
+void raster_irq_resume(void);
+
+/* Full orchestration around exec_resource(), not just the bytecode
+ * execution - deliberately kept in this bank rather than split back out
+ * to a resident wrapper (as it briefly was during this port): every call
+ * here is an ordinary resident function call, safe from a banked caller
+ * under oscar64 (see memmap.h's header comment), so there is no benefit
+ * to spending resident budget (src/memmap.h; already razor-thin - see
+ * src/resources.c's header comment) on logic that runs no differently
+ * from here. Confirmed live this session: with this logic resident
+ * instead, the real src/main.c overflowed the resident region again after
+ * being link-clean for the first time all migration. */
+__noinline void script_banked_run(void) {
+    uint8_t was_suspended;
+
+    platform_look_cursor_hide();
+    script_text_shown = 0u;
+    was_suspended = !platform_raster_irq_active;
+    /* If we got here with the raster IRQ still suspended, the caller is a
+     * room's enter_room()/enter_tile() hook, itself called from inside
+     * game_process_pending_transition()'s whole-switch suspend bracket
+     * (src/game.c) - the only way to reach a room's own code at all. From
+     * this point on, the interpreter may write real, readable text to the
+     * status rows (a room's arrival/tile-entry narration), and that needs
+     * the ordinary per-frame map/text charset split actually running to
+     * render as text instead of tile-charset garbage - suspend pins the
+     * display on one static charset (tile, in normal gameplay) for its
+     * whole duration, precisely because nothing was expected to need the
+     * split *during* a transition before this. Resuming here is safe
+     * despite still being mid-transition: platform_room_enter()'s own
+     * EasyFlash work, and the environment module's checksum-race-sensitive
+     * fetch (see game_enter_room()'s comment in src/game.c), are both
+     * already fully complete by the time any room-entry/tile-entry hook
+     * runs at all. Deliberately not re-suspending afterward: the pager's
+     * own between-pages wait and this function's own game_wait_fresh_key()
+     * below both need the split alive too, for exactly the same reason,
+     * for as long as text might still be on screen; game_process_pending_
+     * transition()'s own raster_irq_resume() call, later, simply becomes a
+     * harmless no-op once this has already run.
+     *
+     * The same "still mid-transition" window is also still screen-blanked
+     * (DEN off): game_process_pending_transition()'s bracket (src/game.c)
+     * calls game_transition_message_show() - which blanks whenever no
+     * transition message is pending, i.e. the ordinary case - *before*
+     * platform_room_enter()/game_enter_room(), and nothing unblanks again
+     * until game_transition_reveal() at the very end of that same bracket.
+     * Unblank here for the same reason resume happens here, and leave it
+     * unblanked for the same reason interrupts are left resumed:
+     * game_transition_reveal()'s own blank()-draw-unblank() cycle, later,
+     * still runs unconditionally and will blank again right before it
+     * draws the new room regardless of what state this leaves the screen
+     * in. */
+    if (was_suspended) {
+        raster_irq_resume();
+        platform_screen_unblank();
+    }
+    exec_resource();
+
+    /* exec_resource() borrowed the room-staging scratch buffer (see
+     * platform_room_scratch() in platform.h) - nothing else reads it
+     * between calls, so it's left as-is - and any portrait it showed; put
+     * that back the way normal gameplay expects to find it. */
+    platform_portrait_hide();
+    /* Give the player a chance to read room/standalone-script text before
+     * wiping it - clearing and redrawing unconditionally and immediately
+     * would flash a Look/Use description's last page for, at most, a
+     * handful of CPU cycles before erasing it. Gated on script_text_shown
+     * so this adds no new keypress where there is nothing to protect: a
+     * conversation manages its own pacing (each loop iteration's "Ask
+     * about..." prompt already overwrites the previous topic's answer only
+     * once the player has typed something, and exiting via RUN/STOP is
+     * itself the acknowledgment - an extra wait here would demand a
+     * second, redundant keypress after that exit), and a script that only
+     * ran effects/a transition (e.g. a lightning/room_transition_here
+     * sequence) never sets the flag. Also skipped when a transition
+     * message is pending: that path already has its own, better wait in
+     * game_transition_reveal(), called once the queued transition
+     * actually runs - waiting twice would demand two keypresses for one
+     * message. */
+    if (script_text_shown && !game_transition_pending_message) {
+        game_wait_fresh_key();
+    }
+    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+}
+
+#pragma code(code)
+#pragma data(data)

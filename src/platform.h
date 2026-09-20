@@ -3,6 +3,12 @@
 
 #include <stdint.h>
 
+/* Match the editor assets and cc65's mixed-case PETSCII literals:
+ * lowercase letters occupy $41-$5A, uppercase letters $C1-$DA.
+ * The text renderer converts these to our custom charset's screen codes. */
+#pragma charmap(97, 65, 26)
+#pragma charmap(65, 193, 26)
+
 #define PLATFORM_MAP_WIDTH            20u
 #define PLATFORM_MAP_HEIGHT           11u
 #define PLATFORM_MAP_TILE_COUNT       220u
@@ -185,9 +191,6 @@ typedef struct PlatformRoom {
 
 #define PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL 4u
 
-typedef uint8_t (*PlatformRoomStoreHook)(const PlatformRoom* room);
-typedef uint8_t (*PlatformRoomRestoreHook)(PlatformRoom* room);
-
 extern PlatformRoom platform_room;
 /* Current room ID and player ownership inside platform_room.objects. */
 extern uint8_t platform_current_room;
@@ -216,10 +219,6 @@ extern const uint8_t platform_light_distance[16u * 16u];
  * points inside platform_room.objects rather than holding a detached copy.
  */
 void platform_init(void);
-
-/* Optional transition hooks; either may reject a transition with an error. */
-void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
-                               PlatformRoomRestoreHook restore_hook);
 
 /* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);

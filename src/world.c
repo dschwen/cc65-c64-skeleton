@@ -1,12 +1,40 @@
 #include <string.h>
 
 #include "world.h"
+#include "memmap.h"
+#include "banks.h"
 
+/* Resident state: the per-room object-delta journal and the last-loaded
+ * room's pristine baseline, both needed every frame/transition regardless
+ * of where the store/restore *code* lives (see below). */
 static PlatformObject room_object_baseline[PLATFORM_ROOM_OBJECT_COUNT];
 GameWorldDelta game_world_deltas[GAME_WORLD_DELTA_CAPACITY];
 uint16_t game_world_delta_count;
 static uint8_t baseline_room;
 static uint8_t baseline_valid;
+
+/* Whether platform.c's room-transition path should call the store side at
+ * all - replaces the old registered/unregistered store-hook pointer (see
+ * below and platform_room_enter()'s call site in src/platform.c). Restore
+ * is unconditional once game_world_init() has run (was always registered
+ * together with store, never independently), so it needs no flag. */
+uint8_t world_store_enabled;
+
+/* Parameter/result passing for world_state_entry() (below), the one
+ * far_call_bank() target this file exposes - see its own comment and
+ * world.h's. Not static: src/platform.c's platform_room_enter() sets
+ * these directly before calling
+ * far_call_bank(BANK_WORLD_STATE, world_state_entry). */
+PlatformRoom* world_state_room;
+uint8_t world_state_op;
+uint8_t world_state_result;
+
+#pragma section( world_state_code, 0 )
+#pragma section( world_state_data, 0 )
+#pragma region( world_state_bank, 0x8000, 0xc000, , BANK_WORLD_STATE,
+                 { world_state_data, world_state_code } )
+#pragma code(world_state_code)
+#pragma data(world_state_data)
 
 static uint8_t object_equal(const PlatformObject* left,
                             const PlatformObject* right) {
@@ -105,6 +133,23 @@ static uint8_t world_restore(PlatformRoom* room) {
     return PLATFORM_OK;
 }
 
+/* far_call_bank() target for both directions - a single shared entry point
+ * (rather than two) keeps every far_call_bank() call site in the rest of
+ * the program naming exactly one literal function, matching every other
+ * banked service in this codebase. world_state_op/world_state_room are
+ * set by the resident caller first (see world.c's own resident functions
+ * below and src/platform.c's platform_room_enter()). */
+__noinline void world_state_entry(void) {
+    if (world_state_op == WORLD_STATE_OP_STORE) {
+        world_state_result = world_store(world_state_room);
+    } else {
+        world_state_result = world_restore(world_state_room);
+    }
+}
+
+#pragma code(code)
+#pragma data(data)
+
 void game_world_reset(void) {
     game_world_delta_count = 0u;
     memset(game_world_deltas, 0, sizeof(game_world_deltas));
@@ -121,17 +166,20 @@ void game_world_reset(void) {
 
 void game_world_init(void) {
     game_world_reset();
-    platform_room_state_hooks(world_store, world_restore);
+    world_store_enabled = 1u;
 }
 
 uint8_t game_world_capture_current(void) {
-    return world_store(&platform_room);
+    world_state_room = &platform_room;
+    world_state_op = WORLD_STATE_OP_STORE;
+    far_call_bank(BANK_WORLD_STATE, world_state_entry);
+    return world_state_result;
 }
 
 void game_world_disable_store_hook(void) {
-    platform_room_state_hooks(0, world_restore);
+    world_store_enabled = 0u;
 }
 
 void game_world_enable_store_hook(void) {
-    platform_room_state_hooks(world_store, world_restore);
+    world_store_enabled = 1u;
 }

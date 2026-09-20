@@ -113,7 +113,7 @@ static uint8_t object_cell_try(const PlatformObject* object, uint8_t curx, uint8
 /* Sets *out_ch/*out_color from the room tile under (curx,cury). */
 static void base_cell(const PlatformRoom* room, uint8_t curx, uint8_t cury,
                       uint8_t* out_ch, uint8_t* out_color) {
-    extern const uint8_t tile_data[];
+    extern uint8_t tile_data[];
     uint16_t tile_offset = (uint16_t)(cury >> 1) * MAP_WIDTH_TILES + (curx >> 1);
     uint8_t tile = room->tiles[tile_offset];
     const uint8_t* def = tile_data + ((uint16_t)tile << 3);
@@ -186,7 +186,8 @@ void redraw_dirty(const PlatformRoom* room, const PlatformObject* player) {
                     (uint16_t)((platform_brightness[tile_offset] & 3u) << 4) | color];
                 if (platform_view_tiles[tile_offset] == 0u) visible_color = 0u;
 
-                if (SCREEN_RAM[offset] != ch) SCREEN_RAM[offset] = ch;
+                /* CPU reads here would see KERNAL, not screen RAM. */
+                SCREEN_RAM[offset] = ch;
                 if (COLOR_RAM[offset] != visible_color) COLOR_RAM[offset] = visible_color;
             }
         }

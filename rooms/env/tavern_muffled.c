@@ -12,8 +12,9 @@
 
 #pragma section( env_tavmuf_code, 0 )
 #pragma section( env_tavmuf_data, 0 )
+#pragma section( env_tavmuf_entry, 0 )
 #pragma region( env_tavmuf_bank, 0x8000, 0x8200, , BANK_ENV_TAVERN_MUFFLED,
-                 { env_tavmuf_data, env_tavmuf_code }, 0x7e00 )
+                 { env_tavmuf_entry, env_tavmuf_data, env_tavmuf_code }, 0x7e00 )
 #pragma code(env_tavmuf_code)
 #pragma data(env_tavmuf_data)
 
@@ -46,14 +47,14 @@ static const uint8_t melody_hi[12] = {0x13,0x17,0x1D,0x1A,0x17,0x15,0x13,0x15,0x
 static const uint8_t bass_lo[4] = {0xC4,0xB4,0xC4,0x51};
 static const uint8_t bass_hi[4] = {0x09,0x08,0x09,0x07};
 
-__noinline void env_init(void) {
+__noinline void env_tavern_muffled_init(void) {
     uint8_t i;
     uint16_t delay;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
 
     /* Hold gates low for a couple of frames before re-gating - see
-     * rooms/env/rain.c's env_init comment for why. */
+     * rooms/env/rain.c's env_tavern_muffled_init comment for why. */
     for (delay = 0u; delay < 0x2000u; ++delay) {
     }
 
@@ -73,7 +74,7 @@ __noinline void env_init(void) {
     bar_index = 0u;
 }
 
-__noinline void env_tick(void) {
+__noinline void env_tavern_muffled_tick(void) {
     if (--step_timer != 0u) return;
 
     step_index = (uint8_t)(step_index + 1u == STEP_COUNT ? 0u : step_index + 1u);
@@ -90,15 +91,17 @@ __noinline void env_tick(void) {
     }
 }
 
-__noinline void env_enable(void) {
+__noinline void env_tavern_muffled_enable(void) {
     MODE_VOL = 0x03u;
 }
 
-__noinline void env_disable(void) {
+__noinline void env_tavern_muffled_disable(void) {
     MODE_VOL = 0x00u;
 }
 
-const EnvTable env_table = { env_init, env_tick, env_enable, env_disable };
+/* Fixed ABI: the entry table precedes all music/constants in the blob. */
+#pragma data(env_tavmuf_entry)
+static const EnvTable env_table = { env_tavern_muffled_init, env_tavern_muffled_tick, env_tavern_muffled_enable, env_tavern_muffled_disable };
 #pragma reference(env_table)
 
 #pragma code(code)

@@ -3,6 +3,8 @@
 #include "platform.h"
 #include "game.h"
 #include "world.h"
+#include "memmap.h"
+#include "banks.h"
 
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
@@ -198,13 +200,13 @@ int main(void) {
                 command = key;
                 break;
             case PLATFORM_KEY_INVENTORY:
-                game_inventory_show();
+                far_call_bank(BANK_INVENTORY, game_inventory_show);
                 break;
             case PLATFORM_KEY_SAVE:
-                game_save_show();
+                far_call_bank(BANK_SAVELOAD, game_save_show);
                 break;
             case PLATFORM_KEY_LOAD:
-                game_load_show();
+                far_call_bank(BANK_SAVELOAD, game_load_show);
                 break;
         }
     }

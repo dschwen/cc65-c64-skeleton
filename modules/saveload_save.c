@@ -3,15 +3,19 @@
 #include "game.h"
 #include "saveload_abi.h"
 #include "world.h"
+#include "banks.h"
+#include "memmap.h"
 
-/* Independently linked in-place save-detail service ("SV"): name entry,
- * record encode, and disk write for the slot chosen by the browser
- * (modules/saveload.c, "SL"). Both execute from bank 48 ROML. See
- * SAVE_GAME.md. Same constraints as modules/saveload.c: no runtime
- * library, so no memcpy/memset, no library string/number formatting, no
- * division/modulo by a non-power-of-two, and no storing a 16-bit value
- * through a pointer out-parameter (use a plain global instead).
- */
+#pragma section( saveload_save_code, 0 )
+#pragma section( saveload_save_data, 0 )
+#pragma region( saveload_save_bank, 0x8000, 0xc000, , BANK_SAVELOAD_SAVE,
+                 { saveload_save_data, saveload_save_code } )
+#pragma code(saveload_save_code)
+#pragma data(saveload_save_data)
+
+/* In-place save-detail service ("SV"): name entry, record encode, and disk
+ * write for the slot chosen by the browser (modules/saveload.c, "SL") - a
+ * second service in its own bank. See SAVE_GAME.md. */
 
 #define SAVE_NAME_BYTES      16u
 #define SAVE_HEADER_BYTES    16u
@@ -27,8 +31,8 @@
 #define SAVE_INDEX_ENTRY_BYTES  17u
 #define SAVE_INDEX_BYTES \
     (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
-#define SAVE_INDEX_RAM       SAVELOAD_RECORD_RAM
-#define SAVE_RECORD_RAM      SAVELOAD_RECORD_RAM
+#define SAVE_INDEX_RAM       saveload_record_buffer
+#define SAVE_RECORD_RAM      saveload_record_buffer
 
 #define FILE_C 0x43u
 #define FILE_I 0x49u
@@ -45,10 +49,11 @@ extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
 extern uint16_t platform_disk_got;
-/* The full 1,146-byte record borrows tile-source RAM at $3000. Preserve the
- * browser's 146-byte index here before record encoding overwrites it. Name
- * entry edits the selected index entry directly; keeping a second 16-byte
- * name copy wastes scarce workspace and would only need copying back. */
+/* saveload_workspace (src/saveload_abi.h) still holds the browser's 146-byte
+ * index here, preserved across record encoding, which uses the separate
+ * saveload_record_buffer instead. Name entry edits the selected index entry
+ * directly; keeping a second 16-byte name copy wastes scarce workspace and
+ * would only need copying back. */
 #define record_buffer SAVE_RECORD_RAM
 #define index_buffer saveload_workspace
 
@@ -100,7 +105,7 @@ static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = want;
-    platform_disk_read_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
     return platform_disk_got;
 }
 
@@ -108,7 +113,7 @@ static uint8_t disk_write_bytes(uint8_t slot, uint16_t size) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = size;
-    platform_disk_write_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_write_block);
     if (platform_disk_got != size) return 0u;
     return 1u;
 }
@@ -116,7 +121,7 @@ static uint8_t disk_write_bytes(uint8_t slot, uint16_t size) {
 static uint8_t disk_index_write(void) {
     platform_disk_buffer = index_buffer;
     platform_disk_want = SAVE_INDEX_BYTES;
-    platform_disk_index_write_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_index_write_block);
     if (platform_disk_got != SAVE_INDEX_BYTES) return 0u;
     return 1u;
 }
@@ -243,7 +248,7 @@ static uint8_t save_slot(uint8_t slot) {
     uint8_t status;
     uint8_t* entry;
 
-    status = saveload_host_capture_current();
+    status = game_world_capture_current();
     if (status != PLATFORM_OK) return 0u;
     if (game_world_delta_count > SAVE_MAX_DELTAS) return 0u;
     entry = index_entry(slot);
@@ -308,7 +313,7 @@ static uint8_t enter_name(uint8_t* name) {
     }
 }
 
-void saveload_save_banked_run(void) {
+__noinline void saveload_save_entry(void) {
     uint8_t slot;
     uint8_t i;
     uint8_t* entry;
@@ -341,3 +346,6 @@ void saveload_save_banked_run(void) {
     } while (platform_input_poll() == 0u);
     VIC_CTRL1 &= 0xefu;
 }
+
+#pragma code(code)
+#pragma data(data)

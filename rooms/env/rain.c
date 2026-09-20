@@ -20,8 +20,9 @@
 
 #pragma section( env_rain_code, 0 )
 #pragma section( env_rain_data, 0 )
+#pragma section( env_rain_entry, 0 )
 #pragma region( env_rain_bank, 0x8000, 0x8200, , BANK_ENV_RAIN,
-                 { env_rain_data, env_rain_code }, 0x7e00 )
+                 { env_rain_entry, env_rain_data, env_rain_code }, 0x7e00 )
 #pragma code(env_rain_code)
 #pragma data(env_rain_data)
 
@@ -108,12 +109,12 @@ static void sound_init(void) {
     footstep_pending = 0u;
 }
 
-__noinline void env_init(void) {
+__noinline void env_rain_init(void) {
     platform_rain_enable(sprite_setup);
     sound_init();
 }
 
-__noinline void env_tick(void) {
+__noinline void env_rain_tick(void) {
     randbyte = V3_OSC;
 
     if (--raintimer == 0u) {
@@ -145,17 +146,19 @@ __noinline void env_tick(void) {
     }
 }
 
-__noinline void env_enable(void) {
+__noinline void env_rain_enable(void) {
     platform_rain_enable(0);
     MODE_VOL = 0x0fu;
 }
 
-__noinline void env_disable(void) {
+__noinline void env_rain_disable(void) {
     platform_rain_disable();
     MODE_VOL = 0x00u;
 }
 
-const EnvTable env_table = { env_init, env_tick, env_enable, env_disable };
+/* Fixed ABI: the entry table precedes all music/constants in the blob. */
+#pragma data(env_rain_entry)
+static const EnvTable env_table = { env_rain_init, env_rain_tick, env_rain_enable, env_rain_disable };
 #pragma reference(env_table)
 
 #pragma code(code)

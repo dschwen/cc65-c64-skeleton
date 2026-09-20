@@ -1,23 +1,26 @@
 # AGENTS.md
 
 ## Purpose
-This repository is a starter skeleton for Commodore 64 game development with `cc65`.
+This repository is a Commodore 64 RPG/adventure using Oscar64 and EasyFlash.
 
-Use this file for quick operational rules. For platform details, memory map notes, and cc65/C64 gotchas, read `GUIDE_cc65_C64.md`.
+Use this file for quick operational rules. Read `MEMORY_MAP.md` for the
+current layout and boot contract. `GUIDE_cc65_C64.md` retains historical
+cc65 notes alongside a current Oscar64 layout summary.
 
 ## Build and run
-- Build PRG: `make`
-- Build EasyFlash CRT: `make cartridge`
+- Build EasyFlash CRT: `make` or `make cartridge`
+- Set `OSCAR64=/home/daniel/Programs/oscar64/build/oscar64` if it is not on PATH.
+- Cold-boot/input/raster regression: `make test` (requires python3-xlib).
 - Run cartridge in VICE: `make run`
 - Run EasyFlash in VICE: `make run-cartridge`
 - This is a headless environment. Run VICE through Xvfb, using
   `xvfb-run -a x64sc ...` for direct emulator/debugging commands.
 
 Build outputs are in `build/`:
-- `game.prg`
 - `game.map`
 - `game.lbl`
-- `game.crt` (when using `make cartridge`)
+- `game.asm`
+- `game.crt`
 
 ## Save disk
 The game runtime is EasyFlash-only. Disk is used only for save games.
@@ -40,11 +43,11 @@ Examples:
 ## Change guidance
 - Keep the Makefile simple and override-friendly via variables.
 - Preserve `.map` generation for memory/layout debugging.
-- When changing memory layout or fixed addresses, update `cfg/myc64.cfg` and
+- When changing memory layout or fixed addresses, update `src/memmap.h` and
   keep `MEMORY_MAP.md` (the authoritative allocation table) in sync, plus the
   summary tables in `GUIDE_cc65_C64.md` and `PLATFORM_API.md`.
-- Code can run directly from an EasyFlash bank via `FAR_CALL`. Such a routine
-  may only read `$0000-$7FFF` and `$C000-$CFFF`, and may only call resident
-  code outside `$8000-$BFFF`, because the cartridge covers that window while
-  the call runs. See `PLATFORM_API.md`'s "Banked code"; ongoing plan and dead
-  ends are in `MEMORY_MAP_TARGET.md`.
+- Code runs directly from EasyFlash via `far_call_bank`. Keep entries
+  `__noinline`; use its software bank shadow because `$DE00` is write-only.
+  Resident code/state and both stacks must be outside `$8000-$BFFF` and
+  below the environment window at `$7E00`. CPU reads beneath KERNAL must
+  use the resident RAM gate; VIC assets stay in bank 3 beneath KERNAL.

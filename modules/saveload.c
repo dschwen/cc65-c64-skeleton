@@ -1,18 +1,37 @@
 #include <stdint.h>
+#include <string.h>
 
 #include "game.h"
 #include "saveload_abi.h"
 #include "world.h"
+#include "banks.h"
+#include "memmap.h"
 
-/* Independently linked in-place save/load browser ("SL"): slot list, cursor
- * navigation, and the complete Load flow. See SAVE_GAME.md for the on-disk
- * record format and save/load architecture section, and
- * modules/saveload_save.c for the Save flow (name entry + encode + write),
- * a second service in the same cartridge half. This file does not link
- * against the cc65 runtime library (same constraint as modules/inventory.c): no
- * memcpy/memset, no library string/number formatting, no division/modulo
- * by a non-power-of-two.
- */
+/* Resident, not bank-local: game_load_show()/game_save_show() below run
+ * before this bank (or BANK_SAVELOAD_SAVE) is paged in, and saveload_save.c
+ * needs saveload_selected_slot across the bank switch between the two
+ * services - see memmap.h's header comment. This used to be
+ * src/saveload_runtime.c's job when game_load_show()/game_save_show() were
+ * themselves resident; now they live in this same bank (see below), so
+ * only the shared state still needs a home outside any bank pragma.
+ * saveload_workspace/saveload_record_buffer are macros aliasing
+ * tile_properties/tile_data (src/assets_data.c), not real storage of their
+ * own - see src/saveload_abi.h. */
+uint8_t saveload_mode;
+uint8_t saveload_selected_slot;
+uint8_t saveload_load_pending;
+
+#pragma section( saveload_code, 0 )
+#pragma section( saveload_data, 0 )
+#pragma region( saveload_bank, 0x8000, 0xc000, , BANK_SAVELOAD,
+                 { saveload_data, saveload_code } )
+#pragma code(saveload_code)
+#pragma data(saveload_data)
+
+/* In-place save/load browser ("SL"): slot list, cursor navigation, and the
+ * complete Load flow. See SAVE_GAME.md for the on-disk record format and
+ * save/load architecture section, and modules/saveload_save.c for the Save
+ * flow (name entry + encode + write), a second service in its own bank. */
 
 #define SAVE_SLOT_COUNT      8u
 #define SAVE_NAME_BYTES      16u
@@ -28,8 +47,8 @@
 #define SAVE_INDEX_ENTRY_BYTES  17u
 #define SAVE_INDEX_BYTES \
     (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
-#define SAVE_INDEX_RAM       SAVELOAD_RECORD_RAM
-#define SAVE_RECORD_RAM      SAVELOAD_RECORD_RAM
+#define SAVE_INDEX_RAM       saveload_record_buffer
+#define SAVE_RECORD_RAM      saveload_record_buffer
 
 #define FILE_C 0x43u
 #define FILE_I 0x49u
@@ -41,10 +60,10 @@
 #define SCREEN_ROWS   25u
 #define VIC_CTRL1     (*(volatile uint8_t*)0xd011)
 
-/* modules/disk_io.s: hand-written block I/O, not a byte-loop over small C
- * wrappers. The four functions below are resident gates: each temporarily
- * disables the cartridge, selects the KERNAL map, calls the driver at $B800,
- * and restores this service's bank before returning. */
+/* src/disk_io.c: KERNAL serial-bus block I/O. Ordinary resident functions
+ * under oscar64 - EasyFlash banking only affects $8000-$BFFF, so calling
+ * resident code from this banked module needs no gate, just an ordinary
+ * function call (see memmap.h's header comment). */
 extern uint8_t platform_disk_slot;
 extern uint8_t* platform_disk_buffer;
 extern uint16_t platform_disk_want;
@@ -121,7 +140,7 @@ static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
     platform_disk_buffer = record_buffer;
     platform_disk_want = want;
-    platform_disk_read_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
     return platform_disk_got;
 }
 
@@ -212,7 +231,7 @@ static void build_slot_list(void) {
 
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
-    platform_disk_index_read_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_index_read_block);
     got = platform_disk_got;
     if (index_valid(got)) {
         decode_index();
@@ -239,7 +258,7 @@ static void build_slot_list(void) {
     decode_index();
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
-    platform_disk_index_write_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_index_write_block);
 }
 
 /* ---- full record load + validate (does not touch game state) */
@@ -254,7 +273,7 @@ static uint8_t load_full(uint8_t slot) {
     platform_disk_slot = slot;
     platform_disk_buffer = SAVE_RECORD_RAM;
     platform_disk_want = SAVE_MAX_BYTES;
-    platform_disk_read_block();
+    far_call_bank(BANK_DISK_IO, platform_disk_read_block);
     got = platform_disk_got;
     if (!header_valid(got)) return 0u;
     payload_len = get16(SAVE_RECORD_RAM + 10);
@@ -318,7 +337,7 @@ static void wait_key_release(void) {
 
 /* ---- top-level dispatch -------------------------------------------- */
 
-void saveload_banked_run(void) {
+__noinline void saveload_entry(void) {
     uint8_t key;
     uint8_t ok;
     uint8_t old_slot;
@@ -378,3 +397,143 @@ void saveload_banked_run(void) {
     }
     VIC_CTRL1 &= 0xefu;
 }
+
+/* Resident orchestration for both save/load services, moved here from
+ * src/saveload_runtime.c for the same "main" region budget reason as
+ * game_inventory_show() moving into modules/inventory.c - see that file's
+ * own comment. Reached directly with far_call_bank(BANK_SAVELOAD, ...)
+ * from src/main.c; saveload_entry() above is an ordinary intra-bank call
+ * from here (no far_call_bank() needed, already in BANK_SAVELOAD), while
+ * reaching saveload_save_entry() (a different bank) still needs one. */
+void raster_irq_suspend(void);
+void raster_irq_resume(void);
+void saveload_save_entry(void);
+void platform_tiles_load(void);
+
+static uint16_t saveload_get16(const uint8_t* p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+/* Apply only after the browser above has returned. */
+static uint8_t saveload_apply_pending(void) {
+    const uint8_t* p;
+    uint16_t delta_count;
+    uint16_t delta_bytes;
+    uint8_t room;
+    uint8_t type;
+    uint8_t x;
+    uint8_t y;
+    uint8_t result;
+
+    if (!saveload_load_pending) return PLATFORM_ERR_FORMAT;
+    saveload_load_pending = 0u;
+    p = saveload_record_buffer + SAVE_HEADER_BYTES;
+    delta_count = saveload_get16(p + 128u);
+    delta_bytes = (uint16_t)(delta_count << 2) + delta_count;
+    if (delta_count > SAVE_MAX_DELTAS ||
+        SAVE_PREFIX_BYTES + delta_bytes !=
+            saveload_get16(saveload_record_buffer + 10u) ||
+        p[28] > p[29] || p[30] > p[31]) {
+        return PLATFORM_ERR_FORMAT;
+    }
+
+    room = p[24];
+    type = p[25];
+    x = p[26];
+    y = p[27];
+    /* turn through maximum_mana are the first 16 bytes of GameState and
+     * immediately follow the 16-byte save name. */
+    memcpy(&game_state, p + 16u, 16u);
+    game_state.pending_transition = 0u;
+    memcpy(game_state.inventory, p + 32u, sizeof(game_state.inventory));
+    memcpy(game_state.flags, p + 96u, sizeof(game_state.flags));
+    game_player_light_sync();
+
+    game_world_delta_count = 0u;
+    memcpy(game_world_deltas, p + SAVE_PREFIX_BYTES, delta_bytes);
+    game_world_delta_count = delta_count;
+
+    /* Last read from saveload_record_buffer (aliased to tile_data - see
+     * src/saveload_abi.h) - restore it now, before platform_room_enter()
+     * below needs real tile data for wall/view-blocking checks. */
+    platform_tiles_load();
+
+    game_world_disable_store_hook();
+
+    /* One screen-blanked, interrupt-suspended bracket for the whole switch,
+     * same as game_process_pending_transition() - see platform_room_enter()'s
+     * own comment for why the gap between two separate brackets is unsafe.
+     * game_transition_message is always empty on this path in practice
+     * (nothing sets it for a save/load restore) - wired through the same
+     * two helpers as game_process_pending_transition() purely for
+     * consistency, not because this path needs the loading-message feature. */
+    game_transition_message_show();
+    raster_irq_suspend();
+    result = platform_room_enter(room, type, x, y);
+    game_world_enable_store_hook();
+    if (result == PLATFORM_OK) {
+        game_player_sync_from_platform();
+        game_entry_reason = GAME_ENTRY_LOAD;
+        game_enter_room();
+        platform_sprites_hide_all();
+        game_enter_tile();
+    }
+    raster_irq_resume();
+    game_transition_reveal();
+    return result;
+}
+
+static void saveload_show_cleanup(uint8_t result) {
+    VIC_CTRL1 &= 0xefu;
+    raster_irq_suspend();
+    memset(SCREEN, platform_text_screen_code(' '), 1000u);
+    memset(COLOR, 0, 1000u);
+    platform_text_screen_leave();
+    /* Restore tile_data/tile_properties before the room is drawn - see
+     * src/saveload_abi.h's header comment on why this session borrowed
+     * that memory as its own record/workspace buffers. Redundant (but
+     * harmless) on the load path, which already restored it above before
+     * platform_room_enter() needed real tile data; this is the only
+     * restore point on the save path. */
+    platform_tiles_load();
+    platform_room_draw(&platform_room, platform_player);
+    raster_irq_resume();
+    VIC_CTRL1 |= 0x10u;
+    if (result != PLATFORM_OK) {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "Save/load error.", 1u);
+    }
+}
+
+__noinline void game_load_show(void) {
+    uint8_t result;
+
+    platform_look_cursor_hide();
+    VIC_CTRL1 &= 0xefu;
+    saveload_mode = SAVELOAD_MODE_LOAD;
+    saveload_load_pending = 0u;
+    saveload_entry();
+    result = PLATFORM_OK;
+    if (saveload_load_pending) {
+        result = saveload_apply_pending();
+    }
+    saveload_show_cleanup(result);
+}
+
+__noinline void game_save_show(void) {
+    uint8_t result;
+
+    platform_look_cursor_hide();
+    VIC_CTRL1 &= 0xefu;
+    saveload_mode = SAVELOAD_MODE_SAVE;
+    saveload_selected_slot = SAVELOAD_SLOT_NONE;
+    saveload_entry();
+    result = PLATFORM_OK;
+
+    if (saveload_selected_slot != SAVELOAD_SLOT_NONE) {
+        far_call_bank(BANK_SAVELOAD_SAVE, saveload_save_entry);
+    }
+    saveload_show_cleanup(result);
+}
+
+#pragma code(code)
+#pragma data(data)

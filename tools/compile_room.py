@@ -29,6 +29,7 @@ the room-prefixed one.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 
@@ -275,7 +276,8 @@ def gen_dispatch(
     out.append("")
 
 
-def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int]) -> str:
+def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int],
+             room_data_path: Path, room_data_bytes: int) -> str:
     room_prefix = f"room{room_id:02x}_"
     bank_region = f"room{room_id:02x}"
     out: list[str] = [
@@ -284,12 +286,25 @@ def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int])
         '#include "game.h"',
         '#include "banks.h"',
         "",
-        f'#pragma section( {bank_region}code, 0 )',
         f'#pragma section( {bank_region}data, 0 )',
+        f'#pragma section( {bank_region}code, 0 )',
+        # data listed before code so the embedded room data below lands at
+        # this bank's byte 0 - platform_room_data_fetch() (src/room_
+        # dispatch.c) reads it with a plain offset-0 bank copy, the same
+        # convention rooms/env/*.c's EnvTable header uses.
         f'#pragma region( {bank_region}bank, 0x8000, 0xc000, , '
-        f'BANK_ROOM_FIRST + {room_id}, {{ {bank_region}code, {bank_region}data }} )',
-        f"#pragma code({bank_region}code)",
+        f'BANK_ROOM_FIRST + {room_id}, {{ {bank_region}data, {bank_region}code }} )',
         f"#pragma data({bank_region}data)",
+        "",
+        f"/* Raw PlatformRoom bytes (tools/prepare_c64_assets.py room), the",
+        f" * same 1001-byte format the asset editor authors - see",
+        f" * PLATFORM_ROOM_FILE_BYTES in platform.h. */",
+        f"const uint8_t {room_prefix}data[{room_data_bytes}] = {{",
+        f'#embed {room_data_bytes} "{room_data_path.as_posix()}"',
+        "};",
+        f"#pragma reference({room_prefix}data)",
+        "",
+        f"#pragma code({bank_region}code)",
         "",
     ]
     gen_simple("enter_tile", room_prefix, handlers["enter_tile"], out)  # type: ignore[arg-type]
@@ -310,6 +325,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--room-id", type=lambda s: int(s, 0), required=True)
     parser.add_argument(
+        "--room-data", type=Path, required=True,
+        help="prepared 1001-byte PlatformRoom file (tools/prepare_c64_assets.py "
+        "room), embedded into this room's own bank",
+    )
+    parser.add_argument(
         "--flags",
         type=Path,
         action="append",
@@ -322,7 +342,13 @@ def main() -> None:
     flag_files = args.flags if args.flags else list(DEFAULT_FLAG_FILES)
     symbols = load_symbols(flag_files)
     handlers = parse(args.input.read_text(encoding="utf-8"), symbols)
-    output = generate(args.room_id, handlers, symbols)
+    room_data_bytes = args.room_data.stat().st_size
+    # #embed resolves relative paths against the including file's own
+    # directory (same convention as #include) - compute the path relative
+    # to --output's directory, not the current working directory, so the
+    # generated file works regardless of where oscar64 is invoked from.
+    room_data_relative = Path(os.path.relpath(args.room_data, start=args.output.parent))
+    output = generate(args.room_id, handlers, symbols, room_data_relative, room_data_bytes)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(output, encoding="utf-8")
     print(f"{args.input} -> {args.output} ({len(output)} chars)")

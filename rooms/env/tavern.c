@@ -11,14 +11,15 @@
  * Voice 1 (lead, triangle) plays a 12-step melody, one note per beat;
  * voice 2 (bass, sawtooth) and voice 3 (pad, triangle, an open fifth
  * above the bass root) change once per 3-beat bar. All three voices hold
- * their gate on continuously from env_init onward - pitch changes are
+ * their gate on continuously from env_tavern_init onward - pitch changes are
  * legato (no per-note re-attack).
  */
 
 #pragma section( env_tavern_code, 0 )
 #pragma section( env_tavern_data, 0 )
+#pragma section( env_tavern_entry, 0 )
 #pragma region( env_tavern_bank, 0x8000, 0x8200, , BANK_ENV_TAVERN,
-                 { env_tavern_data, env_tavern_code }, 0x7e00 )
+                 { env_tavern_entry, env_tavern_data, env_tavern_code }, 0x7e00 )
 #pragma code(env_tavern_code)
 #pragma data(env_tavern_data)
 
@@ -59,7 +60,7 @@ static const uint8_t bass_hi[4] = {0x09,0x08,0x09,0x07};
 static const uint8_t pad_lo[4] = {0xA2,0x0A,0xA2,0xF7};
 static const uint8_t pad_hi[4] = {0x0E,0x0D,0x0E,0x0A};
 
-__noinline void env_init(void) {
+__noinline void env_tavern_init(void) {
     uint8_t i;
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
 
@@ -83,7 +84,7 @@ __noinline void env_init(void) {
     bar_index = 0u;
 }
 
-__noinline void env_tick(void) {
+__noinline void env_tavern_tick(void) {
     if (--step_timer != 0u) return;
 
     step_index = (uint8_t)(step_index + 1u == STEP_COUNT ? 0u : step_index + 1u);
@@ -102,15 +103,17 @@ __noinline void env_tick(void) {
     }
 }
 
-__noinline void env_enable(void) {
+__noinline void env_tavern_enable(void) {
     MODE_VOL = 0x0fu;
 }
 
-__noinline void env_disable(void) {
+__noinline void env_tavern_disable(void) {
     MODE_VOL = 0x00u;
 }
 
-const EnvTable env_table = { env_init, env_tick, env_enable, env_disable };
+/* Fixed ABI: the entry table precedes all music/constants in the blob. */
+#pragma data(env_tavern_entry)
+static const EnvTable env_table = { env_tavern_init, env_tavern_tick, env_tavern_enable, env_tavern_disable };
 #pragma reference(env_table)
 
 #pragma code(code)

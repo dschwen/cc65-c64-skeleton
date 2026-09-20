@@ -1,5 +1,46 @@
 # EasyFlash Cartridge Generation
 
+## Current Oscar64 build
+
+Build with `make OSCAR64=/path/to/oscar64` (or `make cartridge`). Oscar64
+compiles the complete program and directly emits `build/game.crt`, plus
+`game.map`, `game.lbl` and `game.asm`. There is no intermediate PRG,
+external linker configuration or cartconv packing step.
+
+`make run` / `make run-cartridge` creates and attaches `build/saves.d64`
+as unit 8. Override `SAVE_DISK` and `SAVE_DISK_NAME` as needed. The default
+launch uses `xvfb-run -a`; set `XVFB_RUN=` for a normal desktop display.
+`make test` runs the Xvfb keyboard/boot/raster regression (python3-xlib
+required). `OSCAR64`, `VICE`, `C1541` and `XVFB_RUN` are override-friendly.
+
+The memory layout is defined in `src/memmap.h`; `MEMORY_MAP.md` is the
+authoritative allocation. Bank assignments live in `src/banks.h`:
+
+| Banks | Contents |
+|---|---|
+| 0 | startup and compressed resident main image |
+| 1-7 | type info, room/look helpers, scripts, inventory, save/load services |
+| 8-13 | rooms 00-05 and their native hooks |
+| 14 | KERNAL disk I/O |
+| 15 | tile/text charset sources, tile definitions and properties |
+| 16 | hot object zone-B boot source and banked zone-C records |
+| 17 | world-state service |
+| 20-23 | relocatable environment modules |
+| 24+ | reserved portrait banks |
+| 32 | compiled room script bytecode and fetch entry |
+
+Only `main` is initialized by Oscar64's EasyFlash loader. Platform startup
+initializes the KERNAL/CIAs, loads charsets to `$E800/$F000` and object
+zone B to `$C000`, and installs the raster split. Charset and sprite RAM
+remain beneath KERNAL in VIC bank 3, preserving low RAM for game code/state.
+Keep HIRAM/LORAM set while executing cartridge code. `$DE00` is write-only;
+nested calls restore banks through `platform_cart_bank`, not register reads.
+
+## Historical cc65 build notes (superseded)
+
+The remainder records the former cc65 loader and tooling. Its build commands,
+fixed addresses and packing pipeline do not describe the Oscar64 build above.
+
 This document records the design decisions and practical lessons behind this
 repository's EasyFlash build. It describes the executable and runtime assets,
 the relevant C64 and EasyFlash behavior, and the constraints to consider when
@@ -348,12 +389,15 @@ updates `platform_player_slot` and `platform_player`, and redraws.
 that deliberately keeps two room buffers.
 
 Cartridge room records are immutable base data. Any object that moves between
-rooms makes the room state differ from that base. Register store/restore hooks
-with `platform_room_state_hooks()` to supply the chosen mutable-state policy:
-disk/flash saves, a compact delta journal, or a bounded cache with defined
-eviction. Without hooks, reloading base data discards general room mutations;
-the platform only suppresses the original baked player spawn so returning to
-room `00` does not duplicate the player.
+rooms makes the room state differ from that base. `platform_room_enter()`
+calls into `src/world.c`'s banked store/restore logic (`BANK_WORLD_STATE` -
+see `src/banks.h`) to supply the chosen mutable-state policy: today, a
+compact delta journal (`game_world_deltas[]`). `world_store_enabled`
+(`src/world.h`) toggles the store side off for the save/load UI's own
+restore-from-file path, without disabling restore. If that flag is ever off
+with nothing else supplying mutable state, reloading base data discards
+general room mutations; the platform only suppresses the original baked
+player spawn so returning to room `00` does not duplicate the player.
 
 ### Asset packing
 

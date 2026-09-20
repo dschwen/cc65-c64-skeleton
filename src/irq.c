@@ -2,6 +2,7 @@
 #include <c64/memmap.h>
 #include "memmap.h"
 #include "platform.h"
+#include "platform_native.h"
 
 /*
  * Native (oscar64 C) replacement for src/irq.s. Split-screen raster IRQ:
@@ -50,7 +51,6 @@ static uint8_t water_bitmap[8];
 static uint8_t raster_irq_suspend_depth;
 static uint8_t raster_irq_saved_enable;
 
-static void raster_irq_vectors_restore(void);
 static void weather_animate(void);
 
 /* Rewrite the RAM vectors after loading type 255 (platform_object_types_
@@ -143,6 +143,11 @@ static void rain_advance(void) {
     }
 }
 
+/* Set by raster_body() at the top-of-text-phase raster event, consumed by
+ * platform_weather_service() from foreground code - see that function's
+ * own comment for why this indirection exists. */
+static volatile uint8_t weather_tick_pending;
+
 /* Advance the visual rain, then tail-call the current room's environment
  * module's per-frame tick. Always safe unconditionally: game_enter_room()
  * installs a no-op stub there for any room without one. */
@@ -164,12 +169,43 @@ static void weather_animate(void) {
     rain_advance_and_tick();
 }
 
+/* Runs weather_animate() from foreground code once per frame, called from
+ * platform_wait_frame() right after it returns. weather_animate() ends in
+ * ENVCODE_TICK(), an indirect call through a function pointer whose target
+ * (whichever room's env module is currently loaded) oscar64's static
+ * interrupt-safety analysis cannot prove non-recursive when reached from
+ * the raster IRQ - confirmed live ("No recursive functions in interrupt"),
+ * even with every function in the chain marked __interrupt. Deferring the
+ * actual tick to foreground code, with the IRQ only setting a flag, avoids
+ * the restriction entirely rather than fighting it. Timing effect: the
+ * tick now runs at most one frame's worth of foreground work after the
+ * raster event that used to trigger it directly, rather than exactly at
+ * that raster line - immaterial here, since every env module's own timers
+ * already count in whole frames, not raster lines, and platform_wait_
+ * frame() is what every frame-paced loop in this codebase already blocks
+ * on. Not called while suspended (raster_irq_suspend()) or before the
+ * first frame after boot, matching the original's behavior of no weather
+ * ticks running during a room transition. */
+void platform_weather_service(void) {
+    if (weather_tick_pending) {
+        weather_tick_pending = 0u;
+        weather_animate();
+    }
+}
+
 /* $D011 bit 7 means two different things depending on direction: on a READ
  * it's the raster's bit 8; on a WRITE it's bit 8 of the raster-IRQ compare
  * value. Every $D011 write here masks that bit off first, matching the
  * original's explicit discipline (see MEMORY_MAP.md's write-up of the bug
  * this avoids). */
-static void raster_body(void) {
+/* __interrupt (not a plain function): called from two different interrupt
+ * entry points (direct_irq_entry, kernal_irq_entry), and oscar64's static
+ * frame allocator refuses to share an ordinary function's frame across
+ * two interrupt contexts it can't prove are mutually exclusive ("No
+ * recursive functions in interrupt" - confirmed live). __interrupt makes
+ * every call save/restore its own zeropage usage, which is what actually
+ * makes sharing this safe. */
+static __interrupt void raster_body(void) {
     VIC_IRQ_STATUS = 0x01u;
 
     if (VIC_CTRL1 & 0x80u) {
@@ -194,7 +230,7 @@ switch_to_text:
     VIC_RASTER = 0u;
     if (rain_active) rain_hide_sprites();
     ++platform_frame_counter;
-    weather_animate();
+    weather_tick_pending = 1u;
     return;
 
 top_of_frame:
@@ -216,16 +252,22 @@ __hwinterrupt void direct_irq_entry(void) {
 }
 
 __hwinterrupt void direct_nmi_entry(void) {
-    (void)*(volatile uint8_t*)0xdd0du; /* acknowledge a possible CIA2 NMI */
+    /* Acknowledge a possible CIA2 NMI. A `volatile` read whose value is
+     * discarded still gets dead-code-eliminated by oscar64's optimizer
+     * (confirmed live: the LDA never made it into the compiled output),
+     * so the CIA's latched interrupt flag was never actually cleared by
+     * reading its ICR - raw asm is the only way to force the load to
+     * happen for its hardware side effect. */
+    __asm { lda $dd0d }
 }
+
 
 __interrupt void kernal_irq_entry(void) {
     raster_body();
     /* Fall through to the KERNAL's own IRQ exit ($EA81): restores A/X/Y
      * from its own stack frame (already pushed by the KERNAL's hardware
-     * IRQ entry before it dispatched through $0314 - this function must
-     * not push/pop them itself) and does the jiffy-clock/keyboard work
-     * this custom IRQ otherwise replaces.
+     * IRQ entry before it dispatched through $0314). This exit does not
+     * scan the keyboard or update the jiffy clock.
      *
      * Must be a real JMP, not a call: $EA81 ends in RTI, using the stack
      * frame the original hardware interrupt pushed. A `jmp` mnemonic here
@@ -248,11 +290,14 @@ static void raster_irq_vectors_restore_impl(void) {
      * matches the original, which restores NMI/IRQ but resets through the
      * KERNAL cold-start ($FCE2) directly rather than a custom entry. */
     *(void**)0xfffeu = direct_irq_entry;
+    /* KERNAL's hardware NMI entry SEIs and jumps through $0318 before
+     * pushing any registers. The hardware entry works for both mappings. */
+    *(void**)0x0318u = direct_nmi_entry;
 }
 
 static void initialize_vic_assets(void) {
     uint8_t i, x, mask;
-    for (i = 0u; i < 8u; ++i) water_bitmap[i] = WATER_CHAR[i];
+    platform_copy_vic_ram(water_bitmap, WATER_CHAR, 8u);
     for (i = 0u; i < 64u; ++i) RAIN_BITMAP[i] = 0u;
     x = 0u;
     mask = 0x80u;
@@ -278,9 +323,18 @@ void raster_irq_install(void) {
     rain_seed = 0xacu; /* an all-zero LFSR state never escapes zero */
     platform_raster_irq_active = 1u;
 
-    /* Own the IRQ source. This intentionally stops the KERNAL jiffy clock. */
+    /* Own the IRQ source. This intentionally stops the KERNAL jiffy clock.
+     * The read-to-ack must be raw asm, not a discarded `volatile` C read -
+     * oscar64's optimizer dead-code-eliminates the latter (confirmed live:
+     * the LDA never made it into the compiled output - see
+     * direct_nmi_entry's comment for the same issue on CIA2). Without it,
+     * the KERNAL timer's already-latched CIA1 ICR flag never actually
+     * clears; harmless here since the mask write above already stops new
+     * CIA1 sources from reaching the CPU, but a real bug in general for
+     * any future code that re-enables a CIA1 source and relies on this
+     * read to have cleared the stale latch first. */
     CIA1_IRQ = 0x7fu;
-    (void)CIA1_IRQ;
+    __asm { lda $dc0d }
 
     *(void**)0x0314u = kernal_irq_entry;
 
@@ -312,31 +366,24 @@ void platform_text_screen_leave(void) {
  * pending interrupt cannot leave the text charset over the map for a
  * frame. */
 void raster_irq_resync(void) {
-    __asm { php sei }
-    if (!platform_raster_irq_active) {
-        VIC_MEMPTR = TILE_MEMPTR;
-        VIC_IRQ_STATUS = 0x01u;
-        __asm { plp }
-        return;
+    __asm {
+        php
+        sei
     }
-    if (VIC_CTRL1 & 0x80u) {
-        /* Vertical blank: wait for the 9-bit raster to wrap. */
-        while (VIC_CTRL1 & 0x80u) {
+    /* If the text boundary has already passed, schedule raster zero
+     * immediately. Waiting for line 227 again here would mask IRQs for
+     * an entire frame and leave the text charset over the whole map. */
+    if ((VIC_CTRL1 & 0x80u) || VIC_RASTER >= TEXT_RASTER) {
+        if (!(VIC_CTRL1 & 0x80u)) {
+            while (VIC_RASTER == TEXT_RASTER) {
+            }
         }
-        goto map_phase;
+        VIC_MEMPTR = TEXT_MEMPTR;
+        VIC_RASTER = 0u;
+    } else {
+        VIC_MEMPTR = text_screen_active ? TEXT_MEMPTR : TILE_MEMPTR;
+        VIC_RASTER = TEXT_RASTER;
     }
-    if (VIC_RASTER < TEXT_RASTER) {
-        goto map_phase;
-    }
-    while (VIC_RASTER != TEXT_RASTER + 1u) {
-    }
-    VIC_MEMPTR = TEXT_MEMPTR;
-    VIC_RASTER = 0u;
-    goto finish;
-map_phase:
-    VIC_MEMPTR = text_screen_active ? TEXT_MEMPTR : TILE_MEMPTR;
-    VIC_RASTER = TEXT_RASTER;
-finish:
     VIC_CTRL1 = (uint8_t)(VIC_CTRL1 & 0x7fu);
     VIC_IRQ_STATUS = 0x01u;
     __asm { plp }
@@ -345,7 +392,10 @@ finish:
 /* Nestable raster-source suspension. Synchronization only: callers own any
  * text clearing or screen blanking. */
 void raster_irq_suspend(void) {
-    __asm { php sei }
+    __asm {
+        php
+        sei
+    }
     if (raster_irq_suspend_depth == 0u) {
         raster_irq_saved_enable = VIC_IRQ_ENABLE;
         VIC_IRQ_ENABLE = (uint8_t)(raster_irq_saved_enable & 0xfeu);
@@ -358,7 +408,10 @@ void raster_irq_suspend(void) {
 }
 
 void raster_irq_resume(void) {
-    __asm { php sei }
+    __asm {
+        php
+        sei
+    }
     if (raster_irq_suspend_depth != 0u) {
         --raster_irq_suspend_depth;
         if (raster_irq_suspend_depth == 0u) {

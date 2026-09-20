@@ -1,568 +1,143 @@
-# Minimal cc65 C64 Makefile
-# Override CC65_HOME if you need to point at a custom install.
-# Example: make CC65_HOME=/opt/cc65
-
-# Included compiler dependency files contain ordinary targets. Pin the public
-# default so an existing build/*.d cannot silently replace documented `make`.
-.DEFAULT_GOAL := all
-
-CC65_HOME ?=
-CL65 := $(if $(CC65_HOME),$(CC65_HOME)/bin/cl65,cl65)
-LD65 := $(if $(CC65_HOME),$(CC65_HOME)/bin/ld65,ld65)
-
-TARGET := c64
-OUTDIR := build
-CFG    := cfg/myc64.cfg
-VICE   ?= x64sc
-C1541  ?= c1541
-CARTCONV ?= cartconv
-CART_NAME ?= GAME
-SAVE_DISK ?= $(OUTDIR)/saves.d64
+# oscar64 C64/EasyFlash Makefile.
+#
+# Replaces the old cc65/cl65/ld65/cartconv pipeline: oscar64 is a whole-
+# program compiler (one invocation compiles *and* links everything, and
+# -tf=crt emits the EasyFlash .crt directly), so there are no separate
+# object files, no per-bank link steps, no linker .cfg files, and no
+# cartconv pass. What remains is asset preparation (PETSCII conversion,
+# the object-type hot/cold split, and compiling the .rc room-code DSL to
+# C) - the same three tools/*.py scripts as before, feeding oscar64
+# #embed directives instead of ca65 .incbin.
+#
+OSCAR64 ?= oscar64
+VICE    ?= x64sc
+C1541   ?= c1541
+XVFB_RUN ?= xvfb-run -a
+SAVE_DISK ?= build/saves.d64
 SAVE_DISK_NAME ?= SAVES
-ROOM_ASSETS := $(wildcard assets/[0-9A-F][0-9A-F])
-ROOM_SOURCES := $(wildcard rooms/[0-9A-F][0-9A-F].c)
-ROOM_IDS := $(notdir $(ROOM_ASSETS))
-ROOM_OUTDIR := $(OUTDIR)/rooms
-ROOM_CODES := $(addprefix $(ROOM_OUTDIR)/C,$(ROOM_IDS))
-C64_ASSET_OUTDIR := $(OUTDIR)/assets
-C64_ROOM_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/,$(ROOM_IDS))
-C64_OBJECT_TYPES := $(C64_ASSET_OUTDIR)/objects.cobj
-C64_OBJECT_TYPES_INITIAL := $(C64_ASSET_OUTDIR)/objects-initial.hot
-PORTRAIT_ASSETS := $(wildcard assets/portraits/[0-9A-F][0-9A-F])
-PORTRAIT_IDS := $(notdir $(PORTRAIT_ASSETS))
-C64_PORTRAIT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/P,$(PORTRAIT_IDS))
-# Each script/conversation/room declaration kind has its own independent
-# 0-255 resource ID space (three separate directories - see
-# src/platform.h's PLATFORM_RESOURCE_KIND_* and tools/pack_easyflash.py),
-# so each gets its own source location and build-output prefix (RS/RC/RR).
-# assets/resources/<ID> (raw, unstructured bytes) shares the script kind's
-# ID space with compiled cutscenes, since neither belongs to a room or
-# conversation.
-RESOURCE_ASSETS := $(wildcard assets/resources/[0-9A-F][0-9A-F])
-CUTSCENE_SOURCES := $(wildcard assets/scripts/cutscenes/[0-9A-F][0-9A-F].script)
-CUTSCENE_IDS := $(basename $(notdir $(CUTSCENE_SOURCES)))
-SCRIPT_IDS := $(sort $(notdir $(RESOURCE_ASSETS)) $(CUTSCENE_IDS))
-C64_SCRIPT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RS,$(SCRIPT_IDS))
-CONVERSATION_SOURCES := $(wildcard assets/scripts/conversations/[0-9A-F][0-9A-F].script)
-CONVERSATION_IDS := $(basename $(notdir $(CONVERSATION_SOURCES)))
-C64_CONVERSATION_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RC,$(CONVERSATION_IDS))
-ROOM_SCRIPT_SOURCES := $(wildcard assets/scripts/[0-9A-F][0-9A-F].script)
-ROOM_SCRIPT_IDS := $(basename $(notdir $(ROOM_SCRIPT_SOURCES)))
-C64_ROOM_SCRIPT_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RR,$(ROOM_SCRIPT_IDS))
-# A room's environment module (weather + ambient sound - see src/platform.h's
-# PLATFORM_RESOURCE_KIND_ENVIRONMENT and PLATFORM_API.md's "Room environment
-# module"). Unlike the other resource kinds, this one is linked code (fixed
-# origin ENVCODE_BASE), not a raw asset or compiled script - see ENV_OUTDIR's
-# rules below.
-ENV_SOURCES := $(wildcard rooms/env/[0-9A-F][0-9A-F].s)
-ENV_IDS := $(basename $(notdir $(ENV_SOURCES)))
-C64_ENV_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RE,$(ENV_IDS))
-ENV_OUTDIR := $(OUTDIR)/env
-ENV_MODULE_CFG := cfg/env_module.cfg
-# Static assets (PLATFORM_RESOURCE_KIND_ASSET, prefix RA) - charsets and tile
-# data, sliced straight out of the editor files. These used to be .incbin'd
-# into the program image by src/assets.s; as resources they are fetched to
-# their reserved destinations at boot instead, keeping 6,400 bytes out of the
-# blob cart/ef_boot.s copies into RAM. IDs match src/platform.h's
-# PLATFORM_ASSET_* constants.
-C64_STATIC_ASSETS := $(addprefix $(C64_ASSET_OUTDIR)/RA,00 01 02)
-C64_RESOURCE_ASSETS := $(C64_SCRIPT_ASSETS) $(C64_CONVERSATION_ASSETS) $(C64_ROOM_SCRIPT_ASSETS) \
-	$(C64_ENV_ASSETS) $(C64_STATIC_ASSETS)
-ROOM_CFG := cfg/room_overlay.cfg
-ASSET_EDITOR_HOST ?= 127.0.0.1
-ASSET_EDITOR_PORT ?= 8000
+OUTDIR  := build
 
-CFLAGS := -t $(TARGET) -Oirs --cpu 6502 -Isrc -I$(OUTDIR) \
-	--asm-include-dir src --asm-include-dir $(OUTDIR)
-LDFLAGS := -C $(CFG)
-CL65_COMPILE = $(CL65) $(CFLAGS) --create-full-dep $(@:.o=.d)
+OFLAGS := -n -Os -xz -tf=crt
 
-SOURCES_C := $(filter-out src/sid.c,$(wildcard src/*.c))
-SOURCES_S := $(filter-out src/text.s,$(wildcard src/*.s))
-ASSETS := assets/charset.cchr assets/tiles.ctil $(C64_ASSET_OUTDIR)/00 $(C64_OBJECT_TYPES) \
-          $(C64_OBJECT_TYPES_INITIAL)
-OBJECTS := $(patsubst src/%.c,$(OUTDIR)/%.o,$(SOURCES_C)) \
-           $(patsubst src/%.s,$(OUTDIR)/%.o,$(SOURCES_S))
+SRC_C := \
+	src/main.c \
+	src/resources.c \
+	src/platform.c \
+	src/render.c \
+	src/irq.c \
+	src/banking.c \
+	src/dirty_redraw.c \
+	src/text.c \
+	src/input.c \
+	src/env_dispatch.c \
+	src/hero_light.c \
+	src/room_dispatch.c \
+	src/assets_data.c \
+	src/object_types_data.c \
+	src/disk_io.c \
+	src/game.c \
+	src/game_support.c \
+	src/world.c \
+	src/vic.c \
+	src/sid.c \
+	story/story.c \
+	modules/typeinfo.c \
+	modules/room_helpers.c \
+	modules/look_helpers.c \
+	modules/inventory.c \
+	modules/saveload.c \
+	modules/saveload_save.c \
+	modules/script.c \
+	src/script_runtime.c \
+	rooms/env/rain.c \
+	rooms/env/tavern.c \
+	rooms/env/tavern_muffled.c \
+	rooms/env/cellar.c
 
-OUT_PRG := $(OUTDIR)/game.prg
-OUT_MAP := $(OUTDIR)/game.map
-OUT_LBL := $(OUTDIR)/game.lbl
-OUT_EF_BIN := $(OUTDIR)/game-ef.bin
-OUT_EF_BASE := $(OUTDIR)/game-ef-base.bin
+INCLUDES := -i=src -i=modules -i=rooms -i=$(OUTDIR)/rooms
+
+ROOM_IDS := 00 01 02 03 04 05
+ROOM_ASSETS := $(addprefix $(OUTDIR)/assets/,$(ROOM_IDS))
+ROOM_SOURCES := $(addprefix $(OUTDIR)/rooms/room,$(addsuffix .c,$(ROOM_IDS)))
+
+OBJECTS_HOT  := $(OUTDIR)/assets/objects-hot.bin
+OBJECTS_COLD := $(OUTDIR)/assets/objects-cold.bin
+
+# All rooms' compiled script bytecode shares one EasyFlash bank (see
+# src/banks.h's BANK_SCRIPT_ROOM_FIRST and src/resources.c's header
+# comment for why one shared bank beats one bank per resource).
+SCRIPT_BINS      := $(addprefix $(OUTDIR)/scripts/,$(addsuffix .bin,$(ROOM_IDS)))
+SCRIPT_BANK_SRC  := $(OUTDIR)/scripts/script_room_bank.c
+SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC)
+SCRIPT_BANK_FIRST := 32
+
 OUT_CRT := $(OUTDIR)/game.crt
-EF_LAYOUT := cfg/easyflash_layout.json
-EF_LAYOUT_HEADER := $(OUTDIR)/easyflash_layout.h
-EF_LAYOUT_INCLUDE := $(OUTDIR)/easyflash_layout.inc
-EF_BOOT_OBJ := $(OUTDIR)/ef_boot.o
-EF_CFG := cfg/easyflash.cfg
-TEXT_MODULE_OBJ := $(OUTDIR)/text-module.o
-TEXT_SID_OBJ := $(OUTDIR)/text-sid.o
-TEXT_HEADER_OBJ := $(OUTDIR)/text-header.o
-TEXT_RESOLVER_SRC := $(OUTDIR)/text-resolver.s
-TEXT_RESOLVER_OBJ := $(OUTDIR)/text-resolver.o
-TEXT_MODULE_CFG := cfg/text_module.cfg
-TEXT_MODULE_PRG := $(OUTDIR)/text.prg
-INVENTORY_MODULE_C_OBJ := $(OUTDIR)/inventory-module.o
-INVENTORY_MODULE_ASM_OBJ := $(OUTDIR)/inventory-module-asm.o
-INVENTORY_STORY_OBJ := $(OUTDIR)/inventory-story.o
-INVENTORY_HEADER_OBJ := $(OUTDIR)/inventory-header.o
-INVENTORY_RESOLVER_SRC := $(OUTDIR)/inventory-resolver.s
-INVENTORY_RESOLVER_OBJ := $(OUTDIR)/inventory-resolver.o
-INVENTORY_MODULE_CFG := cfg/banked_inventory.cfg
-INVENTORY_MODULE := $(OUTDIR)/IV
-SAVELOAD_MODULE_C_OBJ := $(OUTDIR)/saveload-module.o
-SAVELOAD_DISK_OBJ := $(OUTDIR)/saveload-disk.o
-SAVELOAD_HEADER_OBJ := $(OUTDIR)/saveload-header.o
-SAVELOAD_RESOLVER_SRC := $(OUTDIR)/saveload-resolver.s
-SAVELOAD_RESOLVER_OBJ := $(OUTDIR)/saveload-resolver.o
-SAVELOAD_MODULE_CFG := cfg/banked_saveload.cfg
-SAVELOAD_MODULE := $(OUTDIR)/SL
-SAVELOAD_SAVE_MODULE_C_OBJ := $(OUTDIR)/saveload-save-module.o
-SAVELOAD_SAVE_HEADER_OBJ := $(OUTDIR)/saveload-save-header.o
-SAVELOAD_SAVE_RESOLVER_SRC := $(OUTDIR)/saveload-save-resolver.s
-SAVELOAD_SAVE_RESOLVER_OBJ := $(OUTDIR)/saveload-save-resolver.o
-SAVELOAD_SAVE_MODULE_CFG := cfg/banked_saveload_save.cfg
-SAVELOAD_SAVE_MODULE := $(OUTDIR)/SV
-# The disk driver is resident at $B800; SL/SV reach it through cartridge-off
-# gates rather than linking a private copy into either banked service.
-OBJECTS += $(SAVELOAD_DISK_OBJ)
-ROOM_HELPERS_C_OBJ := $(OUTDIR)/room-helpers-module.o
-ROOM_HELPERS_HEADER_OBJ := $(OUTDIR)/room-helpers-header.o
-ROOM_HELPERS_RESOLVER_SRC := $(OUTDIR)/room-helpers-resolver.s
-ROOM_HELPERS_RESOLVER_OBJ := $(OUTDIR)/room-helpers-resolver.o
-ROOM_HELPERS_MODULE_CFG := cfg/banked_room_helpers.cfg
-ROOM_HELPERS_MODULE := $(OUTDIR)/RH
-# Banked type-info module executed in place from its EasyFlash bank (never
-# copied into RAM, like Inventory/RH/LH/SC/SL/SV)
-# - see the banked module linker configurations.
-TYPEINFO_C_OBJ := $(OUTDIR)/typeinfo-module.o
-TYPEINFO_ENTRY_OBJ := $(OUTDIR)/typeinfo-entry.o
-TYPEINFO_RESOLVER_SRC := $(OUTDIR)/typeinfo-resolver.s
-TYPEINFO_RESOLVER_OBJ := $(OUTDIR)/typeinfo-resolver.o
-TYPEINFO_CFG := cfg/banked_typeinfo.cfg
-TYPEINFO_MODULE := $(OUTDIR)/BT
-LOOK_HELPERS_C_OBJ := $(OUTDIR)/look-helpers-module.o
-LOOK_HELPERS_HEADER_OBJ := $(OUTDIR)/look-helpers-header.o
-LOOK_HELPERS_RESOLVER_SRC := $(OUTDIR)/look-helpers-resolver.s
-LOOK_HELPERS_RESOLVER_OBJ := $(OUTDIR)/look-helpers-resolver.o
-LOOK_HELPERS_MODULE_CFG := cfg/banked_look_helpers.cfg
-LOOK_HELPERS_MODULE := $(OUTDIR)/LH
-SCRIPT_C_OBJ := $(OUTDIR)/script-module.o
-SCRIPT_HEADER_OBJ := $(OUTDIR)/script-header.o
-SCRIPT_RESOLVER_SRC := $(OUTDIR)/script-resolver.s
-SCRIPT_RESOLVER_OBJ := $(OUTDIR)/script-resolver.o
-SCRIPT_MODULE_CFG := cfg/banked_script.cfg
-SCRIPT_MODULE := $(OUTDIR)/SC
-.PHONY: all clean cartridge run run-cartridge asset-editor
 
-# Dependency files are emitted by every cc65 compilation. Wildcards are
-# intentional: a clean build has none to include, while every subsequent
-# invocation learns the full transitive C-header and ca65-include graph.
--include $(wildcard $(OUTDIR)/*.d $(ROOM_OUTDIR)/*.d $(ENV_OUTDIR)/*.d)
+.PHONY: all cartridge run run-cartridge test clean
+.DEFAULT_GOAL := all
+# Script .bin files are an intermediate step whose generated .c wrapper
+# (below) embeds a path to them - without .PRECIOUS, Make deletes the .bin
+# after building the .c from it, leaving that .c's #embed pointing at a
+# file that no longer exists (confirmed live: a subsequent build then finds
+# the .c "up to date" - it exists and is newer than nothing - and only
+# oscar64's own #embed fails, confusingly far from the real cause).
+.PRECIOUS: $(OUTDIR)/scripts/%.bin $(OUTDIR)/assets/%
 
-all: $(OUT_PRG) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) $(SAVELOAD_SAVE_MODULE) \
-	$(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE)
+all cartridge: $(OUT_CRT)
+
+$(OUTDIR)/assets $(OUTDIR)/rooms $(OUTDIR)/scripts:
+	mkdir -p $@
+
+# Room data: PETSCII-convert the editor-authored room file (assets/NN) into
+# the build tree, embedded by build/rooms/roomNN.c below.
+$(OUTDIR)/assets/%: assets/% tools/prepare_c64_assets.py | $(OUTDIR)/assets
+	python3 tools/prepare_c64_assets.py room $< $@
+
+# Object types: PETSCII-convert then split into the resident "hot" part
+# (PlatformObjectType, always visible) and the banked "cold" part
+# (PlatformObjectTypeInfo, fetched only for Look/Take text) - see
+# src/object_types_data.c and modules/typeinfo.c.
+$(OBJECTS_HOT) $(OBJECTS_COLD) &: assets/objects.cobj tools/prepare_c64_assets.py | $(OUTDIR)/assets
+	python3 tools/prepare_c64_assets.py objects-split $< $(OBJECTS_HOT) --cold-output $(OBJECTS_COLD)
+
+# Room code: rooms/NN.rc (the room-code DSL) compiles straight to oscar64
+# C, embedding the room's own prepared data - see tools/compile_room.py
+# and ROOM_CODE_API.md's "Room-code DSL (.rc files)" section.
+$(OUTDIR)/rooms/room%.c: rooms/%.rc $(OUTDIR)/assets/% tools/compile_room.py src/story.h src/game.h $(wildcard rooms/c/*.c) | $(OUTDIR)/rooms
+	python3 tools/compile_room.py --input $< --output $@ --room-id 0x$* --room-data $(OUTDIR)/assets/$*
+
+# Room script bytecode (tools/compile_script.py's DSL - see its module
+# docstring): compiled once per room from assets/scripts/NN.script, then
+# all six wrapped together in one shared EasyFlash bank as #embed'd const
+# arrays (tools/generate_script_bank.py) - see src/resources.c's header
+# comment for why one shared bank replaces the old shared-directory/
+# checksum design more cheaply than one bank per resource would.
+$(OUTDIR)/scripts/%.bin: assets/scripts/%.script tools/compile_script.py src/story.h | $(OUTDIR)/scripts
+	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind room --flags src/story.h
+
+$(SCRIPT_BANK_SRC): $(SCRIPT_BINS) tools/generate_script_bank.py | $(OUTDIR)/scripts
+	python3 tools/generate_script_bank.py \
+		$(foreach id,$(ROOM_IDS),--input $(id)=$(OUTDIR)/scripts/$(id).bin) \
+		--output $@ --bank-symbol script_room --fetch-fn script_room_bank_fetch \
+		--bank $(SCRIPT_BANK_FIRST)
+
+HEADERS := $(wildcard src/*.h modules/*.h rooms/*.h rooms/env/*.h)
+
+$(OUT_CRT): Makefile $(SRC_C) $(HEADERS) $(ROOM_ASSETS) $(ROOM_SOURCES) $(SCRIPT_SOURCES) $(OBJECTS_HOT) $(OBJECTS_COLD) assets/charset.cchr assets/tiles.ctil | $(OUTDIR)
+	$(OSCAR64) $(OFLAGS) $(INCLUDES) -i=$(OUTDIR)/scripts $(SRC_C) $(ROOM_SOURCES) $(SCRIPT_SOURCES) -o=$@
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)
 
-$(ROOM_OUTDIR):
-	mkdir -p $(ROOM_OUTDIR)
-
-$(ENV_OUTDIR):
-	mkdir -p $(ENV_OUTDIR)
-
-$(C64_ASSET_OUTDIR):
-	mkdir -p $(C64_ASSET_OUTDIR)
-
-$(EF_LAYOUT_HEADER) $(EF_LAYOUT_INCLUDE) &: $(EF_LAYOUT) \
-		tools/easyflash_layout.py tools/generate_easyflash_layout.py | $(OUTDIR)
-	python3 tools/generate_easyflash_layout.py --layout $(EF_LAYOUT) \
-		--header $(EF_LAYOUT_HEADER) --include $(EF_LAYOUT_INCLUDE)
-
-$(OUTDIR)/platform.o $(OUTDIR)/saveload_runtime.o: $(EF_LAYOUT_HEADER)
-$(OUTDIR)/banked_api.o: $(EF_LAYOUT_INCLUDE)
-
-$(C64_OBJECT_TYPES): assets/objects.cobj tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
-	python3 tools/prepare_c64_assets.py objects $< $@
-
-# Count must match INITIAL_OBJECT_TYPE_COUNT in src/platform.c.
-$(C64_OBJECT_TYPES_INITIAL): $(C64_OBJECT_TYPES) tools/extract_initial_object_types.py
-	python3 tools/extract_initial_object_types.py --input $< --count 2 --output $@
-
-$(C64_ASSET_OUTDIR)/%: assets/% tools/prepare_c64_assets.py | $(C64_ASSET_OUTDIR)
-	python3 tools/prepare_c64_assets.py room $< $@
-
-$(C64_ASSET_OUTDIR)/P%: assets/portraits/% | $(C64_ASSET_OUTDIR)
-	cp $< $@
-
-$(C64_ASSET_OUTDIR)/RS%: assets/resources/% | $(C64_ASSET_OUTDIR)
-	cp $< $@
-
-# Static assets, sliced out of the editor files past their 8-byte headers -
-# the same offsets src/assets.s used to .incbin from, so the bytes on the
-# cartridge are identical to what used to be linked into the image.
-# RA00/RA01: the two 2 KiB charsets. RA02: tile bitmaps (2 KiB) immediately
-# followed by the 256-byte property table, fetched as one blob so the two can
-# never drift apart.
-$(C64_ASSET_OUTDIR)/RA00: assets/charset.cchr | $(C64_ASSET_OUTDIR)
-	dd if=$< of=$@ bs=1 skip=8 count=2048 status=none
-
-$(C64_ASSET_OUTDIR)/RA01: assets/charset.cchr | $(C64_ASSET_OUTDIR)
-	dd if=$< of=$@ bs=1 skip=2056 count=2048 status=none
-
-$(C64_ASSET_OUTDIR)/RA02: assets/tiles.ctil | $(C64_ASSET_OUTDIR)
-	dd if=$< of=$@ bs=1 skip=8 count=2304 status=none
-
-# Script/conversation/room declarations are source (assets/scripts/...,
-# one top-level declaration each - see tools/compile_script.py), compiled
-# straight to the build output, the same way rooms/<ID>.c compiles straight
-# to build/rooms/C<ID> without an intermediate assets/ artifact. --expect-
-# kind catches a file in the wrong location (e.g. a `conversation`
-# declaration under cutscenes/) as a build error instead of a silently
-# misfiled resource.
-$(C64_ASSET_OUTDIR)/RS%: assets/scripts/cutscenes/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
-	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind script
-
-$(C64_ASSET_OUTDIR)/RC%: assets/scripts/conversations/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
-	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind conversation
-
-$(C64_ASSET_OUTDIR)/RR%: assets/scripts/%.script tools/compile_script.py src/story.h | $(C64_ASSET_OUTDIR)
-	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind room
-
-$(OUTDIR)/%.o: src/%.c | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(OUTDIR)/%.o: src/%.s $(wildcard src/*.inc) | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(OUTDIR)/assets.o: $(ASSETS)
-
-$(OUT_PRG): $(OBJECTS) $(CFG) tools/validate_prg_layout.py
-	$(CL65) $(CFLAGS) $(LDFLAGS) -m $(OUT_MAP) -Ln $(OUT_LBL) -o $@ $(OBJECTS)
-	python3 tools/validate_prg_layout.py --prg $@ --map $(OUT_MAP)
-
-$(TEXT_MODULE_OBJ): src/text.s src/platform.inc | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(TEXT_SID_OBJ): src/sid.c src/sid.h | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(TEXT_HEADER_OBJ): modules/text_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(TEXT_RESOLVER_SRC): $(OUT_PRG) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ)
-
-$(TEXT_RESOLVER_OBJ): $(TEXT_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(TEXT_MODULE_PRG): $(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		$(TEXT_RESOLVER_OBJ) $(TEXT_MODULE_CFG)
-	$(LD65) -C $(TEXT_MODULE_CFG) -m $(OUTDIR)/text.map -o $@ \
-		$(TEXT_HEADER_OBJ) $(TEXT_MODULE_OBJ) $(TEXT_SID_OBJ) \
-		$(TEXT_RESOLVER_OBJ)
-
-$(INVENTORY_MODULE_C_OBJ): modules/inventory.c src/game.h src/platform.h \
-		src/story.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(INVENTORY_MODULE_ASM_OBJ): modules/inventory_draw.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(INVENTORY_STORY_OBJ): story/story.c src/game.h src/platform.h src/story.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(INVENTORY_HEADER_OBJ): modules/inventory_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(INVENTORY_RESOLVER_SRC): $(OUT_PRG) $(INVENTORY_MODULE_C_OBJ) \
-		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
-		$(INVENTORY_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(INVENTORY_MODULE_C_OBJ) $(INVENTORY_MODULE_ASM_OBJ) \
-		$(INVENTORY_STORY_OBJ) $(INVENTORY_HEADER_OBJ)
-
-$(INVENTORY_RESOLVER_OBJ): $(INVENTORY_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(INVENTORY_MODULE): $(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
-		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
-		$(INVENTORY_RESOLVER_OBJ) $(INVENTORY_MODULE_CFG) $(EF_LAYOUT) \
-		tools/easyflash_layout.py tools/validate_banked_module.py
-	$(LD65) -C $(INVENTORY_MODULE_CFG) -m $(OUTDIR)/inventory.map -o $@ \
-		$(INVENTORY_HEADER_OBJ) $(INVENTORY_MODULE_C_OBJ) \
-		$(INVENTORY_MODULE_ASM_OBJ) $(INVENTORY_STORY_OBJ) \
-		$(INVENTORY_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module inventory --map $(OUTDIR)/inventory.map \
-		--resolver $(INVENTORY_RESOLVER_SRC)
-
-$(SAVELOAD_MODULE_C_OBJ): modules/saveload.c src/game.h src/platform.h src/saveload_abi.h src/world.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(SAVELOAD_DISK_OBJ): modules/disk_io.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SAVELOAD_HEADER_OBJ): modules/saveload_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SAVELOAD_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_MODULE_C_OBJ) \
-		$(SAVELOAD_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(SAVELOAD_MODULE_C_OBJ) $(SAVELOAD_HEADER_OBJ)
-
-$(SAVELOAD_RESOLVER_OBJ): $(SAVELOAD_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SAVELOAD_MODULE): $(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
-		$(SAVELOAD_RESOLVER_OBJ) $(SAVELOAD_MODULE_CFG) $(EF_LAYOUT) \
-		tools/easyflash_layout.py tools/validate_banked_module.py
-	$(LD65) -C $(SAVELOAD_MODULE_CFG) -m $(OUTDIR)/saveload.map -o $@ \
-		$(SAVELOAD_HEADER_OBJ) $(SAVELOAD_MODULE_C_OBJ) \
-		$(SAVELOAD_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module saveload --map $(OUTDIR)/saveload.map \
-		--resolver $(SAVELOAD_RESOLVER_SRC)
-
-$(SAVELOAD_SAVE_MODULE_C_OBJ): modules/saveload_save.c src/game.h src/platform.h src/saveload_abi.h src/world.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(SAVELOAD_SAVE_HEADER_OBJ): modules/saveload_save_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SAVELOAD_SAVE_RESOLVER_SRC): $(OUT_PRG) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
-		$(SAVELOAD_SAVE_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(SAVELOAD_SAVE_MODULE_C_OBJ) $(SAVELOAD_SAVE_HEADER_OBJ)
-
-$(SAVELOAD_SAVE_RESOLVER_OBJ): $(SAVELOAD_SAVE_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SAVELOAD_SAVE_MODULE): $(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
-		$(SAVELOAD_SAVE_RESOLVER_OBJ) $(SAVELOAD_SAVE_MODULE_CFG) $(EF_LAYOUT) \
-		tools/easyflash_layout.py tools/validate_banked_module.py
-	$(LD65) -C $(SAVELOAD_SAVE_MODULE_CFG) -m $(OUTDIR)/saveload-save.map -o $@ \
-		$(SAVELOAD_SAVE_HEADER_OBJ) $(SAVELOAD_SAVE_MODULE_C_OBJ) \
-		$(SAVELOAD_SAVE_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module saveload_save --map $(OUTDIR)/saveload-save.map \
-		--resolver $(SAVELOAD_SAVE_RESOLVER_SRC)
-
-$(ROOM_HELPERS_C_OBJ): modules/room_helpers.c src/platform.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(ROOM_HELPERS_HEADER_OBJ): modules/room_helpers_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(ROOM_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(ROOM_HELPERS_C_OBJ) \
-		$(ROOM_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(ROOM_HELPERS_C_OBJ) $(ROOM_HELPERS_HEADER_OBJ)
-
-$(ROOM_HELPERS_RESOLVER_OBJ): $(ROOM_HELPERS_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(ROOM_HELPERS_MODULE): $(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
-		$(ROOM_HELPERS_RESOLVER_OBJ) $(ROOM_HELPERS_MODULE_CFG) \
-		tools/validate_banked_module.py
-	$(LD65) -C $(ROOM_HELPERS_MODULE_CFG) -m $(OUTDIR)/room-helpers.map -o $@ \
-		$(ROOM_HELPERS_HEADER_OBJ) $(ROOM_HELPERS_C_OBJ) \
-		$(ROOM_HELPERS_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module room_helpers --map $(OUTDIR)/room-helpers.map \
-		--resolver $(ROOM_HELPERS_RESOLVER_SRC)
-
-$(TYPEINFO_C_OBJ): modules/typeinfo.c src/platform.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(TYPEINFO_ENTRY_OBJ): modules/typeinfo_entry.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(TYPEINFO_RESOLVER_SRC): $(OUT_PRG) $(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ) \
-		tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(TYPEINFO_C_OBJ) $(TYPEINFO_ENTRY_OBJ)
-
-$(TYPEINFO_RESOLVER_OBJ): $(TYPEINFO_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-# No finalize step: nothing copies or validates this at run time, so the linked
-# binary is the module - it is executed exactly where the packer puts it.
-$(TYPEINFO_MODULE): $(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) \
-		$(TYPEINFO_RESOLVER_OBJ) $(TYPEINFO_CFG) $(EF_LAYOUT) \
-		tools/easyflash_layout.py tools/validate_banked_module.py
-	$(LD65) -C $(TYPEINFO_CFG) -m $(OUTDIR)/typeinfo.map -o $@ \
-		$(TYPEINFO_ENTRY_OBJ) $(TYPEINFO_C_OBJ) $(TYPEINFO_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module typeinfo --map $(OUTDIR)/typeinfo.map \
-		--resolver $(TYPEINFO_RESOLVER_SRC)
-
-$(LOOK_HELPERS_C_OBJ): modules/look_helpers.c src/platform.h \
-		src/look_helpers_abi.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(LOOK_HELPERS_HEADER_OBJ): modules/look_helpers_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(LOOK_HELPERS_RESOLVER_SRC): $(OUT_PRG) $(LOOK_HELPERS_C_OBJ) \
-		$(LOOK_HELPERS_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(LOOK_HELPERS_C_OBJ) $(LOOK_HELPERS_HEADER_OBJ)
-
-$(LOOK_HELPERS_RESOLVER_OBJ): $(LOOK_HELPERS_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(LOOK_HELPERS_MODULE): $(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
-		$(LOOK_HELPERS_RESOLVER_OBJ) $(LOOK_HELPERS_MODULE_CFG) \
-		tools/validate_banked_module.py
-	$(LD65) -C $(LOOK_HELPERS_MODULE_CFG) -m $(OUTDIR)/look-helpers.map -o $@ \
-		$(LOOK_HELPERS_HEADER_OBJ) $(LOOK_HELPERS_C_OBJ) \
-		$(LOOK_HELPERS_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module look_helpers --map $(OUTDIR)/look-helpers.map \
-		--resolver $(LOOK_HELPERS_RESOLVER_SRC)
-
-$(SCRIPT_C_OBJ): modules/script.c src/game.h src/platform.h src/script_abi.h | $(OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-$(SCRIPT_HEADER_OBJ): modules/script_header.s | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SCRIPT_RESOLVER_SRC): $(OUT_PRG) $(SCRIPT_C_OBJ) \
-		$(SCRIPT_HEADER_OBJ) tools/generate_room_resolver.py | $(OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(SCRIPT_C_OBJ) $(SCRIPT_HEADER_OBJ)
-
-$(SCRIPT_RESOLVER_OBJ): $(SCRIPT_RESOLVER_SRC)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(SCRIPT_MODULE): $(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
-		$(SCRIPT_RESOLVER_OBJ) $(SCRIPT_MODULE_CFG)
-	$(LD65) -C $(SCRIPT_MODULE_CFG) -m $(OUTDIR)/script.map -o $@ \
-		$(SCRIPT_HEADER_OBJ) $(SCRIPT_C_OBJ) \
-		$(SCRIPT_RESOLVER_OBJ)
-	python3 tools/validate_banked_module.py --layout $(EF_LAYOUT) \
-		--module script --map $(OUTDIR)/script.map \
-		--resolver $(SCRIPT_RESOLVER_SRC)
-
-$(ROOM_OUTDIR)/room-%.o: rooms/%.c src/game.h src/platform.h src/story.h | $(ROOM_OUTDIR)
-	$(CL65_COMPILE) -Isrc -c -o $@ $<
-
-# Alternative room-code source: a small DSL (tools/compile_room.py) covering
-# the mechanical patterns most room code turns out to need (empty handler,
-# flag bump, tile-coordinate dispatch), compiling straight to assembly
-# instead of C. Both paths converge on the same room-%.o target, so a room
-# is authored as either rooms/<ID>.c or rooms/<ID>.rc - whichever source
-# file exists selects which rule fires (the same "let Make pick by which
-# prerequisite exists" pattern already used for the R%/RS%/RC%/RR% resource
-# rules above). See ROOM_CODE_API.md's "Room-code DSL (.rc files)" section.
-$(ROOM_OUTDIR)/room-%.s: rooms/%.rc src/story.h src/game.h tools/compile_room.py $(wildcard rooms/asm/*.s) | $(ROOM_OUTDIR)
-	python3 tools/compile_room.py --input $< --output $@
-
-$(ROOM_OUTDIR)/room-%.o: $(ROOM_OUTDIR)/room-%.s | $(ROOM_OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(ROOM_OUTDIR)/header-%.o: rooms/room_header.s | $(ROOM_OUTDIR)
-	$(CL65_COMPILE) --asm-define ROOM_ID=0x$* -c -o $@ $<
-
-$(ROOM_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ROOM_OUTDIR)/room-%.o \
-		$(ROOM_OUTDIR)/header-%.o \
-		tools/generate_room_resolver.py | $(ROOM_OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(ROOM_OUTDIR)/room-$*.o $(ROOM_OUTDIR)/header-$*.o
-
-$(ROOM_OUTDIR)/resolver-%.o: $(ROOM_OUTDIR)/resolver-%.s
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(ROOM_OUTDIR)/room-%.raw: $(ROOM_OUTDIR)/header-%.o $(ROOM_OUTDIR)/room-%.o \
-		$(ROOM_OUTDIR)/resolver-%.o $(ROOM_CFG)
-	$(LD65) -C $(ROOM_CFG) -m $(ROOM_OUTDIR)/room-$*.map -o $@ \
-		$(ROOM_OUTDIR)/header-$*.o $(ROOM_OUTDIR)/room-$*.o \
-		$(ROOM_OUTDIR)/resolver-$*.o
-
-$(ROOM_OUTDIR)/C%: $(ROOM_OUTDIR)/room-%.raw tools/finalize_room_code.py
-	python3 tools/finalize_room_code.py --input $< \
-		--map $(ROOM_OUTDIR)/room-$*.map --room $* --output $@
-
-# A room's environment module (weather + ambient sound - see ENV_SOURCES
-# above and PLATFORM_API.md's "Room environment module"). Hand-written
-# ca65, not a DSL - this is the escape-hatch tier from the start, since VIC/
-# SID register poking has no mechanical pattern worth a DSL statement, the
-# same reasoning rooms/asm/ used for room-code's own escape hatch. Built
-# like room code (assemble, resolve against the resident image, link) but
-# at a fixed origin with no header-patching step - the generic resource
-# directory already checksums and size-validates the linked output, so it
-# *is* the final "RE" resource content directly.
-$(ENV_OUTDIR)/env-%.o: rooms/env/%.s | $(ENV_OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(ENV_OUTDIR)/resolver-%.s: $(OUT_PRG) $(ENV_OUTDIR)/env-%.o \
-		tools/generate_room_resolver.py | $(ENV_OUTDIR)
-	python3 tools/generate_room_resolver.py --labels $(OUT_LBL) --output $@ \
-		$(ENV_OUTDIR)/env-$*.o
-
-$(ENV_OUTDIR)/resolver-%.o: $(ENV_OUTDIR)/resolver-%.s
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(C64_ASSET_OUTDIR)/RE%: $(ENV_OUTDIR)/env-%.o $(ENV_OUTDIR)/resolver-%.o \
-		$(ENV_MODULE_CFG) | $(C64_ASSET_OUTDIR)
-	$(LD65) -C $(ENV_MODULE_CFG) -m $(ENV_OUTDIR)/env-$*.map -o $@ \
-		$(ENV_OUTDIR)/env-$*.o $(ENV_OUTDIR)/resolver-$*.o
-
-$(EF_BOOT_OBJ): cart/ef_boot.s $(OUT_PRG) $(TEXT_MODULE_PRG) | $(OUTDIR)
-	$(CL65_COMPILE) -c -o $@ $<
-
-$(OUT_EF_BASE): $(EF_BOOT_OBJ) $(EF_CFG)
-	$(CL65) -t $(TARGET) --cpu 6502 -C $(EF_CFG) -m $(OUTDIR)/game-ef.map -o $@ $(EF_BOOT_OBJ)
-
-$(OUT_EF_BIN): $(OUT_EF_BASE) $(TEXT_MODULE_PRG) $(INVENTORY_MODULE) $(SAVELOAD_MODULE) \
-		$(SAVELOAD_SAVE_MODULE) $(ROOM_HELPERS_MODULE) $(LOOK_HELPERS_MODULE) $(SCRIPT_MODULE) \
-		$(TYPEINFO_MODULE) \
-		tools/pack_easyflash.py tools/easyflash_layout.py tools/validate_easyflash_layout.py \
-		tools/test_validate_banked_module.py \
-		$(EF_LAYOUT) \
-		$(C64_ROOM_ASSETS) $(C64_OBJECT_TYPES) $(C64_PORTRAIT_ASSETS) $(C64_RESOURCE_ASSETS) \
-		$(ROOM_CODES)
-	python3 tools/test_validate_banked_module.py
-	python3 tools/pack_easyflash.py --base $(OUT_EF_BASE) --assets $(C64_ASSET_OUTDIR) \
-		--objects $(C64_OBJECT_TYPES) --room-code $(ROOM_OUTDIR) \
-		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
-		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
-		--typeinfo $(TYPEINFO_MODULE) \
-		--look-helpers $(LOOK_HELPERS_MODULE) \
-		--script $(SCRIPT_MODULE) \
-		--layout $(EF_LAYOUT) \
-		--output $@
-	python3 tools/validate_easyflash_layout.py --layout $(EF_LAYOUT) --image $@ \
-		--inventory $(INVENTORY_MODULE) --saveload $(SAVELOAD_MODULE) \
-		--saveload-save $(SAVELOAD_SAVE_MODULE) --room-helpers $(ROOM_HELPERS_MODULE) \
-		--script $(SCRIPT_MODULE) --look-helpers $(LOOK_HELPERS_MODULE) \
-		--typeinfo $(TYPEINFO_MODULE) --inventory-map $(OUTDIR)/inventory.map \
-		--look-helpers-map $(OUTDIR)/look-helpers.map \
-		--room-helpers-map $(OUTDIR)/room-helpers.map \
-		--script-map $(OUTDIR)/script.map \
-		--saveload-map $(OUTDIR)/saveload.map \
-		--saveload-save-map $(OUTDIR)/saveload-save.map \
-		--typeinfo-map $(OUTDIR)/typeinfo.map
-
-$(OUT_CRT): $(OUT_EF_BIN)
-	$(CARTCONV) -p -t easy -i $< -o $@ -n "$(CART_NAME)"
-
-cartridge: $(OUT_CRT)
-
-run: run-cartridge
-
-$(SAVE_DISK): | $(OUTDIR)
-	$(C1541) -format "$(SAVE_DISK_NAME),00" d64 $@
-
-run-cartridge: $(OUT_CRT) $(SAVE_DISK)
-	$(VICE) -cartcrt $(OUT_CRT) -8 $(SAVE_DISK)
-
-asset-editor:
-	python3 tools/asset-editor/server.py --host $(ASSET_EDITOR_HOST) --port $(ASSET_EDITOR_PORT)
+$(SAVE_DISK):
+	mkdir -p $(dir $@)
+	$(C1541) -format "$(SAVE_DISK_NAME),00" d64 "$@"
+
+run run-cartridge: $(OUT_CRT) $(SAVE_DISK)
+	$(XVFB_RUN) $(VICE) -cartcrt $(OUT_CRT) -8 "$(SAVE_DISK)"
+
+test: $(OUT_CRT)
+	$(XVFB_RUN) python3 tools/test_oscar_boot.py --vice "$(VICE)"
 
 clean:
 	rm -rf $(OUTDIR)

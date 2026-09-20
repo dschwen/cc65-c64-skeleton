@@ -25,16 +25,16 @@ ROOM_DECLARE(05)
 
 #undef ROOM_DECLARE
 
-#define ROOM_ENTRY(id, num) \
-    { 0x##id, BANK_ROOM_FIRST + num, room##id##_enter_room, room##id##_enter_tile, \
+#define ROOM_ENTRY(id, hexid, num) \
+    { hexid, BANK_ROOM_FIRST + num, room##id##_enter_room, room##id##_enter_tile, \
       room##id##_look_at, room##id##_use_at }
 
 #define ROOM_TABLE_ENTRIES \
-    ROOM_ENTRY(00, 0), \
-    ROOM_ENTRY(01, 1), \
-    ROOM_ENTRY(02, 2), \
-    ROOM_ENTRY(03, 3), \
-    ROOM_ENTRY(04, 4), \
-    ROOM_ENTRY(05, 5)
+    ROOM_ENTRY(00, 0x00, 0), \
+    ROOM_ENTRY(01, 0x01, 1), \
+    ROOM_ENTRY(02, 0x02, 2), \
+    ROOM_ENTRY(03, 0x03, 3), \
+    ROOM_ENTRY(04, 0x04, 4), \
+    ROOM_ENTRY(05, 0x05, 5)
 
 #endif

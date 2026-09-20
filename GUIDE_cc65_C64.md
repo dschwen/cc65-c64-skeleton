@@ -275,75 +275,31 @@ cc65-c64-skeleton/
 
 ## 9) Reference: key base addresses (one-glance)
 
-### Current skeleton layout
+### Current Oscar64 layout
 
-The game keeps the VIC-II in bank 3 and uses these fixed addresses:
-
-`MEMORY_MAP.md` is the authoritative detailed allocation, including actual
-linker tails, RAM hidden by BASIC/I/O/KERNAL, and all eight sprite slots.
-
-| Address range | Use |
+| Address/range | Owner |
 |---|---|
-| `$0400-$0491` | shared resident SL/SV workspace |
-| `$2000-$23FF` | current room |
-| `$2400-$27FF` | destination-room staging |
-| `$2800-$2BFF` | sparse world-delta journal |
-| `$2C00-$2FFF` | resident BSS and compact helpers |
-| `$3000-$37FF` | 256 tile definitions from `tiles.ctil` |
-| `$3800-$38FF` | 256 tile property bytes from `tiles.ctil` |
-| `$3A00-$3BFF` | independently loaded native/SID/text module |
-| `$3C00-$7FFF` | resident platform code and read-only tables |
-| `$8000-$85FF` | file-backed load-image fill |
-| `$8600-$8B47` | resident world-state code |
-| `$8B48-$98FF` | resident game/main and shared room-API code |
-| `$9900-$9CFF` | active 1 KiB room-specific code overlay |
-| `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$AFFF` | free underlying RAM; hidden by BASIC/ROMH in banked calls |
-| `$B000-$B7BE` | rebuildable work RAM and bounded room/type staging |
-| `$B800-$BA0E` | resident KERNAL save-disk driver |
-| `$C000-$C0FF` | cc65 software stack |
-| `$C100-$C173` | fixed resident `GameState` |
-| `$C174-$C178` | mutable in-place Inventory service state |
-| `$C180-$E482` | 256 hot object-type records, partly beneath I/O/KERNAL |
-| `$E800-$EFFF` | tile charset in VIC bank 3 |
-| `$F000-$F7FF` | text charset in VIC bank 3 |
+| `$0800-$08FF` | Oscar64 startup |
+| `$0900-$7DFF` | resident code/data/BSS, software stack and static frames |
+| `$7E00-$7FFF` | relocated environment module |
+| `$8000-$BFFF` | selected EasyFlash ROM bank |
+| `$C000-$CFFE` | hot object records 106-222, explicitly loaded at boot |
+| `$D000-$DFFF` | I/O and Color RAM |
+| `$E800-$EFFF` | tile charset, explicitly loaded from bank 15 |
+| `$F000-$F7FF` | text charset, explicitly loaded from bank 15 |
 | `$F800-$FBFF` | screen matrix and sprite pointers |
-| `$FC00-$FDFF` | cursor/portrait/rain sprite bitmaps |
+| `$FC00-$FDFF` | cursor/portrait/rain sprite data |
 
-`$D018` is `$EA` for tiles and `$EC` for text. The raster IRQ switches to
-the text charset at screen row 22 and restores the tile charset at raster 0.
-Room transitions clear rows 22-24, disable the VIC raster source, and force
-`$D018=$EA` until the destination has been completely drawn. Their epilogue
-resynchronizes the split before reenabling the source. The handler also
-uses `$D011` bit 7 with `$D012`: `$D012` alone wraps at raster line 256 and is
-not enough to distinguish vertical blank from the top of the next frame.
-The IRQ is implemented entirely in `src/irq.s`. Rainy rooms use hardware
-sprites 1-7 directly, one dedicated sprite per streak; no raster multiplexing
-is needed since there are exactly as many sprites as streaks. Its
-bottom-of-map branch rotates a low-RAM shadow of charset character 14 and
-writes it to `$E870-$E877` every
-second frame (25 Hz PAL, 30 Hz NTSC) and advances all seven streaks every
-frame (50 Hz PAL, 60 Hz NTSC). Both happen only after the VIC has switched
-away from the tile charset, avoiding visible partial writes. The water source
-is an eight-byte shadow below `$8000`, so the IRQ never reads charset RAM while
-KERNAL hides it.
-Row 22 is left blank as spacing above the text on rows 23-24. A full room draw
-clears all three rows in both screen and Color RAM before drawing the new room.
-It disables CIA1 interrupts, so the KERNAL jiffy clock does not advance while
-the demo runs. Rework the IRQ chaining if a game needs KERNAL timekeeping or
-other CIA1 interrupt services.
+Oscar64's CRT loader initializes only `main`. CIA/KERNAL/editor setup
+and the high-RAM asset copies are explicit in `platform_init()`.
+Gameplay keeps KERNAL visible (`$01=$37`); CPU reads of VIC RAM use
+a short resident mapping gate. `main` ends before the environment window,
+including both stacks. See `MEMORY_MAP.md` for the complete current contract.
 
-The custom IRQ also bypasses normal KERNAL keyboard scanning. The platform's
-frame-driven game loop calls the assembly `platform_input_poll()` wrapper once
-per frame; it invokes the KERNAL `SCNKEY` and `GETIN` entry points. Do not poll
-`SCNKEY` in an unrestricted busy loop because its debounce and repeat timing
-assume roughly one call per video frame.
+### Historical cc65 implementation notes
 
-The raster handler has a standalone RAM-vector entry at `$FFFE/$FFFF` that
-saves A/X/Y and returns with `RTI`, plus a `$0314` entry for KERNAL-mapped disk
-intervals. Short keyboard calls map KERNAL around the call. Accessing RAM under
-`$D000-$DFFF` remains a short critical section because VIC/SID/CIA and Color
-RAM are unavailable in that mapping.
+The following loader and fixed-address details describe the superseded cc65
+build. Use the table above and MEMORY_MAP.md for the current Oscar64 build.
 
 ### EasyFlash cartridge build
 

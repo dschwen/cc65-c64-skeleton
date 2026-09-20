@@ -20,8 +20,9 @@
 
 #pragma section( env_cellar_code, 0 )
 #pragma section( env_cellar_data, 0 )
+#pragma section( env_cellar_entry, 0 )
 #pragma region( env_cellar_bank, 0x8000, 0x8200, , BANK_ENV_CELLAR,
-                 { env_cellar_data, env_cellar_code }, 0x7e00 )
+                 { env_cellar_entry, env_cellar_data, env_cellar_code }, 0x7e00 )
 #pragma code(env_cellar_code)
 #pragma data(env_cellar_data)
 
@@ -61,7 +62,7 @@ static uint8_t pluck_timer;
 static uint8_t creak_timer;
 static uint8_t randbyte;
 
-__noinline void env_init(void) {
+__noinline void env_cellar_init(void) {
     uint8_t i;
     uint16_t delay;
 
@@ -93,7 +94,7 @@ __noinline void env_init(void) {
     creak_timer = 150u;
 }
 
-__noinline void env_tick(void) {
+__noinline void env_cellar_tick(void) {
     randbyte = V3_OSC;
 
     if (--drone_timer == 0u) {
@@ -124,15 +125,17 @@ __noinline void env_tick(void) {
     }
 }
 
-__noinline void env_enable(void) {
+__noinline void env_cellar_enable(void) {
     MODE_VOL = 0x07u;
 }
 
-__noinline void env_disable(void) {
+__noinline void env_cellar_disable(void) {
     MODE_VOL = 0x00u;
 }
 
-const EnvTable env_table = { env_init, env_tick, env_enable, env_disable };
+/* Fixed ABI: the entry table precedes all music/constants in the blob. */
+#pragma data(env_cellar_entry)
+static const EnvTable env_table = { env_cellar_init, env_cellar_tick, env_cellar_enable, env_cellar_disable };
 #pragma reference(env_table)
 
 #pragma code(code)

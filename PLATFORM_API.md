@@ -34,34 +34,22 @@ room-transition logic even when a graphic extends in several directions.
 
 | Address/range | Owner |
 |---|---|
-| `$0400-$0491` | shared resident SL/SV workspace |
-| `$2000-$23FF` | current-room RAM |
-| `$2400-$27FF` | destination-room staging |
-| `$2800-$2BFF` | sparse world-delta journal |
-| `$2C00-$2EFF` | ordinary resident BSS |
-| `$2F00-$2FFF` | compact resident helpers and rain/water setup code |
-| `$3000-$38FF` | tiles and tile properties; save/load temporarily borrows the first 1,146 bytes and restores the full resource |
-| `$3900-$39FF` | compact read-only lookup tables |
-| `$3A00-$3BFF` | independently loaded native/SID/text module |
-| `$3C00-$7FFF` | platform code and read-only tables |
-| `$8000-$85FF` | file-backed fill; hidden by cartridge ROM during banked calls |
-| `$8600-$8B47` | resident world-state code |
-| `$8B48-$98FF` | resident game/main and shared room-API code |
-| `$9900-$9CFF` | active 1 KiB room-code overlay |
-| `$9D00-$9FFF` | pristine current-room object baseline |
-| `$A000-$AFFF` | free underlying RAM, hidden during all current banked calls |
-| `$B000-$B7BE` | rebuildable work RAM and bounded room/type staging |
-| `$B800-$BA0E` | resident KERNAL save-disk driver |
-| `$C000-$C0FF` | cc65 software stack |
-| `$C100-$C173` | persistent `GameState` |
-| `$C174-$C178` | in-place Inventory service state |
-| `$C180-$CFFD` | hot object-type records 0-105 |
-| `$D000-$DFFE` | hot object-type records 106-222 beneath I/O |
-| `$E000-$E482` | hot object-type records 223-255 beneath KERNAL |
-| `$E800-$EFFF` | tile charset in VIC bank 3 |
-| `$F000-$F7FF` | text charset in VIC bank 3 |
+| `$0800-$08FF` | Oscar64 startup |
+| `$0900-$7DFF` | resident code/data/BSS, software stack and static frames |
+| `$7E00-$7FFF` | relocated environment module |
+| `$8000-$BFFF` | selected EasyFlash ROM bank |
+| `$C000-$CFFE` | hot object records 106-222, explicitly loaded at boot |
+| `$D000-$DFFF` | I/O and Color RAM |
+| `$E800-$EFFF` | tile charset, explicitly loaded from bank 15 |
+| `$F000-$F7FF` | text charset, explicitly loaded from bank 15 |
 | `$F800-$FBFF` | screen matrix and sprite pointers |
 | `$FC00-$FDFF` | cursor/portrait/rain sprite data |
+
+Oscar64's CRT loader initializes only `main`. CIA/KERNAL/editor setup
+and the high-RAM asset copies are explicit in `platform_init()`.
+Gameplay keeps KERNAL visible (`$01=$37`); CPU reads of VIC RAM use
+a short resident mapping gate. `main` ends before the environment window,
+including both stacks. See `MEMORY_MAP.md` for the complete current contract.
 
 The platform preallocates:
 
@@ -158,8 +146,6 @@ by that split, not preserved anywhere.
 
 ```c
 void platform_init(void);
-void platform_room_state_hooks(PlatformRoomStoreHook store_hook,
-                               PlatformRoomRestoreHook restore_hook);
 void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,

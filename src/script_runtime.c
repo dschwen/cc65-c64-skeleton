@@ -1,168 +1,71 @@
 #include <stdint.h>
 
 #include "game.h"
+#include "platform.h"
+#include "memmap.h"
+#include "banks.h"
 #include "script_abi.h"
 #include "script_format.h"
 
-/* Resident trigger for the in-place script/conversation/room interpreter
- * (modules/script.c). Every bank through 48 is already spoken for, so it
- * shares TYPE_BANK_1's ROML half with the object-type Zone C table and the
- * in-place RH service, at a fixed offset past both.
- * The packer and runtime both consume cfg/easyflash_layout.json.
+/*
+ * Native (oscar64 C) resident trigger for the banked script/conversation/
+ * room interpreter (modules/script.c, bank BANK_SCRIPT - see src/banks.h).
+ * Replaces the cc65-era design's shared-bank ROML placement and its
+ * cfg/easyflash_layout.json coupling: under oscar64 the interpreter is an
+ * ordinary far_call_bank() target like every other banked service (see
+ * memmap.h's far_call_bank() comment).
+ *
+ * Deliberately thin: every call this used to make around far_call_bank()
+ * (raster IRQ resume, portrait cleanup, the post-run keypress wait, status-
+ * line clearing) now lives in modules/script.c's script_banked_run()
+ * instead, in the bank rather than here - see that function's comment for
+ * why. This file just sets up the query state (script_resource_kind/_id,
+ * and for a room entry, script_entry_key) and triggers the bank.
  *
  * Script/conversation/room *content* (the compiled bytecode - see
- * tools/compile_script.py) is separate from the interpreter's own code: it is
- * fetched by the interpreter at run time from the generic sparse
- * resource directories - one independent 0-255 ID space per kind (see
- * PLATFORM_RESOURCE_KIND_* in platform.h), not a single space split by
- * range. See modules/script.c.
+ * tools/compile_script.py) is separate from the interpreter's own code: it
+ * is fetched by the interpreter at run time from src/resources.c's
+ * platform_resource_fetch_range(), one shared EasyFlash bank per resource
+ * kind (see BANK_SCRIPT_ROOM_FIRST).
  */
-void platform_script_run_banked(void);
-void raster_irq_resume(void);
-extern volatile uint8_t platform_raster_irq_active;
 
-/* Set by the caller before triggering the interpreter: which resource kind and
- * ID it should fetch and run (script_resource_kind selects which of the
- * three PLATFORM_RESOURCE_KIND_* directories script_resource_id is looked
- * up in), and - for a KIND_ROOM resource only - which entry key
- * game_room_script_entry() is asking for. The interpreter looks the key up in
- * the entry table itself (see modules/script.c's find_room_entry()) and
+/* Set by the caller before triggering the interpreter: which resource kind
+ * and ID it should fetch and run (script_resource_kind selects which of
+ * the PLATFORM_RESOURCE_KIND_* directories script_resource_id is looked up
+ * in), and - for a KIND_ROOM resource only - which entry key
+ * game_room_script_entry() is asking for. The interpreter looks the key up
+ * in the entry table itself (see modules/script.c's find_room_entry()) and
  * reports back through script_entry_found, since the resident side doesn't
- * pre-scan it - resident memory here is fully saturated (see MEMORY_MAP.md;
- * this project routinely fights single-byte overflows), and per measured
- * usage (room text is only ever read on a deliberate player action, never
- * on every tile step) a banked-call-per-lookup isn't a hot path today. If
- * tile-entry narration becomes common enough that this matters, a resident
- * pre-scan (skip the banked call entirely when no entry matches) is the
- * place to revisit - it would need its own resident memory budget.
+ * pre-scan it - a banked-call-per-lookup isn't a hot path (room text is
+ * only ever read on a deliberate player action, never on every tile step).
  *
- * script_resource_kind and script_workspace are placed in ROOMSTAGE, not
- * the default BSS segment - BSSRAM has no spare bytes (see MEMORY_MAP.md).
- * ROOMSTAGE reserves 1,024 bytes while PlatformRoom uses 1,001; these 11
- * bytes consume part of its otherwise-unclaimed 23-byte tail, leaving 12
- * bytes of guard space - see platform.c's room_stage. */
-#pragma bss-name (push, "ROOMSTAGE")
+ * Plain resident globals now, not cc65's "ROOMSTAGE"/BSSRAM segment
+ * juggling - oscar64's resident "main" region (memmap.h) has no equivalent
+ * byte-for-byte scarcity forcing state to be squeezed into another
+ * struct's unused tail. */
 uint8_t script_resource_kind;
 ScriptWorkspace script_workspace;
-#pragma bss-name (pop)
 uint8_t script_resource_id;
 uint8_t script_entry_key;
 uint8_t script_entry_found;
 /* Set by modules/script.c's say() (the OP_TEXT handler) whenever it writes
  * room/standalone-script text - not for a conversation's own topic text,
- * which manages its own pacing (see run_banked_script() below). Read once,
- * right after platform_script_run_banked() returns. */
+ * which manages its own pacing. Read by script_banked_run() itself now
+ * (see its comment), not from here. */
 uint8_t script_text_shown;
 
-#pragma code-name (push, "LOWCODE")
-static void run_banked_script(void) {
-    uint8_t was_suspended;
-
-    platform_look_cursor_hide();
-    script_text_shown = 0u;
-    was_suspended = !platform_raster_irq_active;
-    /* If we got here with the raster IRQ still suspended, the caller is a
-     * room's enter_room()/enter_tile() hook, itself called from inside
-     * game_process_pending_transition()'s whole-switch suspend bracket
-     * (src/game.c) - the only way to reach a room's own code at all. From
-     * this point on, the banked interpreter may write real, readable
-     * text to the status rows (a room's arrival/tile-entry narration), and
-     * that needs the ordinary per-frame map/text charset split actually
-     * running to render as text instead of tile-charset garbage - suspend
-     * pins the display on one static charset (tile, in normal gameplay)
-     * for its whole duration, precisely because nothing was expected to
-     * need the split *during* a transition before this. Resuming here is
-     * safe despite still being mid-transition: platform_room_enter()'s own
-     * EasyFlash work, and the environment module's checksum-race-sensitive
-     * fetch (see game_enter_room()'s comment in src/game.c), are both
-     * already fully complete by the time any room-entry/tile-entry hook
-     * runs at all. Deliberately not re-suspending afterward: the pager's
-     * own between-pages wait and this function's own game_wait_fresh_key()
-     * below both need the split alive too, for exactly the same reason, for
-     * as long as text might still be on screen; game_process_pending_
-     * transition()'s own raster_irq_resume() call, later, simply becomes a
-     * harmless no-op once this has already run. Found live: room 01's
-     * arrival narration was unreadable (tile-charset garbage) the entire
-     * time it was shown, precisely because it runs from here while still
-     * suspended.
-     *
-     * The same "still mid-transition" window is also still screen-blanked
-     * (DEN off): game_process_pending_transition()'s bracket
-     * (src/game.c) calls game_transition_message_show() - which blanks
-     * whenever no transition message is pending, i.e. the ordinary case -
-     * *before* platform_room_enter()/game_enter_room(), and nothing
-     * unblanks again until game_transition_reveal() at the very end of that
-     * same bracket. Before the in-place redesign, the old copy-to-RAM
-     * overlay loader unblanked around its own EasyFlash copy (to hide that
-     * copy's charset-split glitch - see MEMORY_MAP_TARGET.md's "Overlay-
-     * load visual glitch"), and that unblank was incidentally the only
-     * thing that ever made a mid-transition narration visible at all. The
-     * in-place redesign correctly dropped the now-unnecessary copy and its
-     * blank/unblank pair, but nothing replaced the unblank side effect it
-     * was also providing - so room-entry/tile-entry narration shown here
-     * during a transition went from "readable" to "invisible": the pager's
-     * between-pages waits and game_wait_fresh_key() below still ran and
-     * still needed real keypresses, just with DEN off the entire time.
-     * Found live: lightning visible (it runs before the transition is even
-     * queued, on the same keypress, screen still normal), then the screen
-     * going solid black and staying black - needing several blind
-     * keypresses to get through the invisible narration - until
-     * game_transition_reveal() finally unblanks on the new room. Unblank
-     * here for the same reason resume happens here, and leave it unblanked
-     * for the same reason interrupts are left resumed: game_transition_
-     * reveal()'s own blank()-draw-unblank() cycle, later, still runs
-     * unconditionally and will blank again right before it draws the new
-     * room regardless of what state this leaves the screen in. */
-    if (was_suspended) {
-        raster_irq_resume();
-        platform_screen_unblank();
-    }
-    platform_script_run_banked();
-
-    /* The banked interpreter borrowed the room-staging scratch buffer (see
-     * platform_room_scratch() in platform.h) - nothing else reads it
-     * between calls, so it's left as-is - and any portrait it showed;
-     * put that back the way normal gameplay expects to find it. */
-    platform_portrait_hide();
-    /* Give the player a chance to read room/standalone-script text before
-     * wiping it - previously this cleared and redrew unconditionally and
-     * immediately (no platform_wait_frame() in between), so a Look/Use
-     * description's last page was up for, at most, a handful of CPU cycles
-     * before being erased - visually "flashes and vanishes", reported live.
-     * Every earlier page already got this same pause for free (src/text.s's
-     * next_text_line() calls wait_for_fresh_key() between pages); only the
-     * final page - the one nothing else waits for - was being skipped.
-     * Gated on script_text_shown so this adds no new keypress where there
-     * is nothing to protect: a conversation manages its own pacing (each
-     * loop iteration's "Ask about..." prompt already overwrites the
-     * previous topic's answer only once the player has typed something, and
-     * exiting via RUN/STOP is itself the acknowledgment - an extra wait
-     * here would demand a second, redundant keypress after that exit), and
-     * a script that only ran effects/a transition (e.g. the lightning/
-     * room_transition_here mystery sequence) never sets the flag. Also
-     * skipped when a transition message is pending: that path already has
-     * its own, better wait in game_transition_reveal(), called once the
-     * queued transition actually runs - waiting twice would demand two
-     * keypresses for one message. */
-    if (script_text_shown && !game_transition_pending_message) {
-        game_wait_fresh_key();
-    }
-    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
-    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
-    /* The interpreter never replaces WORKBSS now, so the old lighting-cache
-     * reconstruction is neither necessary nor desirable here. */
-}
+void script_banked_run(void);
 
 void game_script_play(uint8_t resource_id) {
     script_resource_kind = PLATFORM_RESOURCE_KIND_SCRIPT;
     script_resource_id = resource_id;
-    run_banked_script();
+    far_call_bank(BANK_SCRIPT, script_banked_run);
 }
 
 void game_conversation_play(uint8_t resource_id) {
     script_resource_kind = PLATFORM_RESOURCE_KIND_CONVERSATION;
     script_resource_id = resource_id;
-    run_banked_script();
+    far_call_bank(BANK_SCRIPT, script_banked_run);
 }
 
 /* Look up `key` in the current room's own script resource (resource ID ==
@@ -174,7 +77,6 @@ uint8_t game_room_script_entry(uint8_t key) {
     script_resource_id = platform_current_room;
     script_entry_key = key;
     script_entry_found = 0u;
-    run_banked_script();
+    far_call_bank(BANK_SCRIPT, script_banked_run);
     return script_entry_found;
 }
-#pragma code-name (pop)

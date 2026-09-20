@@ -1,17 +1,11 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "platform.h"
+#include "platform_native.h"
 
-/*
- * Native (oscar64 C) replacement for src/text.s: word-wrapping pager for
- * the two bottom status rows. The original's brief CPU-port switch while
- * scrolling (to read row 1 through RAM instead of KERNAL ROM) does not
- * apply under oscar64's memory model: $E000-$FFFF is plain RAM in the
- * steady state here (see src/banking.c), never shadowed by KERNAL during
- * ordinary text output - KERNAL is mapped in only briefly, synchronously,
- * around real KERNAL disk calls, never concurrently with a status-line
- * message.
- */
+/* Word-wrapping pager for the two bottom status rows. KERNAL stays mapped
+ * during gameplay: writes reach screen RAM, but scrolling reads need the
+ * resident VIC-RAM gate. */
 
 extern uint8_t platform_text_output_color;
 extern uint8_t platform_text_output_line;
@@ -47,8 +41,8 @@ static void next_text_line(void) {
         return;
     }
     wait_for_fresh_key();
+    platform_copy_vic_ram(TEXT_ROW_0, TEXT_ROW_1, MAP_WIDTH_CHARS);
     for (x = 0u; x < MAP_WIDTH_CHARS; ++x) {
-        TEXT_ROW_0[x] = TEXT_ROW_1[x];
         COLOR_ROW_0[x] = COLOR_ROW_1[x];
         TEXT_ROW_1[x] = ' ';
         COLOR_ROW_1[x] = 0u;

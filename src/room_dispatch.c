@@ -39,6 +39,25 @@ static const RoomEntry room_table[] = {
 uint8_t game_room_code_active;
 static const RoomEntry* active_room;
 
+void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
+
+/* Copies room_id's raw PlatformRoom bytes (embedded at its own bank's
+ * byte 0 by tools/compile_room.py - see room00_data and friends) into
+ * `destination`. Returns 1 on success, 0 for an unrecognized room_id -
+ * replaces the old runtime-validated EasyFlash room directory; there is
+ * nothing left to validate since the data is a compiled, linked part of
+ * this same program. */
+uint8_t platform_room_data_fetch(uint8_t room_id, void* destination) {
+    uint8_t i;
+    for (i = 0u; i < ROOM_TABLE_COUNT; ++i) {
+        if (room_table[i].id == room_id) {
+            platform_easyflash_copy_roml(room_table[i].bank, 0u, destination, ROOM_FILE_BYTES);
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
 /* Finds room_id's table entry and remembers it as the active room, or
  * clears the active room if room_id has no compiled room code (an
  * unrecognized ID - every current room is always found, this only

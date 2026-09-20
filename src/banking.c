@@ -3,34 +3,48 @@
 #include "platform.h"
 #include "platform_native.h"
 
-/*
- * Native (oscar64 C) replacement for src/banking.s. Under oscar64's model,
- * EasyFlash banking affects only $8000-$BFFF (see memmap.h's header
- * comment), so the elaborate cc65-era CPU_PORT dance to make that window
- * plain RAM ("gameplay" mode) no longer applies - only KERNAL/I-O
- * visibility above $C000 remains relevant, and far calls are just
- * eflash.bank switches (memmap.h's far_call_bank()), not a self-modifying
- * trampoline.
- */
-
-#define CPU_PORT (*(volatile uint8_t*)0x0001u)
+/* Gameplay keeps the 16 KiB EasyFlash window and KERNAL visible ($37).
+ * Clearing HIRAM also hides cartridge ROM: only resident code may do so,
+ * and it must restore the mapping before returning to a banked caller. */
+#define CPU_PORT (*(volatile __memmap uint8_t*)0x0001u)
 #define CPU_DDR  (*(volatile uint8_t*)0x0000u)
+#define CPU_MAP_GAME     0x07u
+#define CPU_MAP_KERNAL   0x07u
+#define CPU_MAP_ALL_RAM  0x04u
+#define CPU_PORT_MASK   0x07u
 
-/* Bits 0-2 of $01: LORAM, HIRAM, CHAREN. KERNAL/BASIC never actually cover
- * anything this program reads once booted (EasyFlash owns $8000-$BFFF
- * entirely; nothing here uses BASIC), so the only two states that matter
- * are "KERNAL out, I/O in" (the steady state - exposes the $E000-$E7FF hot
- * region as RAM) and "KERNAL in" (brief, for real KERNAL disk-driver
- * calls). CPU_MAP_ALL_RAM additionally hides I/O, exposing RAM beneath
- * $D000-$DFFF too, for the rare case that needs it.
- */
-#define CPU_MAP_GAME     0x05u /* LORAM=1 HIRAM=0 CHAREN=1: KERNAL/BASIC out, I/O visible */
-#define CPU_MAP_KERNAL   0x06u /* LORAM=0 HIRAM=1 CHAREN=1: KERNAL in, I/O visible */
-#define CPU_MAP_ALL_RAM  0x04u /* LORAM=0 HIRAM=0 CHAREN=1: KERNAL/BASIC/I-O all out */
-#define CPU_PORT_MASK    0x07u
+uint8_t platform_cart_bank;
+
+/* Short resident-only read gate for VIC RAM beneath KERNAL. Keep I/O
+ * visible, mask IRQs, and preserve both the CPU port and interrupt state.
+ * No calls or bank-window data accesses are allowed inside this interval. */
+__noinline void platform_copy_vic_ram(uint8_t* destination,
+                                      const uint8_t* source, uint8_t size) {
+    __asm {
+        php
+        sei
+        lda $01
+        pha
+        and #$f8
+        ora #$05
+        sta $01
+    }
+    while (size != 0u) {
+        *destination++ = *source++;
+        --size;
+    }
+    __asm {
+        pla
+        sta $01
+        plp
+    }
+}
 
 static void set_map(uint8_t value) {
-    __asm { php sei }
+    __asm {
+        php
+        sei
+    }
     CPU_DDR |= CPU_PORT_MASK;
     CPU_PORT = (uint8_t)((CPU_PORT & (uint8_t)~CPU_PORT_MASK) | value);
     __asm { plp }
@@ -49,14 +63,12 @@ void platform_memory_all_ram(void) {
 }
 
 uint8_t platform_irq_save_disable(void) {
-    uint8_t status;
-    __asm {
+    return __asm {
         php
         pla
-        sta status
+        sta accu
         sei
-    }
-    return status;
+    };
 }
 
 void platform_irq_restore(uint8_t status) {

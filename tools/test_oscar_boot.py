@@ -131,6 +131,21 @@ def check(root, monitor, artifacts):
     first_frame = monitor.memory(labels["platform_frame_counter"], 1)[0]
     press("l", 76)
     assert monitor.memory(labels["command"], 1) == b"L", "Look mode not entered"
+    # Cursor sprite (src/platform.c's platform_look_cursor_show(), sprite 0
+    # at $FC00): a square outline, solid top/bottom bar plus a one-pixel
+    # left and right edge for the 16 rows between. Checked byte-for-byte,
+    # not just "Look mode entered" - Oscar64 -Os previously merged the
+    # loop's two per-iteration array writes onto one induction variable,
+    # silently dropping every left-edge pixel except row 1's (see
+    # OSCAR64_BUG_LOOP_INDEX_MERGE.md), which a mode-only check can't catch.
+    expected_cursor = bytearray(64)
+    expected_cursor[0:3] = bytes([0xFF, 0xFF, 0xC0])
+    expected_cursor[51:54] = bytes([0xFF, 0xFF, 0xC0])
+    for row in range(1, 17):
+        expected_cursor[row * 3] = 0x80
+        expected_cursor[row * 3 + 2] = 0x40
+    assert monitor.memory(0xfc00, 64, "ram") == bytes(expected_cursor), \
+        "Look cursor sprite is not a complete square outline"
     assert monitor.memory(0xfb98, 10, "ram") == bytes([76, 15, 15, 11, 9, 14, 7, 46, 46, 46]), "display string encoding"
     monitor.command(f'screenshot "{artifacts / "look.png"}" 2')
     press("l", 76)

@@ -53,6 +53,13 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
   `*q++ = *src++` loops were miscompiled at `-Os` (post-loop `q` advance
   dropped). Prefer `copy_bytes()`/`memcpy` plus an explicit advance, and
   self-check encoded sizes. Details and repro: OSCAR64_BUG_POINTER_LOOP_ADVANCE.md.
+- Also verify a loop that writes more than one array (or more than one spot
+  in the same array) per iteration: `-Os` has merged two per-iteration
+  index expressions (`row*3u`/`row*3u+2u`) onto one induction variable,
+  silently dropping every write but the first iteration's. One loop per
+  destination sequence, not two writes sharing a loop counter. No isolated
+  repro found despite three attempts - confirmed only by disassembly plus a
+  live VICE memory read. Details: OSCAR64_BUG_LOOP_INDEX_MERGE.md.
 - `platform_text_screen_code()` (src/platform.c) only makes sense applied to
   a compile-time string-literal byte - `platform.h`'s `#pragma charmap`
   pre-encodes those (lowercase-in-source -> 65-90, uppercase-in-source ->

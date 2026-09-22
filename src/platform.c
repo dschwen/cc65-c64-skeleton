@@ -1298,9 +1298,26 @@ uint8_t platform_look_cursor_show(uint8_t tile_x, uint8_t tile_y) {
     SPRITE_DATA[51] = 0xffu;
     SPRITE_DATA[52] = 0xffu;
     SPRITE_DATA[53] = 0xc0u;
-    for (row = 1u; row < 17u; ++row) {
-        SPRITE_DATA[(uint8_t)(row * 3u)] = 0x80u;
-        SPRITE_DATA[(uint8_t)(row * 3u + 2u)] = 0x40u;
+    /* Two separate single-variable loops, not one loop writing both edges
+     * per iteration. The original `for (row = 1u; row < 17u; ++row) {
+     * SPRITE_DATA[row*3u] = 0x80u; SPRITE_DATA[row*3u+2u] = 0x40u; }` -
+     * and an equivalent rewrite carrying `left`/`right` as two running
+     * offsets instead of a multiply - has been confirmed live (VICE memory
+     * dump) to have Oscar64 -Os merge the two per-iteration induction
+     * variables into one, so the left-edge write silently collapses onto
+     * the right-edge sequence after row 1: rows 2-16 left that whole
+     * column at its memset(0) value, an outline "missing pixels on the
+     * left side". Splitting into two loops - each with only one
+     * loop-carried variable driving one array write - has been confirmed
+     * live to compile correctly. See OSCAR64_BUG_POINTER_LOOP_ADVANCE.md
+     * for the same "verify -Os loop codegen" caution, a related but
+     * distinct compiler defect (that one is instead about a pointer's
+     * post-loop advance being dropped). */
+    for (row = 3u; row <= 48u; row += 3u) {
+        SPRITE_DATA[row] = 0x80u;
+    }
+    for (row = 5u; row <= 50u; row += 3u) {
+        SPRITE_DATA[row] = 0x40u;
     }
     SPRITE_POINTERS[0] = (uint8_t)((0xfc00u - 0xc000u) / 64u);
     look_cursor_position(tile_x, tile_y);

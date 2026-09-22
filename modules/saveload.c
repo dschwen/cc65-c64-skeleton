@@ -134,6 +134,24 @@ static void put_char(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
     COLOR[cell] = color;
 }
 
+/* Like put_char(), but pokes `ch` unconverted - for bytes that are already
+ * this charset's actual screen codes (a cursor glyph, or a name byte
+ * written by saveload_save.c's enter_name() as a raw uppercase PETSCII
+ * keypress) rather than a compile-time string-literal byte. See
+ * modules/script.c's read_keyword() for why platform_text_screen_code()
+ * would be wrong here: it expects the project's source-string encoding
+ * (platform.h's #pragma charmap), which reinterprets raw keyboard/disk
+ * uppercase (65-90) as *encoded lowercase*, rendering it as the wrong
+ * (lowercase) glyphs. */
+static void put_char_raw(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
+    uint16_t cell;
+    if (x >= SCREEN_COLS || y >= SCREEN_ROWS) return;
+    if (ch == 0u) ch = (uint8_t)' ';
+    cell = (uint16_t)y * SCREEN_COLS + x;
+    SCREEN[cell] = ch;
+    COLOR[cell] = color;
+}
+
 static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     while (*text != '\0') {
         put_char(x, y, (uint8_t)*text, color);
@@ -316,8 +334,8 @@ static void draw_slot_list(void) {
                 uint8_t name;
                 name = (uint8_t)(slot << 4);
                 for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
-                    put_char((uint8_t)(7u + i), y,
-                             record_buffer[name + i], 1u);
+                    put_char_raw((uint8_t)(7u + i), y,
+                                record_buffer[name + i], 1u);
                 }
             }
         } else {
@@ -331,10 +349,14 @@ static void draw_slot_list(void) {
               1u);
 }
 
+/* Solid block - same cursor glyph as the conversation keyword prompt
+ * (modules/script.c). */
+#define CURSOR_CODE 0xA0u
+
 static void draw_slot_cursor(uint8_t slot, uint8_t visible) {
-    put_char(2u, (uint8_t)(3u + slot),
-             visible ? (uint8_t)'>' : (uint8_t)' ',
-             visible ? 7u : 0u);
+    put_char_raw(2u, (uint8_t)(3u + slot),
+                visible ? (uint8_t)CURSOR_CODE : (uint8_t)' ',
+                visible ? 7u : 0u);
 }
 
 static void wait_key_release(void) {

@@ -53,6 +53,18 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
   `*q++ = *src++` loops were miscompiled at `-Os` (post-loop `q` advance
   dropped). Prefer `copy_bytes()`/`memcpy` plus an explicit advance, and
   self-check encoded sizes. Details and repro: OSCAR64_BUG_POINTER_LOOP_ADVANCE.md.
+- `platform_text_screen_code()` (src/platform.c) only makes sense applied to
+  a compile-time string-literal byte - `platform.h`'s `#pragma charmap`
+  pre-encodes those (lowercase-in-source -> 65-90, uppercase-in-source ->
+  193-218) for the rest of any file that includes it, and the function
+  reverses that specific encoding. A *raw* byte (a keyboard keypress, or a
+  disk-stored value written from one) is a different domain: GETIN's
+  unshifted-letter uppercase (65-90) already *is* this charset's uppercase
+  glyph code, so running it through the same function renders the lowercase
+  glyphs instead (confirmed against assets/charset.cchr - not an oscar64
+  bug, a two-domains-one-function mixup). Poke a raw byte straight to screen
+  RAM; see modules/script.c's read_keyword() and modules/saveload.c/
+  modules/saveload_save.c's `put_char_raw()`.
 - Resident code/state and stacks must stay outside `$8000-$BFFF`;
   main ends before the `$7E00` environment window.
 - Keep charset, screen and sprite data in high VIC-bank-3 RAM beneath KERNAL.

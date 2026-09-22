@@ -88,6 +88,22 @@ static void put_char(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
     COLOR[cell] = color;
 }
 
+/* Like put_char(), but pokes `ch` unconverted - for a byte that is already
+ * this charset's actual screen code (an existing slot name byte, itself a
+ * raw uppercase PETSCII keypress from a previous enter_name() call) rather
+ * than a compile-time string-literal byte. See modules/script.c's
+ * read_keyword() for why platform_text_screen_code() would be wrong here:
+ * it expects the project's source-string encoding (platform.h's #pragma
+ * charmap), which reinterprets raw keyboard uppercase (65-90) as *encoded
+ * lowercase*, rendering it as the wrong (lowercase) glyphs. */
+static void put_char_raw(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
+    uint16_t cell;
+    if (x >= SCREEN_COLS || y >= SCREEN_ROWS) return;
+    cell = (uint16_t)y * SCREEN_COLS + x;
+    SCREEN[cell] = ch;
+    COLOR[cell] = color;
+}
+
 static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     while (*text != '\0') {
         put_char(x, y, (uint8_t)*text, color);
@@ -286,8 +302,8 @@ static uint8_t enter_name(uint8_t* name) {
     clear_screen();
     put_string(4u, 10u, "SAVE NAME:", 1u);
     for (i = 0u; i < SAVE_NAME_BYTES; ++i) {
-        put_char((uint8_t)(15u + i), 10u,
-                 i < length ? name[i] : (uint8_t)'.', 7u);
+        put_char_raw((uint8_t)(15u + i), 10u,
+                     i < length ? name[i] : (uint8_t)'.', 7u);
     }
     put_string(4u, 12u, "RETURN confirm   RUN/STOP cancel", 1u);
 
@@ -306,13 +322,13 @@ static uint8_t enter_name(uint8_t* name) {
         if (key == 20u) { /* DEL */
             if (length != 0u) {
                 --length;
-                NAME_SCREEN[length] = platform_text_screen_code('.');
+                NAME_SCREEN[length] = (uint8_t)'.'; /* raw: see put_char_raw() */
             }
             continue;
         }
         if (name_is_printable(key) && length < SAVE_NAME_BYTES) {
             name[length] = key;
-            NAME_SCREEN[length] = platform_text_screen_code((char)key);
+            NAME_SCREEN[length] = key; /* raw: see put_char_raw() */
             ++length;
         }
     }

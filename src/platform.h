@@ -554,6 +554,13 @@ uint8_t platform_rain_is_active(void);
 #define PLATFORM_ASSET_CHARSET_TILE 0u
 #define PLATFORM_ASSET_CHARSET_TEXT 1u
 #define PLATFORM_ASSET_TILES        2u
+/* Portraits: assets/portraits/<id>, one 256-byte file per portrait ID
+ * (tools/asset-editor). One shared bank (src/banks.h's BANK_PORTRAIT_FIRST),
+ * array-indexed dispatch, same scheme as PLATFORM_RESOURCE_KIND_ROOM/
+ * _CONVERSATION above - not kind 4's stale fixed-destination/ROMH-split
+ * scheme, which predates the oscar64 port and is unimplemented.
+ * platform_portrait_show() (src/platform.c) is the only caller. */
+#define PLATFORM_RESOURCE_KIND_PORTRAIT 5u
 #define ENVCODE_BASE ((uint8_t*)0x7E00u)
 #define ENVCODE_SIZE 0x0200u
 /* C-callable trampolines into the module currently loaded at ENVCODE_BASE

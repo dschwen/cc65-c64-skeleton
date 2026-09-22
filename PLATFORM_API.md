@@ -735,11 +735,14 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side);
 void platform_portrait_hide(void);
 ```
 
-The rendering API is implemented, but the Makefile does not yet embed portrait
-assets into the reserved banks. Do not assume authored portraits appear in the
-CRT or that this path is regression-tested. Once supplied, the API fetches the
-256-byte `portrait_id` asset (see
-`tools/asset-editor/README.md`) from its reserved EasyFlash bank/offset and displays it using sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
+The Makefile discovers `assets/portraits/<id>` (256 bytes each - see
+`tools/asset-editor/README.md`) and embeds them into `BANK_PORTRAIT_FIRST`
+(src/banks.h) the same way as room scripts/conversations - one shared bank,
+array-indexed dispatch, reached through the generic resource fetch
+(`PLATFORM_RESOURCE_KIND_PORTRAIT`, src/resources.c). `make test` covers it
+(Sir Caldus's portrait, room 02, checked byte-for-byte against the asset).
+The API fetches the 256-byte `portrait_id` asset and displays it using
+sprites 1-5: sprites 1-4 hold the four 24x21 quadrants
 copied directly from the asset (it is exactly their memory layout), and
 sprite 5 is filled with a constant solid bitmap, colored black, and expanded
 2x horizontally and vertically to form a 48x42 backdrop exactly matching the

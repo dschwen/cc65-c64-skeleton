@@ -47,8 +47,9 @@ object offsets come from `build/game.map`, not hand-maintained packed offsets.
 | 21 | Tavern environment (02) |
 | 22 | Muffled tavern environment (03, 05) |
 | 23 | Cellar environment (04) |
-| 24+ | Portrait allocation constants reserved; content loader not wired up |
+| 24 | Compiled portrait sprite images and bank-local fetch dispatcher |
 | 32 | Compiled room-script bytecode and bank-local fetch dispatcher |
+| 33 | Compiled conversation bytecode and bank-local fetch dispatcher |
 
 Banks have a 16 KiB CPU window, `$8000-$BFFF`. Unlisted banks are not permission
 to extend a contiguous room/portrait range across another allocation; check

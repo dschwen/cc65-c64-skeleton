@@ -80,7 +80,16 @@ CONVERSATION_BINS    := $(addprefix $(OUTDIR)/scripts/conversations/,$(addsuffix
 CONVERSATION_BANK_SRC := $(OUTDIR)/scripts/script_conversation_bank.c
 CONVERSATION_BANK_FIRST := 33
 
-SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC) $(if $(CONVERSATION_IDS),$(CONVERSATION_BANK_SRC))
+# Portraits (src/banks.h's BANK_PORTRAIT_FIRST): raw 256-byte binary assets,
+# assets/portraits/<id> (tools/asset-editor) - no DSL compile step, fed
+# straight into the same bank generator as room scripts/conversations.
+PORTRAIT_SOURCES := $(wildcard assets/portraits/*)
+PORTRAIT_IDS     := $(notdir $(PORTRAIT_SOURCES))
+PORTRAIT_BANK_SRC := $(OUTDIR)/scripts/portrait_bank.c
+PORTRAIT_BANK_FIRST := 24
+
+SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC) $(if $(CONVERSATION_IDS),$(CONVERSATION_BANK_SRC)) \
+                    $(if $(PORTRAIT_IDS),$(PORTRAIT_BANK_SRC))
 
 OUT_CRT := $(OUTDIR)/game.crt
 
@@ -142,6 +151,12 @@ $(CONVERSATION_BANK_SRC): $(CONVERSATION_BINS) tools/generate_script_bank.py | $
 		$(foreach id,$(CONVERSATION_IDS),--input $(id)=$(OUTDIR)/scripts/conversations/$(id).bin) \
 		--output $@ --bank-symbol script_conversation --fetch-fn script_conversation_bank_fetch \
 		--bank $(CONVERSATION_BANK_FIRST)
+
+$(PORTRAIT_BANK_SRC): $(PORTRAIT_SOURCES) tools/generate_script_bank.py | $(OUTDIR)/scripts
+	python3 tools/generate_script_bank.py \
+		$(foreach id,$(PORTRAIT_IDS),--input $(id)=assets/portraits/$(id)) \
+		--output $@ --bank-symbol portrait --fetch-fn portrait_bank_fetch \
+		--bank $(PORTRAIT_BANK_FIRST)
 
 HEADERS := $(wildcard src/*.h modules/*.h rooms/*.h rooms/env/*.h)
 

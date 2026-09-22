@@ -1377,10 +1377,11 @@ uint8_t platform_portrait_show(uint8_t portrait_id, uint8_t side) {
         return PLATFORM_ERR_ARGUMENT;
     }
 
-    platform_easyflash_copy_roml(
-        (uint8_t)(BANK_PORTRAIT_FIRST + portrait_id / PORTRAITS_PER_BANK),
-        (uint16_t)(portrait_id % PORTRAITS_PER_BANK) * PLATFORM_PORTRAIT_BYTES,
-        PORTRAIT_SPRITE_DATA, PLATFORM_PORTRAIT_BYTES);
+    /* An unpopulated/missing portrait_id fetches 0 bytes and leaves
+     * PORTRAIT_SPRITE_DATA whatever it last held - same "renders as
+     * garbage, not a crash" contract as any other resource fetch. */
+    (void)platform_resource_fetch(PLATFORM_RESOURCE_KIND_PORTRAIT, portrait_id,
+                                  PORTRAIT_SPRITE_DATA, PLATFORM_PORTRAIT_BYTES);
 
     env_disable();
 

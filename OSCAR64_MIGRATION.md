@@ -22,9 +22,11 @@ sends real Xvfb key events, exercises Look/inventory/movement, verifies the
 visible raster split, and enters rooms 02/03/04/05 before returning to rain.
 It checks environment pointers and SID state advancement, not audible output.
 
-It also runs an F1 save / F3 load round trip on a disposable D64. Disk
-index recovery, all story interactions, portrait loading and NTSC timing
-are not covered by that regression. The generic resource loader currently
-supports room scripts only; other kind constants are reserved. Portrait
-rendering APIs exist, but the cartridge portrait-content fetch is not wired up.
+It also runs an F1 save / F3 load round trip on a disposable D64, a typed-
+keyword conversation, and checks Sir Caldus's portrait byte-for-byte
+against its source asset. Disk index recovery, most story interactions and
+NTSC timing are not covered by that regression. The generic resource
+loader supports room scripts, conversations and portraits (`PLATFORM_
+RESOURCE_KIND_ROOM/_CONVERSATION/_PORTRAIT`, src/resources.c); the
+remaining kind constants are still reserved, unimplemented.
 Do not equate successful compilation with complete feature parity.

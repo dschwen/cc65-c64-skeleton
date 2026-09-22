@@ -77,10 +77,20 @@
 #define BANK_ENV_TAVERN_MUFFLED  22u /* rooms 03, 05 */
 #define BANK_ENV_CELLAR          23u /* room 04 */
 
-/* Portraits: 32 x 256-byte sprite images per bank, same packing as the
- * original (see EF_PORTRAITS_PER_BANK in the old src/platform.c). */
-#define BANK_PORTRAIT_FIRST     24u
-#define PORTRAITS_PER_BANK      32u
+/* Portraits (assets/portraits/<id>, 256 bytes each): one shared bank,
+ * array-indexed dispatch through the generic resource fetch
+ * (PLATFORM_RESOURCE_KIND_PORTRAIT, src/resources.c) - same "one bank per
+ * kind" scheme as BANK_SCRIPT_ROOM_FIRST/BANK_SCRIPT_CONVERSATION_FIRST
+ * below, generated the same way (tools/generate_script_bank.py). Up to 32
+ * portraits fit in one 16 KiB bank at 256 bytes each; a 33rd would need a
+ * second BANK_PORTRAIT_* constant and Makefile group, same as scaling any
+ * other kind past one bank. This used to be raw multi-bank offset math
+ * (platform_easyflash_copy_roml(BANK_PORTRAIT_FIRST + id/32, (id%32)*256,
+ * ...)), requiring embedded content to start at exactly a bank's $8000 -
+ * fragile, and never actually wired to any embedded content, so every
+ * portrait rendered as a blank/white sprite (no CHIP packet for that bank
+ * at all - confirmed empty in build/game.crt). */
+#define BANK_PORTRAIT_FIRST 24u
 
 /* Resource banks (scripts, conversations, room scripts) start here.
  * Compiled bytecode (tools/compile_script.py) for each PLATFORM_RESOURCE_

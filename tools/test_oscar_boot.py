@@ -195,6 +195,45 @@ def check(root, monitor, artifacts):
         assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0"
         print(f"PASS: room {room:02d} environment and frame progression", flush=True)
 
+        if room == 2:
+            # Sir Caldus's portrait (assets/portraits/00,
+            # PLATFORM_RESOURCE_KIND_PORTRAIT - src/resources.c): move the
+            # Look cursor to his tile (14,1) and check sprites 1-4 (the
+            # 256-byte, four-quadrant portrait, contiguous at $FC40 - see
+            # PLATFORM_API.md's Portraits section) against the source asset
+            # byte-for-byte. This bank had no embedded content at all before
+            # the fix (confirmed absent from build/game.crt), so every
+            # portrait rendered as a blank/white sprite regardless of which
+            # asset was requested. Done here, inside this room's own already-
+            # proven-working visit, rather than a fresh teleport afterward -
+            # a second scripted transition immediately following this loop's
+            # last one is not reliably picked up by game_process_pending_
+            # transition() in this harness, for reasons not pinned down.
+            press("l", 76)
+            for _ in range(6):
+                press("Right", 29)
+            for _ in range(8):
+                press("Up", 145)
+            press("Return", 13)
+            polls(20)
+            monitor.command(f'screenshot "{artifacts / "caldus-portrait.png"}" 2')
+            portrait_sprites = monitor.memory(0xfc40, 256, "ram")
+            assert portrait_sprites == (root / "assets/portraits/00").read_bytes(), \
+                "Caldus's portrait sprites do not match assets/portraits/00"
+            # LOOK_CALDUS (assets/scripts/02.script) blocks in wait_key with
+            # the portrait still shown; any fresh key releases it
+            # (portrait_hide, then back to the main loop) - but the same
+            # keypress can also be the one the *outer* game loop's own key
+            # dispatch sees next, re-entering Look mode (main.c dispatches
+            # 'l' to open Look mode whenever `command` is 0, and GETIN can
+            # still report one held key across more than one poll). Send a
+            # second 'l' - the established cancel toggle elsewhere in this
+            # file - so Look mode is not left open regardless.
+            press("l", 76)
+            press("l", 76)
+            polls(15)
+            print("PASS: Sir Caldus's portrait renders the authored asset", flush=True)
+
     # Pell's conversation (assets/scripts/conversations/05.script, reached
     # from room 05's TALK_PELL entry via `converse`): drives the typed-
     # keyword UI (a bare "> " prompt, no banner text - modules/script.c's

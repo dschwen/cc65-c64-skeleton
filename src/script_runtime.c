@@ -53,6 +53,12 @@ uint8_t script_entry_found;
  * which manages its own pacing. Read by script_banked_run() itself now
  * (see its comment), not from here. */
 uint8_t script_text_shown;
+/* Set by the CONVERSE opcode: run conversation `script_conversation_id`
+ * once the current script has finished (see modules/script.c's
+ * script_banked_run()). Deferred because a conversation shares the one
+ * script buffer with whatever started it. */
+uint8_t script_conversation_pending;
+uint8_t script_conversation_id;
 
 void script_banked_run(void);
 

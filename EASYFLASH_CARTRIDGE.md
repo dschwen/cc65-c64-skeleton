@@ -108,13 +108,19 @@ Portrait pause/resume uses the same environment enable/disable interface.
 ## Resources and verification
 
 Room scripts are compiled from `assets/scripts/NN.script`, combined by
-`tools/generate_script_bank.py`, and embedded into bank 32. Currently only
-`PLATFORM_RESOURCE_KIND_ROOM` is implemented by the generic fetch API.
-Charsets, tiles, object records and environments have their own direct paths;
-reserved resource-kind constants do not imply implemented loaders.
+`tools/generate_script_bank.py`, and embedded into bank 32.
+`assets/scripts/conversations/NN.script` is compiled and embedded the same
+way, into its own bank (`BANK_SCRIPT_CONVERSATION_FIRST`, src/banks.h - a
+separate bank because conversations have an independent 0-255 ID space from
+rooms). `PLATFORM_RESOURCE_KIND_ROOM` and `_CONVERSATION` are implemented by
+the generic fetch API (src/resources.c dispatches on kind). Charsets, tiles,
+object records and environments have their own direct paths; reserved
+resource-kind constants do not imply implemented loaders.
 
-Run `make test` for cold-boot RAM, real keyboard input, visible raster phases,
-rain, room environment entry pointers and advancing SID state. Artifacts
-include monitor logs/screenshots and a failure snapshot. Tests queue normal
-pending room transitions; they do not yet verify every walking route, disk
-save/load round trip, audible music quality or NTSC timing.
+Run `make test` for cold-boot RAM, real keyboard input, visible raster
+phases, rain, room environment entry pointers, advancing SID state, an F1
+save / F3 load round trip on a disposable D64, and a typed-keyword
+conversation (assets/scripts/conversations/05.script). Artifacts include
+monitor logs/screenshots and a failure snapshot. Tests queue normal pending
+room transitions; they do not yet verify every walking route, missing/
+corrupt-index disk recovery, audible music quality or NTSC timing.

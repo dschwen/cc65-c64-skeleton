@@ -835,12 +835,16 @@ uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
 uint16_t platform_resource_last_size(void);
 ```
 
-Only `PLATFORM_RESOURCE_KIND_ROOM` is currently implemented in `src/resources.c`.
-The Makefile compiles `assets/scripts/00.script` through `05.script` into
-bytecode; `tools/generate_script_bank.py` emits bank 32's arrays and dispatcher.
-The remaining kind constants reserve interfaces; they do not imply content
-is built or retrievable. Environments, charsets/tiles, rooms and object records
-use separate direct paths. There is no generic directory/checksum packer.
+`PLATFORM_RESOURCE_KIND_ROOM` and `PLATFORM_RESOURCE_KIND_CONVERSATION` are
+implemented in `src/resources.c`, which dispatches to a separate bank per
+kind (independent 0-255 ID spaces - src/banks.h's `BANK_SCRIPT_ROOM_FIRST`/
+`BANK_SCRIPT_CONVERSATION_FIRST`). The Makefile compiles `assets/scripts/
+00.script` through `05.script` into bank 32 and `assets/scripts/
+conversations/*.script` into its own bank; `tools/generate_script_bank.py`
+emits each bank's arrays and dispatcher. The remaining kind constants
+reserve interfaces; they do not imply content is built or retrievable.
+Environments, charsets/tiles, rooms and object records use separate direct
+paths. There is no generic directory/checksum packer.
 
 `platform_resource_fetch_range()` copies a window starting at `start` into
 resident destination storage and returns the bytes copied (zero if absent or

@@ -4,6 +4,7 @@
 #include "script_format.h"
 #include "script_abi.h"
 #include "banks.h"
+#include "memmap.h"
 
 /* Banked script/conversation/room interpreter service ("SC") - EasyFlash
  * bank BANK_SCRIPT (src/banks.h). All mutable state is explicitly resident
@@ -55,6 +56,7 @@
 #define OP_SET_BIT          0x0Bu
 #define OP_CLEAR_BIT        0x0Cu
 #define OP_LIGHTNING        0x0Du
+#define OP_CONVERSE         0x0Eu
 
 #define TRANSITION_MSG_NONE 0xFFFFu
 
@@ -71,6 +73,9 @@ extern uint8_t script_resource_id;
 extern uint8_t script_entry_key;
 extern uint8_t script_entry_found;
 extern uint8_t script_text_shown;
+extern uint8_t script_conversation_pending;
+extern uint8_t script_conversation_id;
+extern volatile uint8_t platform_frame_counter;
 
 void platform_text_output_native(const char* text);
 extern uint8_t platform_text_output_color;
@@ -258,13 +263,10 @@ static void say(uint16_t str_offset) {
     platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
     platform_text_output_color = 1u;
     platform_text_output_native((const char*)script_buf);
-    /* Tell run_banked_script() (src/script_runtime.c) there is text on
-     * screen worth pausing for before its cleanup wipes it - except for a
-     * conversation's own topic answers, which that function's comment
-     * explains are already paced by the conversation loop itself. */
-    if (script_resource_kind != PLATFORM_RESOURCE_KIND_CONVERSATION) {
-        script_text_shown = 1u;
-    }
+    /* Tell script_banked_run() there is text on screen worth pausing for
+     * before its cleanup wipes it. A conversation's topic loop clears the
+     * flag itself once it has waited for the player (see run_conversation). */
+    script_text_shown = 1u;
 }
 
 /* Runs [pos, end) - or until an END opcode, whichever comes first, so a
@@ -364,6 +366,12 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 platform_lightning();
                 pos += 1u;
                 break;
+            case OP_CONVERSE:
+                /* Deferred: see script_banked_run(). */
+                script_conversation_id = read_byte(pos + 1u);
+                script_conversation_pending = 1u;
+                pos += 2u;
+                break;
             default:
                 return; /* malformed bytecode - stop rather than run off */
         }
@@ -377,33 +385,84 @@ static uint8_t input_char_ok(uint8_t ch) {
     return 0u;
 }
 
-/* Reads up to KEYWORD_BYTES characters typed by the player: RETURN submits,
- * RUN/STOP cancels (leaving prefix[0] as 0). Matches
- * tools/compile_script.py's keyword encoding - uppercase, NUL-padded - so
- * no case conversion is needed for an unshifted C64 keyboard, which already
- * returns uppercase PETSCII for letter keys. */
-static void read_keyword(uint8_t* prefix) {
+/* Keyword entry line: just "> ", what has been typed so far, and a blinking
+ * $A0 block cursor - no "Ask about"/RUN-STOP banner (discovery-only UI, see
+ * GAME_DESIGNER_GUIDE.md). Written straight to screen RAM (KERNAL stays
+ * mapped in gameplay, so writes reach it), the same way
+ * platform_text_output_native() draws the two status rows - both of which
+ * this clears itself up front, since it no longer relies on that function
+ * to do it. */
+#define INPUT_ROW     (SCREEN_RAM + 24u * MAP_WIDTH_CHARS)
+#define INPUT_COLORS  (COLOR_RAM + 24u * MAP_WIDTH_CHARS)
+#define INPUT_COLUMN  2u
+#define INPUT_MAX     20u   /* letters shown; only KEYWORD_BYTES are matched */
+#define CODE_SPACE    0x20u
+#define CODE_PROMPT   0x3Eu /* '>' */
+#define CODE_CURSOR   0xA0u /* solid block in the text charset */
+
+static void input_put(uint8_t column, uint8_t code) {
+    INPUT_ROW[column] = code;
+    INPUT_COLORS[column] = 1u;
+}
+
+/* Reads a keyword from the player, echoing it: RETURN submits (ignored while
+ * nothing is typed), DEL erases the last letter, RUN/STOP cancels. Returns 1
+ * with the first KEYWORD_BYTES letters in `prefix` (uppercase, NUL-padded -
+ * exactly tools/compile_script.py's keyword encoding, so no case conversion
+ * is needed), or 0 to leave the conversation. The player may type a whole
+ * word; only its first four letters are matched. An unshifted C64 keyboard
+ * returns uppercase PETSCII for letter keys (65-90); shifted letters
+ * (193-218) are folded onto the same codes.
+ *
+ * The echoed bytes (key itself: space, digits, or 65-90) are stored
+ * straight into screen RAM, NOT through platform_text_screen_code() - that
+ * function expects the project's compile-time string-literal encoding
+ * (lowercase-in-source -> 65-90, uppercase-in-source -> 193-218, via
+ * platform.h's #pragma charmap), where 65-90 means "encoded lowercase". A
+ * raw keyboard byte is a different, incompatible domain: GETIN's uppercase
+ * 65-90 already *is* this charset's uppercase glyph code (confirmed against
+ * assets/charset.cchr), so converting it again renders the lowercase
+ * glyphs instead. modules/saveload_save.c's enter_name() has the same fix
+ * for the same reason. */
+static uint8_t read_keyword(uint8_t* prefix) {
     uint8_t length;
     uint8_t key;
     uint8_t i;
+    uint8_t cursor;
 
     for (i = 0u; i < KEYWORD_BYTES; ++i) prefix[i] = 0u;
     length = 0u;
+    platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
+    platform_text_clear_line(PLATFORM_TEXT_LINE_BOTTOM);
+    input_put(0u, CODE_PROMPT);
+    input_put(1u, CODE_SPACE);
     while (platform_input_poll() != 0u) platform_wait_frame();
     for (;;) {
         platform_wait_frame();
+        cursor = (platform_frame_counter & 0x10u) ? CODE_CURSOR : CODE_SPACE;
+        input_put(INPUT_COLUMN + length, cursor);
         key = platform_input_poll();
         if (key == 0u) continue;
-        if (key == KEY_RETURN) return;
-        if (key == KEY_RUN_STOP) { prefix[0] = 0u; return; }
-        if (key == KEY_DELETE && length > 0u) {
-            --length;
-            prefix[length] = 0u;
+        if (key >= 193u && key <= 218u) key -= 128u;
+        if (key == KEY_RUN_STOP) return 0u;
+        if (key == KEY_RETURN) {
+            if (length == 0u) continue;
+            input_put(INPUT_COLUMN + length, CODE_SPACE);
+            return 1u;
+        }
+        if (key == KEY_DELETE) {
+            if (length > 0u) {
+                input_put(INPUT_COLUMN + length, CODE_SPACE);
+                --length;
+                if (length < KEYWORD_BYTES) prefix[length] = 0u;
+            }
             continue;
         }
-        if (input_char_ok(key) && length < KEYWORD_BYTES) {
-            prefix[length++] = key;
-        }
+        if (!input_char_ok(key) || length >= INPUT_MAX) continue;
+        if (key == 32u && length == 0u) continue; /* no leading spaces */
+        if (length < KEYWORD_BYTES) prefix[length] = key;
+        input_put(INPUT_COLUMN + length, key);
+        ++length;
     }
 }
 
@@ -456,25 +515,33 @@ static uint16_t find_room_entry(uint8_t entry_count, uint8_t key) {
     return 0u;
 }
 
+/* One conversation: prompt, read a keyword, run the matching topic (or the
+ * "*" fallback), and let the player read the answer before the prompt comes
+ * back. No banner text and no RUN/STOP hint - just "> " and a blinking
+ * cursor (read_keyword()); RUN/STOP still leaves, discovered the same way
+ * as everything else here (see GAME_DESIGNER_GUIDE.md's discovery note).
+ * Leaves on RUN/STOP, or when a topic used CONVERSE to hand over to another
+ * conversation. */
 static void run_conversation(uint8_t topic_count) {
     uint8_t prefix[KEYWORD_BYTES];
     uint16_t entry;
 
     for (;;) {
-        platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
-        platform_text_output_color = 1u;
-        platform_text_output_native("Ask about (RUN/STOP to leave):");
-        read_keyword(prefix);
-        if (prefix[0] == 0u) return;
+        if (!read_keyword(prefix)) return;
         entry = find_topic(topic_count, prefix, 0u);
         if (entry == 0u) entry = find_topic(topic_count, prefix, 1u);
+        script_text_shown = 0u;
         if (entry != 0u) {
             exec_block(entry, script_len);
+            if (script_conversation_pending) return;
         } else {
             platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
             platform_text_output_color = 1u;
             platform_text_output_native("They don't know anything about that.");
+            script_text_shown = 1u;
         }
+        if (script_text_shown) wait_fresh_key();
+        script_text_shown = 0u;
     }
 }
 
@@ -522,6 +589,7 @@ __noinline void script_banked_run(void) {
 
     platform_look_cursor_hide();
     script_text_shown = 0u;
+    script_conversation_pending = 0u;
     was_suspended = !platform_raster_irq_active;
     /* If we got here with the raster IRQ still suspended, the caller is a
      * room's enter_room()/enter_tile() hook, itself called from inside
@@ -562,6 +630,21 @@ __noinline void script_banked_run(void) {
         platform_screen_unblank();
     }
     exec_resource();
+
+    /* CONVERSE queued a conversation: start it now that the script (and its
+     * buffer) is finished, after letting the player read whatever the script
+     * said - e.g. a greeting - since the conversation prompt clears the text
+     * rows. The portrait the script showed stays up during the conversation. */
+    while (script_conversation_pending) {
+        script_conversation_pending = 0u;
+        if (script_text_shown) {
+            wait_fresh_key();
+            script_text_shown = 0u;
+        }
+        script_resource_kind = PLATFORM_RESOURCE_KIND_CONVERSATION;
+        script_resource_id = script_conversation_id;
+        exec_resource();
+    }
 
     /* exec_resource() borrowed the room-staging scratch buffer (see
      * platform_room_scratch() in platform.h) - nothing else reads it

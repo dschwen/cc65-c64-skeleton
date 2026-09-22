@@ -112,6 +112,16 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          current lighting. Blocks for those two frames;
                          does not touch screen RAM or either offscreen
                          lighting buffer.
+    0x0E CONVERSE          id:1
+                         starts conversation `id` (the conversation ID space,
+                         assets/scripts/conversations/<id>.script) - but not
+                         immediately: the interpreter finishes the current
+                         script, waits for a keypress if it printed text (so
+                         a greeting can be read), then runs the conversation.
+                         It shares one script buffer with the caller, so it
+                         must not nest. Put it last. Inside a conversation
+                         topic it ends the current conversation and starts
+                         the named one.
 
 A block (the top level of a script, a conversation topic, or either branch
 of a CHECK_FLAG) always ends with END; there is no separate "return"
@@ -134,6 +144,15 @@ A string always starts in text mode and the mode ends with the string, so a
 trailing <text> is optional and tags never carry over between strings. Tags
 are not allowed in conversation topic keywords (those match typed input).
 
+Conversations: the player types a keyword at a bare "> " prompt (modules/
+script.c's read_keyword() - no banner text, no RUN/STOP hint, just the
+prompt and a blinking cursor); only the first four letters are matched
+(case-insensitive). Nothing lists the keywords - the player discovers them
+from what characters say, so answers should mention the words worth asking
+about. Every conversation must answer NAME and JOB (the classic Ultima
+convention); the compiler rejects one without them. A topic keyword of "*"
+is the fallback for anything else.
+
 DSL syntax:
 
     script intro {
@@ -152,11 +171,27 @@ DSL syntax:
     }
 
     conversation wizard {
-        topic "wiza" {
-            text "I am the wizard of this land."
+        topic "name" {
+            text "I am Wizard Ossric."
+        }
+        topic "job" {
+            text "I keep watch over this land, and its tower."
+        }
+        topic "tower" {
+            text "Few climb it and fewer return."
         }
         topic "*" {
             text "The wizard doesn't answer that."
+        }
+    }
+
+    // In a room script: greet, then hand over to the conversation (id 5),
+    // which starts once this script has finished.
+    room 07 {
+        entry 1 {
+            portrait_show 3 left
+            text "The wizard looks up from his book."
+            converse 5
         }
     }
 
@@ -236,6 +271,7 @@ OP_ROOM_TRANSITION_HERE = 0x0A
 OP_SET_BIT = 0x0B
 OP_CLEAR_BIT = 0x0C
 OP_LIGHTNING = 0x0D
+OP_CONVERSE = 0x0E
 
 CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
 
@@ -259,6 +295,8 @@ TOKEN_RE = re.compile(
     """,
     re.VERBOSE | re.DOTALL,
 )
+
+REQUIRED_TOPICS = ("NAME", "JOB")  # every conversation must answer these
 
 STRING_ESCAPES = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "<": "<"}
 
@@ -423,6 +461,11 @@ class GiveObjectStmt(Stmt):
     def __init__(self, object_type: int, quantity: int) -> None:
         self.object_type = object_type
         self.quantity = quantity
+
+
+class ConverseStmt(Stmt):
+    def __init__(self, conversation_id: int) -> None:
+        self.conversation_id = conversation_id
 
 
 class Topic:
@@ -656,6 +699,9 @@ class Parser:
             object_type = self.resolve_number()
             quantity = self.resolve_number()
             return GiveObjectStmt(object_type, quantity)
+        if tok.value == "converse":
+            self.advance()
+            return ConverseStmt(self.resolve_number())
         raise SystemExit(f"line {tok.line}: unknown statement {tok.value!r}")
 
     def parse_check_flag(self) -> CheckFlagStmt:
@@ -768,6 +814,8 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
         elif isinstance(stmt, GiveObjectStmt):
             buf += bytes([OP_GIVE_OBJECT, check_u8(stmt.object_type),
                           check_u8(stmt.quantity)])
+        elif isinstance(stmt, ConverseStmt):
+            buf += bytes([OP_CONVERSE, check_u8(stmt.conversation_id)])
         else:
             raise SystemExit(f"internal error: unhandled statement {stmt!r}")
     return buf, patches
@@ -814,6 +862,16 @@ def compile_decl(decl: ScriptDecl | ConversationDecl | RoomDecl) -> bytes:
                 "always shadow the other"
             )
         seen[prefix] = topic.keyword
+
+    # Convention (classic Ultima): every character answers NAME and JOB, so
+    # the player always has a way in and can discover further keywords from
+    # what is said. Enforced here so no conversation ships without them.
+    for required in REQUIRED_TOPICS:
+        if required.encode("ascii").ljust(4, b"\0") not in seen:
+            raise SystemExit(
+                f"conversation {decl.name!r} has no {required!r} topic - "
+                f"every conversation must answer {' and '.join(REQUIRED_TOPICS)}"
+            )
 
     header = bytes([FORMAT_VERSION, KIND_CONVERSATION, len(decl.topics)])
     topic_table_len = len(decl.topics) * 6

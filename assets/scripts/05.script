@@ -23,6 +23,10 @@
  * the seal before calling this entry; the entry itself hands over the
  * Brass Key - object type 10 - and sets PELL_HELPED).
  *
+ * TALK_PELL ends with `converse 5` (assets/scripts/conversations/05.script):
+ * after Pell's scripted line for the visit, the player can ask him about
+ * "name", "job", and whatever else his answers mention.
+ *
  * The torn invitation (object type 3, tile 5,7, the user's own addition -
  * currently takeable, same as any other pickup) is the first piece of
  * evidence; the blue-seal door is the second. Either can be examined in
@@ -84,8 +88,12 @@ room 05 {
         } else {
             text "\"Thanks again, for what it's worth,\" Pell says, patting his mailbag."
         }
-        wait_key
-        portrait_hide
+        /* No wait_key here: converse defers to script_banked_run()
+         * (modules/script.c), which already waits for a fresh key before
+         * handing over whenever this entry's own text left something on
+         * screen - an explicit wait_key here would demand a second,
+         * redundant keypress before the "Ask about" prompt appears. */
+        converse 5
     }
     entry STORY_ROOM05_PELL_EARLY_SEAL {
         portrait_show 4 left

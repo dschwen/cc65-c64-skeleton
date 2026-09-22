@@ -445,11 +445,24 @@ Standalone cutscenes and NPC conversations - not tied to a specific room -
 are also authored as scripts: a cutscene at
 `assets/scripts/cutscenes/<hex ID>.script` (played via `game_script_play()`)
 and a conversation at `assets/scripts/conversations/<hex ID>.script`
-(played via `game_conversation_play()`), each with its own independent
-0x00-0xFF ID space. A `conversation` declaration's topics are matched
-against the first four letters the player types, with a reserved `"*"`
-fallback topic for anything else. See `tools/compile_script.py`'s module
-docstring for the full DSL and bytecode format.
+(played via `game_conversation_play()`, or more commonly ended into with a
+room/topic script's own `converse <id>` statement - see
+`assets/scripts/05.script`'s TALK_PELL entry for a worked example), each
+with its own independent 0x00-0xFF ID space.
+
+A `conversation` declaration's topics are matched against the first four
+letters the player types, case-insensitive, at a bare "> " prompt with a
+blinking cursor - no keyword list, no "ask about" banner, no RUN/STOP hint
+on screen (RUN/STOP still leaves). This is deliberate: the player discovers
+keywords from what characters say, the classic adventure-game convention -
+so write every answer to name at least one more word worth asking about,
+and write every character's fallback ("*" topic) to nudge toward someone or
+something the player can ask about instead. Every conversation must answer
+**NAME** and **JOB** (the classic Ultima convention - always a way in); the
+compiler rejects a conversation missing either. See
+`assets/scripts/conversations/05.script` (Pell's conversation) for a worked
+example, and `tools/compile_script.py`'s module docstring for the full DSL
+and bytecode format.
 
 Object names have a separate 14-character limit. Use plain ASCII while
 authoring; the build converts text for the C64. The visible glyphs ultimately

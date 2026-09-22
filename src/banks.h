@@ -96,4 +96,13 @@
 #define BANK_RESOURCE_FIRST 32u
 #define BANK_SCRIPT_ROOM_FIRST BANK_RESOURCE_FIRST
 
+/* Conversations (assets/scripts/conversations/<id>.script) get their own
+ * shared bank, one far_call_bank() call site of their own in
+ * src/resources.c - a separate bank, not sharing BANK_SCRIPT_ROOM_FIRST,
+ * because conversations have their own independent 0-255 ID space (see
+ * tools/compile_script.py's module docstring); reusing the room bank's ID
+ * switch would silently collide a conversation and a room that happen to
+ * share a numeric ID. */
+#define BANK_SCRIPT_CONVERSATION_FIRST 33u
+
 #endif

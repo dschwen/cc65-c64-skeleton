@@ -195,6 +195,80 @@ def check(root, monitor, artifacts):
         assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0"
         print(f"PASS: room {room:02d} environment and frame progression", flush=True)
 
+    # Pell's conversation (assets/scripts/conversations/05.script, reached
+    # from room 05's TALK_PELL entry via `converse`): drives the typed-
+    # keyword UI (a bare "> " prompt, no banner text - modules/script.c's
+    # read_keyword()) end to end through the same platform_input_poll()
+    # breakpoint used for every other key in this test - it works unchanged
+    # here because the conversation's own busy-wait loops (modules/script.c)
+    # call that same resident function, banked or not.
+    monitor.command("delete")
+    monitor.command(f"break exec {poll_return:04x}")
+    pending = labels["game_state"] + 16
+    # Room 5, half-tile (8,16) = tile (4,8): one tile south of Pell (4,7),
+    # so the Use cursor (born on the player's own tile) reaches him with a
+    # single Up press.
+    monitor.command(f"> {pending:04x} 01 05 08 10")
+    polls(5)
+    assert monitor.memory(labels["platform_current_room"], 1) == bytes([5])
+    met_pell = labels["game_state"] + 84 + 10  # flags[10] = STORY_STATE_ROOM_05_MET_PELL
+    assert monitor.memory(met_pell, 1) == b"\0", "MET_PELL already set before talking to Pell"
+
+    def input_row(count):
+        return monitor.memory(0xf800 + 24 * 40, count, "ram")
+
+    def advance_to_prompt(max_presses):
+        # Any text long enough to word-wrap past two lines needs its own
+        # internal pager wait (next_text_line() in src/text.c) on top of the
+        # script's own explicit wait_key opcodes and the deferred wait
+        # CONVERSE adds (script_banked_run() in modules/script.c) - so the
+        # number of keypresses needed isn't fixed. Overshooting is harmless:
+        # once the "> " prompt is up, read_keyword() discards a space typed
+        # at an empty prompt rather than echoing it.
+        for _ in range(max_presses):
+            press("space", 32)
+            if input_row(2) == bytes([0x3E, 0x20]):
+                return
+        raise AssertionError("conversation prompt never appeared")
+
+    press("u", 85)
+    press("Up", 145)
+    press("Return", 13)
+    advance_to_prompt(10)
+    # By the time the prompt is up, TALK_PELL's set_flag has certainly run:
+    # it precedes CONVERSE unconditionally in bytecode order.
+    assert monitor.memory(met_pell, 1) == b"\1", "MET_PELL not set by the greeting"
+    monitor.command(f'screenshot "{artifacts / "conversation-prompt.png"}" 2')
+
+    for letter, code in (("n", 78), ("a", 65), ("m", 77), ("e", 69)):
+        press(letter, code)
+    # Echoed input is poked straight to screen RAM (raw PETSCII, 65-90 is
+    # already this charset's uppercase glyph code) - see read_keyword()'s
+    # comment on why platform_text_screen_code() would be the wrong call here.
+    assert input_row(6) == bytes([0x3E, 0x20, 78, 65, 77, 69]), \
+        "typed keyword not echoed on the input row"
+    press("Return", 13)
+    advance_to_prompt(5)  # read the NAME answer, back to the prompt
+    monitor.command(f'screenshot "{artifacts / "conversation-name.png"}" 2')
+
+    for letter, code in (("z", 90), ("z", 90), ("z", 90), ("z", 90)):
+        press(letter, code)
+    press("Return", 13)  # no topic starts with ZZZZ -> the "*" fallback
+    advance_to_prompt(5)
+
+    press("Escape", 3)  # RUN/STOP leaves the conversation
+    polls(10)
+    assert monitor.memory(labels["platform_cart_bank"], 1) == b"\0", \
+        "bank not restored after the conversation"
+    player = int.from_bytes(monitor.memory(labels["platform_player"], 2), "little")
+    before = monitor.memory(player, 3)
+    press("Down", 17)
+    after = monitor.memory(player, 3)
+    assert after != before, "player cannot move after leaving the conversation"
+    monitor.command(f'screenshot "{artifacts / "conversation-done.png"}" 2')
+    print("PASS: Xvfb conversation (Ask about, typed keyword, NAME/JOB, "
+          "unmatched fallback, RUN/STOP)", flush=True)
+
     # Save/load round trip on the disposable D64 attached as device 8. Disk
     # I/O suspends the raster IRQ, so no input polls (the monitor's sync
     # points) happen for as long as the emulated 1541 takes - allow for it.
@@ -219,6 +293,11 @@ def check(root, monitor, artifacts):
     monitor.command(f'screenshot "{artifacts / "save-name.png"}" 2')
     press("a", 65)
     press("b", 66)
+    # NAME_SCREEN (modules/saveload_save.c), row 10 col 15: echoed raw, not
+    # through platform_text_screen_code() (see AGENTS.md's char-literal note)
+    # - 65,66 is 'A','B' as this charset's own uppercase glyph codes.
+    assert monitor.memory(0xf99f, 2, "ram") == bytes([65, 66]), \
+        "typed save name not echoed as uppercase"
     press("Return", 13)
     monitor.command(f'screenshot "{artifacts / "save-done.png"}" 2')
     # "Saved." at column 2, row 10 of the screen (vs. "Save failed.").

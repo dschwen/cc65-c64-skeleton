@@ -68,8 +68,19 @@ OBJECTS_COLD := $(OUTDIR)/assets/objects-cold.bin
 # comment for why one shared bank beats one bank per resource).
 SCRIPT_BINS      := $(addprefix $(OUTDIR)/scripts/,$(addsuffix .bin,$(ROOM_IDS)))
 SCRIPT_BANK_SRC  := $(OUTDIR)/scripts/script_room_bank.c
-SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC)
 SCRIPT_BANK_FIRST := 32
+
+# Conversations (src/banks.h's BANK_SCRIPT_CONVERSATION_FIRST): one .script
+# per conversation ID under assets/scripts/conversations/, bundled into
+# their own shared bank the same way room scripts are - see that constant's
+# comment for why conversations don't share the room scripts' bank.
+CONVERSATION_SOURCES := $(wildcard assets/scripts/conversations/*.script)
+CONVERSATION_IDS     := $(basename $(notdir $(CONVERSATION_SOURCES)))
+CONVERSATION_BINS    := $(addprefix $(OUTDIR)/scripts/conversations/,$(addsuffix .bin,$(CONVERSATION_IDS)))
+CONVERSATION_BANK_SRC := $(OUTDIR)/scripts/script_conversation_bank.c
+CONVERSATION_BANK_FIRST := 33
+
+SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC) $(if $(CONVERSATION_IDS),$(CONVERSATION_BANK_SRC))
 
 OUT_CRT := $(OUTDIR)/game.crt
 
@@ -81,11 +92,11 @@ OUT_CRT := $(OUTDIR)/game.crt
 # file that no longer exists (confirmed live: a subsequent build then finds
 # the .c "up to date" - it exists and is newer than nothing - and only
 # oscar64's own #embed fails, confusingly far from the real cause).
-.PRECIOUS: $(OUTDIR)/scripts/%.bin $(OUTDIR)/assets/%
+.PRECIOUS: $(OUTDIR)/scripts/%.bin $(OUTDIR)/scripts/conversations/%.bin $(OUTDIR)/assets/%
 
 all cartridge: $(OUT_CRT)
 
-$(OUTDIR)/assets $(OUTDIR)/rooms $(OUTDIR)/scripts:
+$(OUTDIR)/assets $(OUTDIR)/rooms $(OUTDIR)/scripts $(OUTDIR)/scripts/conversations:
 	mkdir -p $@
 
 # Room data: PETSCII-convert the editor-authored room file (assets/NN) into
@@ -120,6 +131,17 @@ $(SCRIPT_BANK_SRC): $(SCRIPT_BINS) tools/generate_script_bank.py | $(OUTDIR)/scr
 		$(foreach id,$(ROOM_IDS),--input $(id)=$(OUTDIR)/scripts/$(id).bin) \
 		--output $@ --bank-symbol script_room --fetch-fn script_room_bank_fetch \
 		--bank $(SCRIPT_BANK_FIRST)
+
+# Conversation bytecode: same shape as the room-script rules above, one
+# level deeper (assets/scripts/conversations/NN.script) and its own bank.
+$(OUTDIR)/scripts/conversations/%.bin: assets/scripts/conversations/%.script tools/compile_script.py src/story.h | $(OUTDIR)/scripts/conversations
+	python3 tools/compile_script.py --input $< --single-output $@ --expect-kind conversation --flags src/story.h
+
+$(CONVERSATION_BANK_SRC): $(CONVERSATION_BINS) tools/generate_script_bank.py | $(OUTDIR)/scripts
+	python3 tools/generate_script_bank.py \
+		$(foreach id,$(CONVERSATION_IDS),--input $(id)=$(OUTDIR)/scripts/conversations/$(id).bin) \
+		--output $@ --bank-symbol script_conversation --fetch-fn script_conversation_bank_fetch \
+		--bank $(CONVERSATION_BANK_FIRST)
 
 HEADERS := $(wildcard src/*.h modules/*.h rooms/*.h rooms/env/*.h)
 

@@ -1,0 +1,40 @@
+/* Pell Thimble's "Ask about" conversation - reached from
+ * STORY_ROOM05_TALK_PELL (assets/scripts/05.script) once he and the player
+ * have met, via `converse`. See PELL_THIMBLE_PUZZLE.md's "Initial dialogue"
+ * section for the source material.
+ *
+ * Conversation ID 5 has no required relationship to room 05 - conversation
+ * IDs are their own independent space (tools/compile_script.py's module
+ * docstring) - the matching number is only a readability convention here.
+ *
+ * No keyword list is shown anywhere (by design - see GAME_DESIGNER_GUIDE.md
+ * on discovery): every answer below is written to name at least one more
+ * word worth asking about, so a player who only ever thinks to ask "name"
+ * and "job" can still work outward to "inn", "corridor", "invitation",
+ * "seal" and "vey" from what Pell says. */
+conversation pell {
+    topic "name" {
+        text "\"Thimble. Pell Thimble. Courier, ordinarily.\""
+    }
+    topic "job" {
+        text "\"I carry letters and packages between the coastal towns - when the weather permits, which lately it does not.\""
+    }
+    topic "inn" {
+        text "\"Vey says none of us leave until the matter of the guests is settled. I'd be happier if I understood what that meant.\""
+    }
+    topic "corridor" {
+        text "\"My invitation was damaged in the storm. Without it, Vey claims he cannot prove which room was mine.\""
+    }
+    topic "invitation" {
+        text "\"Half the writing is gone. And the seal came off somewhere outside.\""
+    }
+    topic "seal" {
+        text "\"Blue wax, I think. Small enough to lose in a storm, and I've had no luck finding it.\""
+    }
+    topic "vey" {
+        text "\"He keeps the peace here, such as it is. I'd rather he kept the door unlocked.\""
+    }
+    topic "*" {
+        text "\"I couldn't tell you. Ask Vey, perhaps - he seems to have opinions about everything.\""
+    }
+}

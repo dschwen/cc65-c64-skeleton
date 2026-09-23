@@ -71,7 +71,6 @@ static void sprite_setup(void) {
 
 static void sound_init(void) {
     uint8_t i;
-    uint16_t delay;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
 
@@ -79,8 +78,27 @@ static void sound_init(void) {
      * melody leaves this voice) does not restart from a gate low/high
      * pair too close together - hold the gate low across a couple of
      * frames first. See rooms/env/00.s's original comment for the
-     * real-hardware measurement that found this. */
-    for (delay = 0u; delay < 0x2000u; ++delay) {
+     * real-hardware measurement that found this.
+     *
+     * Raw asm, not a plain C loop: a `for (delay = 0u; delay < 0x2000u;
+     * ++delay) { }` here - even with `delay` declared `volatile` - does
+     * not survive Oscar64 -Os. With nothing else observing `delay`, it is
+     * dead code and gets silently removed (confirmed live: no delay at
+     * all between the clrsid loop and the first voice register write),
+     * defeating this whole workaround. See rooms/env/tavern.c's
+     * env_tavern_init() for the fuller writeup - found and fixed there
+     * first, then found to already be broken here too. 0x20 * 0x100 =
+     * 0x2000 iterations, translated directly from this file's own
+     * original rooms/env/00.s gatelow/gatelow_inner loop. */
+    __asm {
+        ldx #$20
+    gatelow:
+        ldy #$00
+    gatelow_inner:
+        dey
+        bne gatelow_inner
+        dex
+        bne gatelow
     }
 
     V3_CTRL = 0x80u;

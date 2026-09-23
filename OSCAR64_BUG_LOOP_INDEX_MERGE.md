@@ -1,7 +1,14 @@
-# Oscar64 bug: two per-iteration array writes merge into one induction variable
+# Oscar64 bugs: two -Os loop-codegen defects found 2026-09-22
 
-Found 2026-09-22 investigating a report that the Look/Take cursor sprite's
-square outline had pixels missing down its left edge.
+Two distinct `-Os` loop-codegen defects, found the same day investigating
+two separate bug reports. Kept in one file since both are "a loop compiles
+to something other than what the source says" and both surfaced from the
+same kind of investigation (disassemble, then confirm live in VICE memory).
+
+## Bug 1: two per-iteration array writes merge into one induction variable
+
+Investigating a report that the Look/Take cursor sprite's square outline
+had pixels missing down its left edge.
 
 **Status:** worked around in this repo; **not reported upstream**, and
 **not reduced to a standalone repro** - three attempts at increasingly
@@ -12,7 +19,7 @@ Compiler checkout: `~/Programs/oscar64` HEAD `f38a1f2` (2026-09-06),
 matching [OSCAR64_BUG_POINTER_LOOP_ADVANCE.md](OSCAR64_BUG_POINTER_LOOP_ADVANCE.md).
 I did not verify the installed binary was built from exactly that commit.
 
-## Symptom
+### Symptom
 
 `platform_look_cursor_show()` (`src/platform.c`) builds the Look/Take/Use
 cursor's 24x21 sprite bitmap: a solid top/bottom bar (written directly,
@@ -44,7 +51,7 @@ On screen this is a square with a solid top, bottom and right edge, but
 the left edge present only at its very top pixel - "an outline with pixels
 missing on the left side," exactly as reported.
 
-## Root cause, from the disassembly
+### Root cause, from the disassembly
 
 ```
 .l11:
@@ -74,7 +81,7 @@ the *same* byte every iteration, and the right-edge write (which runs
 second) always wins. The true left-edge indices (6, 9, 12, ..., 48) are
 never written at all.
 
-## Repro attempts (none reproduced it)
+### Repro attempts (none reproduced it)
 
 Each of these compiled and ran correctly at `-O0` through `-O3`:
 
@@ -93,7 +100,7 @@ else entirely) in a way none of these approximations captured. Do not take
 codebase - see the workaround below to sidestep this class of bug rather
 than fight it.
 
-## Workaround
+### Workaround
 
 Two things were tried and rejected before finding one that works. All
 three are recorded here since the failures are informative:
@@ -129,7 +136,7 @@ loop-carried induction variables in general - but given the repro attempts
 above all failed to isolate even that narrower claim, treat it as an
 observation from one workaround succeeding, not a proven rule.
 
-## Guidance
+### Guidance
 
 - A loop that writes to more than one array (or more than one place in the
   same array) per iteration, where more than one of those index
@@ -145,6 +152,33 @@ observation from one workaround succeeding, not a proven rule.
   enter Look mode but never inspected the cursor sprite's actual bitmap
   bytes, only that Look mode toggled on/off correctly. A pixel-level check
   was added alongside this fix.
+
+## Bug 2: a plain delay loop with no other effect is dead code
+
+Found 2026-09-22, same session, fixing a report that one voice of the
+tavern's music sometimes went missing entering it from the kitchen. A
+real-hardware-measured SID gate-retrigger workaround (`rooms/env/00.s`'s
+original comment) - hold a voice's gate low for a couple of frames before
+re-gating it, via `for (delay = 0u; delay < 0x2000u; ++delay) { }` - was
+present in `rooms/env/rain.c` and `rooms/env/tavern_muffled.c`, but
+**confirmed live to have been silently eliminated entirely** by `-Os`:
+disassembly showed the SID-zeroing loop immediately followed by the first
+voice's register writes, no delay at all, in both files. Declaring the
+loop counter `volatile` did **not** prevent this (confirmed live in an
+isolated test): with nothing else observing the counter, Oscar64 still
+removed the whole loop.
+
+This is a different mechanism from the induction-variable merge documented
+above (that one still executes something, just the wrong thing; this one
+executes nothing), but the same underlying lesson: `-Os` here does not
+reliably preserve loop semantics that have no side effect the compiler's
+whole-program analysis can see, `volatile` locals included. Fixed with
+`__asm { ldx #$20 \ gatelow: ldy #$00 \ gatelow_inner: dey \ bne
+gatelow_inner \ dex \ bne gatelow }` (0x20 * 0x100 = 0x2000 iterations,
+translated directly from the original assembly's own loop), which
+disassembly confirms survives intact. Applied to `rooms/env/tavern.c` too,
+which never had the delay at all (present in neither the oscar64 C nor the
+original `rooms/env/02.s`) - the actual cause of the reported bug.
 
 ## Before reporting upstream
 

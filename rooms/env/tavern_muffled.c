@@ -49,13 +49,30 @@ static const uint8_t bass_hi[4] = {0x09,0x08,0x09,0x07};
 
 __noinline void env_tavern_muffled_init(void) {
     uint8_t i;
-    uint16_t delay;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
 
     /* Hold gates low for a couple of frames before re-gating - see
-     * rooms/env/rain.c's env_tavern_muffled_init comment for why. */
-    for (delay = 0u; delay < 0x2000u; ++delay) {
+     * rooms/env/rain.c's sound_init() for why (a SID voice left gated on
+     * and held at sustain, as this room's own V1/V2 do and as room 02's
+     * tavern melody also does, does not restart from a gate low/high pair
+     * too close together).
+     *
+     * Raw asm, not a plain C loop: see rooms/env/tavern.c's
+     * env_tavern_init() for why a `for` loop here - even over a `volatile`
+     * counter - does not survive Oscar64 -Os and was confirmed live to
+     * have silently lost this delay entirely. 0x20 * 0x100 = 0x2000
+     * iterations, translated directly from rooms/env/03.s's own
+     * gatelow/gatelow_inner loop. */
+    __asm {
+        ldx #$20
+    gatelow:
+        ldy #$00
+    gatelow_inner:
+        dey
+        bne gatelow_inner
+        dex
+        bne gatelow
     }
 
     V1_AD = 0x18u; V1_SR = 0xf0u;

@@ -249,6 +249,54 @@ def check(root, monitor, artifacts):
             polls(15)
             print("PASS: Sir Caldus's portrait renders the authored asset", flush=True)
 
+    # Kitchen (03) back to the tavern (02) - the reported direction; the
+    # loop above only ever goes tavern-to-kitchen. A SID voice left gated
+    # on and held at sustain does not restart from a too-close gate-low/
+    # gate-high pair (real-hardware-measured; see rooms/env/00.s and
+    # rooms/env/tavern.c's env_tavern_init()) - env_tavern_init() holds the
+    # gate low for a couple of frames first to avoid it, but a plain C
+    # delay loop for that (even over a `volatile` counter) does not survive
+    # Oscar64 -Os, silently losing the delay entirely; fixed with inline
+    # asm (confirmed present in build/game.asm; see OSCAR64_BUG_LOOP_INDEX_
+    # MERGE.md's sibling finding for the general "-Os can eliminate this"
+    # caution).
+    #
+    # This only checks that env_tavern_init() completes and every voice's
+    # gate bit ends up set - it does NOT confirm the envelope genuinely
+    # retriggers audibly. ENV3 ($D41C) would be the one voice SID hardware
+    # exposes for that, but this suite's shared VICE process is not run
+    # with an explicit `-sounddev wav`/real SID engine, and per
+    # [[project-vice-audio-capture]] (this project's own prior finding)
+    # OSC3/ENV3 reads come back frozen and meaningless without that - tried
+    # here, reads 0 even on a first, definitely-working room 02 entry with
+    # no prior gate-retrigger hazard at all, confirming the reading itself
+    # is untrustworthy in this harness rather than evidence against the fix.
+    # A real audio capture (per that memory's recipe) would be the rigorous
+    # check; not done here.
+    monitor.command("delete")
+    monitor.command(f"break exec {poll_return:04x}")
+    pending = labels["game_state"] + 16
+    monitor.command(f"> {pending:04x} 01 03 0c 12")
+    polls(5)
+    assert monitor.memory(labels["platform_current_room"], 1) == bytes([3])
+    polls(150)  # let room 03's V1/V2 reach sustain
+    monitor.command(f"> {pending:04x} 01 02 11 13")
+    polls(5)
+    assert monitor.memory(labels["platform_current_room"], 1) == bytes([2])
+    polls(20)
+    result = monitor.command("io d400")
+    sid = bytearray()
+    for line in result.splitlines():
+        match = re.search(r">C:d4[01]0  (.*)", line)
+        if match:
+            sid.extend(int(x, 16) for x in re.findall(
+                r"\b[0-9a-fA-F]{2}\b", match[1][:51]))
+    assert len(sid) == 32, "could not inspect SID registers"
+    assert sid[0x12] & 1 and sid[0x0b] & 1 and sid[0x04] & 1, \
+        "kitchen->tavern: not all three voices show their gate bit set"
+    monitor.command(f'screenshot "{artifacts / "kitchen-to-tavern.png"}" 2')
+    print("PASS: kitchen-to-tavern SID gate-retrigger delay", flush=True)
+
     # Pell's conversation (assets/scripts/conversations/05.script, reached
     # from room 05's TALK_PELL entry via `converse`): drives the typed-
     # keyword UI (a bare "> " prompt, no banner text - modules/script.c's

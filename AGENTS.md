@@ -60,6 +60,23 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
   destination sequence, not two writes sharing a loop counter. No isolated
   repro found despite three attempts - confirmed only by disassembly plus a
   live VICE memory read. Details: OSCAR64_BUG_LOOP_INDEX_MERGE.md.
+- A pure timing delay loop (`for (i = 0u; i < N; ++i) { }`, with no other
+  effect) is dead code and gets removed entirely at `-Os` - confirmed live,
+  even with the loop counter declared `volatile`. This silently defeated
+  the real-hardware-measured SID gate-retrigger delay (rooms/env/rain.c,
+  tavern.c, tavern_muffled.c - see rooms/env/00.s's original comment) in
+  all three environments that had it. Use `__asm { ... }` for a delay that
+  must actually happen, not a C loop.
+- VICE audio/SID register introspection needs an explicit real backend
+  (`-sounddev wav -sidengine 1 -sidmodel 0`, etc.) to mean anything -
+  without it OSC3 ($D41B)/ENV3 ($D41C) reads come back frozen, and
+  `-sounddev dump` is a human-readable register trace, not PCM. This
+  suite's shared VICE process (tools/test_oscar_boot.py) has neither, so
+  don't add an OSC3/ENV3 assertion there expecting it to mean anything -
+  confirmed live: it read 0 even on a fresh, definitely-working room entry.
+  A genuine audio-fidelity check needs its own `-sounddev wav` VICE launch
+  and a WAV-domain check (e.g. zero-crossing rate, not just amplitude -
+  a dead voice still carries a DC level).
 - `platform_text_screen_code()` (src/platform.c) only makes sense applied to
   a compile-time string-literal byte - `platform.h`'s `#pragma charmap`
   pre-encodes those (lowercase-in-source -> 65-90, uppercase-in-source ->

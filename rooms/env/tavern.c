@@ -64,6 +64,42 @@ __noinline void env_tavern_init(void) {
     uint8_t i;
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
 
+    /* A SID voice left gated on and held at sustain (as this room's own
+     * V1/V2 do, and as rooms 03/05's muffled melody - reached from here,
+     * and reachable back here - also does for its V1/V2) does not restart
+     * from a gate low/high pair too close together: the clrsid loop above
+     * and each voice's CTRL write below are otherwise only ~100 cycles
+     * apart, not enough - the envelope stays at zero and that voice is
+     * silent until the next room switch re-gates it. Hold the gate low
+     * across a couple of frames first. Real-hardware-measured; see
+     * rooms/env/00.s's original comment for the isolated-audio-capture
+     * finding. This environment never had the delay at all (structural
+     * translation of rooms/env/02.s, which didn't either) - the
+     * intermittent "one voice disappears" moving from the kitchen back to
+     * the tavern is this bug, not a port regression.
+     *
+     * Plain C (`for (delay = 0u; delay < 0x2000u; ++delay) { }`, even with
+     * `delay` declared `volatile`) does not survive Oscar64 -Os here: with
+     * nothing else observing `delay`, the whole loop is dead code and gets
+     * removed - confirmed live (disassembly showed the clrsid loop
+     * immediately followed by the first voice's register writes, no delay
+     * at all) despite `volatile` normally being exactly the tool for this.
+     * rooms/env/rain.c and rooms/env/tavern_muffled.c had the same plain-C
+     * loop and were *also* silently losing it - fixed alongside this one.
+     * Raw asm, unrelated to any C-level dead-code analysis, is what
+     * actually survives: 0x20 * 0x100 = 0x2000 iterations, translated
+     * directly from rooms/env/00.s's own gatelow/gatelow_inner loop. */
+    __asm {
+        ldx #$20
+    gatelow:
+        ldy #$00
+    gatelow_inner:
+        dey
+        bne gatelow_inner
+        dex
+        bne gatelow
+    }
+
     V1_AD = 0x18u; V1_SR = 0xf0u;
     V1_FREQ_LO = melody_lo[0]; V1_FREQ_HI = melody_hi[0];
     V1_CTRL = 0x11u; /* triangle + gate */

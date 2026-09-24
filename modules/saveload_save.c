@@ -112,8 +112,12 @@ static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     }
 }
 
+/* ch is already folded (see enter_name()): 65-90 for an unshifted letter
+ * key, 1-26 (this charset's lowercase glyph codes, confirmed against
+ * assets/charset.cchr - see AGENTS.md's charmap note) for a shifted one. */
 static uint8_t name_is_printable(uint8_t ch) {
-    return ch == 32u || (ch >= 48u && ch <= 57u) || (ch >= 65u && ch <= 90u);
+    return ch == 32u || (ch >= 48u && ch <= 57u) || (ch >= 65u && ch <= 90u) ||
+           (ch >= 1u && ch <= 26u);
 }
 
 static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
@@ -326,6 +330,18 @@ static uint8_t enter_name(uint8_t* name) {
             }
             continue;
         }
+        /* Checked (and excluded) above against the raw key, not here: a
+         * shifted letter is PETSCII 193-218, and folding straight to this
+         * charset's lowercase glyph codes 1-26 (confirmed against
+         * assets/charset.cchr) would otherwise collide with PLATFORM_KEY_
+         * ENTER (13, from shifted M/205), RUN/STOP (3, shifted C/195) and
+         * DEL (20, shifted T/212) - those must be recognized from the raw
+         * value first, or e.g. Shift+M would be read as RETURN instead of
+         * typed as 'm'. modules/script.c's read_keyword() folds this same
+         * range down to unshifted 65-90 instead (right for keyword
+         * matching - see that function's own comment) and has no such
+         * collision, since 65-90 doesn't overlap those control codes. */
+        if (key >= 193u && key <= 218u) key = (uint8_t)(key - 192u);
         if (name_is_printable(key) && length < SAVE_NAME_BYTES) {
             name[length] = key;
             NAME_SCREEN[length] = key; /* raw: see put_char_raw() */

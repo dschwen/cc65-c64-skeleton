@@ -128,6 +128,30 @@ def check(root, monitor, artifacts):
             screen.sync()
         polls(5)
 
+    def press_shifted(key, expected):
+        # A real Shift_L press+hold, not a "shift" keysym like "Up" whose
+        # own vkm entry auto-applies shift - letter keysyms in VICE's
+        # symbolic keymap pass through whatever shift state the host event
+        # itself carries (flag 8, "can be shifted or not").
+        shift = screen.keysym_to_keycode(XK.string_to_keysym("Shift_L"))
+        code = screen.keysym_to_keycode(XK.string_to_keysym(key))
+        xtest.fake_input(screen, X.KeyPress, shift)
+        screen.sync()
+        xtest.fake_input(screen, X.KeyPress, code)
+        screen.sync()
+        try:
+            for _ in range(40):
+                if polls(1)[0] == expected:
+                    break
+            else:
+                raise AssertionError(f"shift+{key} did not produce PETSCII ${expected:02x}")
+        finally:
+            xtest.fake_input(screen, X.KeyRelease, code)
+            screen.sync()
+            xtest.fake_input(screen, X.KeyRelease, shift)
+            screen.sync()
+        polls(5)
+
     first_frame = monitor.memory(labels["platform_frame_counter"], 1)[0]
     press("l", 76)
     assert monitor.memory(labels["command"], 1) == b"L", "Look mode not entered"
@@ -393,13 +417,23 @@ def check(root, monitor, artifacts):
     press("Return", 13)
     assert monitor.memory(labels["saveload_selected_slot"], 1) == b"\1", "slot 1 not selected"
     monitor.command(f'screenshot "{artifacts / "save-name.png"}" 2')
+    # Mixed-case name: shifted m/c/t (petscii 205/195/212, folding to 13/3/20
+    # - the exact byte values of RETURN/RUN-STOP/DEL) exercise
+    # modules/saveload_save.c's enter_name() checking those control keys
+    # against the raw, unfolded key first. If that ordering regressed,
+    # shift+m would end name entry outright (mistaken for RETURN) instead
+    # of typing 'm', and the assertion below would see a short/wrong name.
+    press_shifted("m", 205)
+    press_shifted("c", 195)
+    press_shifted("t", 212)
     press("a", 65)
     press("b", 66)
     # NAME_SCREEN (modules/saveload_save.c), row 10 col 15: echoed raw, not
     # through platform_text_screen_code() (see AGENTS.md's char-literal note)
-    # - 65,66 is 'A','B' as this charset's own uppercase glyph codes.
-    assert monitor.memory(0xf99f, 2, "ram") == bytes([65, 66]), \
-        "typed save name not echoed as uppercase"
+    # - 13,3,20 are this charset's lowercase m/c/t glyph codes ($01-$1A),
+    # 65,66 are 'A'/'B' as its uppercase glyph codes (identity).
+    assert monitor.memory(0xf99f, 5, "ram") == bytes([13, 3, 20, 65, 66]), \
+        "mixed-case save name not echoed correctly"
     press("Return", 13)
     monitor.command(f'screenshot "{artifacts / "save-done.png"}" 2')
     # "Saved." at column 2, row 10 of the screen (vs. "Save failed.").
@@ -445,7 +479,9 @@ def check_save_disk(disk, c1541, artifacts):
     # v1 layout: 130-byte prefix + five bytes per room delta.
     assert length >= 130 and (length - 130) % 5 == 0, f"bad payload length {length}"
     assert sum(data[16:]) & 0xffff == checksum, "save checksum mismatch"
-    assert data[16:18] == b"AB", "save name not stored"
+    # "mctAB" as typed: lowercase m/c/t (screen codes 13/3/20), then
+    # uppercase A/B (65/66) - see the mixed-case name entry check above.
+    assert data[16:21] == bytes([13, 3, 20, 65, 66]), "save name not stored"
     print("PASS: save disk holds valid S1 record and SINDEX", flush=True)
 
 

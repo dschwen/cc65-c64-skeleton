@@ -82,7 +82,7 @@ Payload prefix, 130 bytes:
 
 | Bytes | Meaning |
 |---:|---|
-| 16 | slot name: up to 16 printable characters (space, `0`-`9`, `A`-`Z`), zero-padded; unused trailing bytes are `0` |
+| 16 | slot name: up to 16 printable characters - space (`$20`), `0`-`9` (`$30`-`$39`), unshifted `A`-`Z` (`$41`-`$5A`), or shifted (lowercase-glyph) `a`-`z` as this charset's own screen codes `$01`-`$1A` - zero-padded; unused trailing bytes are `0` |
 | 4 | turn |
 | 2 | day |
 | 1 each | hour, minute |

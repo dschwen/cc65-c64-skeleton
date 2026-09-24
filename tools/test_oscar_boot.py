@@ -417,17 +417,19 @@ def check(root, monitor, artifacts):
     press("Return", 13)
     assert monitor.memory(labels["saveload_selected_slot"], 1) == b"\1", "slot 1 not selected"
     monitor.command(f'screenshot "{artifacts / "save-name.png"}" 2')
-    # Mixed-case name: shifted m/c/t (petscii 205/195/212, folding to 13/3/20
+    # Mixed-case name, usual C64 convention (unshifted -> lowercase, shift
+    # -> uppercase): unshifted m/c/t (petscii 77/67/84, folding to 13/3/20
     # - the exact byte values of RETURN/RUN-STOP/DEL) exercise
     # modules/saveload_save.c's enter_name() checking those control keys
     # against the raw, unfolded key first. If that ordering regressed,
-    # shift+m would end name entry outright (mistaken for RETURN) instead
-    # of typing 'm', and the assertion below would see a short/wrong name.
-    press_shifted("m", 205)
-    press_shifted("c", 195)
-    press_shifted("t", 212)
-    press("a", 65)
-    press("b", 66)
+    # plain 'm' would end name entry outright (mistaken for RETURN) instead
+    # of typing lowercase 'm', and the assertion below would see a short/
+    # wrong name. Shifted a/b then confirm the uppercase side too.
+    press("m", 77)
+    press("c", 67)
+    press("t", 84)
+    press_shifted("a", 193)
+    press_shifted("b", 194)
     # NAME_SCREEN (modules/saveload_save.c), row 10 col 15: echoed raw, not
     # through platform_text_screen_code() (see AGENTS.md's char-literal note)
     # - 13,3,20 are this charset's lowercase m/c/t glyph codes ($01-$1A),

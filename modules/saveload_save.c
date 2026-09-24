@@ -112,9 +112,9 @@ static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     }
 }
 
-/* ch is already folded (see enter_name()): 65-90 for an unshifted letter
- * key, 1-26 (this charset's lowercase glyph codes, confirmed against
- * assets/charset.cchr - see AGENTS.md's charmap note) for a shifted one. */
+/* ch is already folded (see enter_name()): 1-26 (this charset's lowercase
+ * glyph codes, confirmed against assets/charset.cchr - see AGENTS.md's
+ * charmap note) for an unshifted letter key, 65-90 for a shifted one. */
 static uint8_t name_is_printable(uint8_t ch) {
     return ch == 32u || (ch >= 48u && ch <= 57u) || (ch >= 65u && ch <= 90u) ||
            (ch >= 1u && ch <= 26u);
@@ -330,18 +330,25 @@ static uint8_t enter_name(uint8_t* name) {
             }
             continue;
         }
-        /* Checked (and excluded) above against the raw key, not here: a
-         * shifted letter is PETSCII 193-218, and folding straight to this
-         * charset's lowercase glyph codes 1-26 (confirmed against
-         * assets/charset.cchr) would otherwise collide with PLATFORM_KEY_
-         * ENTER (13, from shifted M/205), RUN/STOP (3, shifted C/195) and
-         * DEL (20, shifted T/212) - those must be recognized from the raw
-         * value first, or e.g. Shift+M would be read as RETURN instead of
-         * typed as 'm'. modules/script.c's read_keyword() folds this same
-         * range down to unshifted 65-90 instead (right for keyword
-         * matching - see that function's own comment) and has no such
-         * collision, since 65-90 doesn't overlap those control codes. */
-        if (key >= 193u && key <= 218u) key = (uint8_t)(key - 192u);
+        /* Checked (and excluded) above against the raw key, not here: the
+         * usual C64 convention - unshifted types lowercase, shift types
+         * uppercase - folded onto this charset's own glyph codes (1-26
+         * lowercase, 65-90 uppercase; confirmed against assets/
+         * charset.cchr). Folding shifted letters (PETSCII 193-218) to
+         * uppercase is immediate (identity minus 128, landing back on
+         * 65-90 - the same range GETIN already returns unshifted, so no
+         * collision risk there); the letter that actually needs its own
+         * check-before-fold is the *unshifted* one, since 65-90 folded to
+         * lowercase (1-26) collides with PLATFORM_KEY_ENTER (13, unshifted
+         * M/77), RUN/STOP (3, unshifted C/67) and DEL (20, unshifted T/84)
+         * - those must be recognized from the raw value first (already
+         * true above), or e.g. plain 'm' would be read as RETURN instead
+         * of typed as lowercase 'm'. modules/script.c's read_keyword()
+         * folds shifted letters down to unshifted 65-90 instead (right for
+         * keyword matching - see that function's own comment), so it never
+         * touches the unshifted range and has no equivalent hazard. */
+        if (key >= 65u && key <= 90u) key = (uint8_t)(key - 64u);
+        else if (key >= 193u && key <= 218u) key = (uint8_t)(key - 128u);
         if (name_is_printable(key) && length < SAVE_NAME_BYTES) {
             name[length] = key;
             NAME_SCREEN[length] = key; /* raw: see put_char_raw() */

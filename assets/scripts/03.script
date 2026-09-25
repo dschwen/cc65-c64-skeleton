@@ -22,7 +22,13 @@
  * Tile 65 is a storm window - wherever it appears in this room (currently
  * 9,0 and 3,5), looking at it always shows STORY_ROOM03_LOOK_WINDOW,
  * dispatched generically by rooms/asm/03_look_at.s rather than a per-tile
- * `at X,Y` entry. */
+ * `at X,Y` entry.
+ *
+ * The Kettle (object type 62, tile 11,6, placeholder scenery) is Lady
+ * Orra's branch of the cellar-token puzzle: using the Blank Letter (type
+ * 56, given by Orra on first meeting, rooms/c/02_use_at.c) at the kettle
+ * reveals it as the Orra Invite (type 57) - dispatched from
+ * rooms/c/03_use_at.c, the script DSL has no inventory-check opcode. */
 room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
         room_transition 2 4 2
@@ -58,5 +64,19 @@ room 03 {
     }
     entry STORY_ROOM03_LOOK_WINDOW {
         text "Through the window you see the rain pouring down outside."
+    }
+    entry STORY_ROOM03_LOOK_KETTLE {
+        text "A copper kettle sits over the embers, steam curling from its spout."
+    }
+    entry STORY_ROOM03_USE_KETTLE {
+        text "You hold the blank letter in the rising steam. Slowly, faint lines darken into legible script."
+        wait_key
+        text "It's an invitation - addressed, you now notice, to Lady Orra."
+    }
+    entry STORY_ROOM03_USE_KETTLE_ALREADY {
+        text "The letter is already revealed - no need to steam it again."
+    }
+    entry STORY_ROOM03_USE_KETTLE_NO_ITEM {
+        text "Steam rises from the kettle, but you have nothing to hold over it."
     }
 }

@@ -6,6 +6,7 @@ look_at:
     at 5,1 -> script STORY_ROOM03_LOOK_OIL
     at 14,1 -> script STORY_ROOM03_LOOK_TAPER
     at 10,1 -> script STORY_ROOM03_LOOK_STAIRS_DOWN
+    at 11,6 -> script STORY_ROOM03_LOOK_KETTLE
     at 1,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 2,1 -> script STORY_ROOM03_LOOK_SHELVES
     at 3,1 -> script STORY_ROOM03_LOOK_SHELVES
@@ -24,4 +25,7 @@ look_at:
     default -> asm "rooms/c/03_look_at.c"
 
 use_at:
-    default -> GAME_USE_DEFAULT
+    # The kettle (11,6) needs a Blank Letter inventory check the script
+    # DSL can't express - handled in the asm fallback. See
+    # rooms/c/03_use_at.c.
+    default -> asm "rooms/c/03_use_at.c"

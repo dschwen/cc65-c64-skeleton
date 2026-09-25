@@ -35,7 +35,11 @@
  * lands:
  *   54 Silver Shard   55 Moon Brooch     56 Blank Letter
  *   57 Orra Invite    58 Empty Cup       59 Rainwater
- *   60 Hearth Ash     61 Guest's Broth
+ *   60 Hearth Ash     61 Guest's Broth   62 Kettle (scenery fixture,
+ *                                        room 03 - not a design-doc
+ *                                        "token", just needed its own
+ *                                        placed-object type like the
+ *                                        Cauldron/Brazier)
  * Moonmint reuses the already-placed "Moonshroom" (type 42, room 01) under
  * its design-doc name rather than adding a new type - see that room's own
  * object table. */
@@ -76,6 +80,7 @@
 #define STORY_ROOM02_LIGHT_TAPER_NO_ITEM 11u
 #define STORY_ROOM02_ENTER_CORRIDOR   12u
 #define STORY_ROOM02_LIGHT_TAPER_ALREADY 13u
+#define STORY_ROOM02_ORRA_RESOLVE     14u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
 #define STORY_ROOM03_LOOK_SHELVES  3u
@@ -87,6 +92,10 @@
 #define STORY_ROOM03_LOOK_WINDOW 9u
 #define STORY_ROOM03_WARD_OPENED  10u
 #define STORY_ROOM03_WARD_BLOCKED 11u
+#define STORY_ROOM03_LOOK_KETTLE  12u
+#define STORY_ROOM03_USE_KETTLE   13u
+#define STORY_ROOM03_USE_KETTLE_ALREADY  14u
+#define STORY_ROOM03_USE_KETTLE_NO_ITEM  15u
 
 #define STORY_ROOM04_ASCEND_STAIRS   1u
 #define STORY_ROOM04_LOOK_STAIRS_UP  2u
@@ -95,7 +104,6 @@
 
 #define STORY_ROOM05_LEAVE_CORRIDOR  1u
 #define STORY_ROOM05_LOOK_WINDOW     2u
-#define STORY_ROOM05_LOOK_GUEST_DOOR 3u
 #define STORY_ROOM05_USE_GUEST_DOOR  4u
 #define STORY_ROOM05_LOOK_PELL       5u
 #define STORY_ROOM05_TALK_PELL       6u
@@ -104,6 +112,7 @@
 #define STORY_ROOM05_PELL_EARLY_SEAL 9u
 #define STORY_ROOM05_PELL_RESOLVE    10u
 #define STORY_ROOM05_LOOK_SILVER_DOOR 11u
+#define STORY_ROOM05_LOOK_ROSE_DOOR   12u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

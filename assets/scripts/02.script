@@ -18,21 +18,26 @@
  * (assets/portraits/01, /02 - the asset editor's Portrait mode), so
  * portrait_show renders a blank box there for now.
  *
- * Caldus's Lamp Oil payoff (STORY_ROOM02_CALDUS_FREE) and the hearth's Long
- * Taper lighting (STORY_ROOM02_LIGHT_TAPER/_ALREADY/_NO_ITEM) are dispatched
- * from a hand-written asm fallback (rooms/asm/02_use_at.s) rather than a
+ * Caldus's Lamp Oil payoff (STORY_ROOM02_CALDUS_FREE), the hearth's Long
+ * Taper lighting (STORY_ROOM02_LIGHT_TAPER/_ALREADY/_NO_ITEM), and now
+ * Lady Orra's Invite payoff (STORY_ROOM02_ORRA_RESOLVE) are dispatched
+ * from a hand-written asm fallback (rooms/c/02_use_at.c) rather than a
  * plain `at X,Y` entry in rooms/02.rc - the script DSL has no opcode to
- * check, consume, or add inventory contents, so the has-item/consume-item/
- * add-item logic lives in that fragment and calls into these entries by
- * key. Lamp Oil is object type 51, Long Taper is object type 52, and
- * lighting the taper swaps it in inventory for a Lit Taper (type 53, a
- * minimal light source, assets/objects.cobj) - the item's own type is the
- * persistent "is it lit" state rather than a separate flag. Freeing
- * Caldus hands over the Silver Shard (type 54, one of the three cellar
- * tokens - MOONFEN_STORY_DESIGN.md section 5) via `give_object` directly
- * in STORY_ROOM02_CALDUS_FREE's script text, gated the same way the
- * dialogue itself is (the check_flag == 0 branch), so it's only given
- * once. */
+ * check or consume inventory contents (though it can add - see
+ * `give_object` below), so the has-item/consume-item logic lives in that
+ * fragment and calls into these entries by key. Lamp Oil is object type
+ * 51, Long Taper is object type 52, and lighting the taper swaps it in
+ * inventory for a Lit Taper (type 53, a minimal light source,
+ * assets/objects.cobj) - the item's own type is the persistent "is it
+ * lit" state rather than a separate flag. Freeing Caldus hands over the
+ * Silver Shard (type 54) and meeting/resolving Orra hands over the Blank
+ * Letter (type 56) then the Moon Brooch (type 55) - three of the four
+ * cellar-token items (MOONFEN_STORY_DESIGN.md section 5) - via
+ * `give_object` directly in each entry's own script text, each gated the
+ * same way its dialogue already is (a check_flag == 0 branch), so each is
+ * only given once. Orra's Blank Letter is revealed into the Orra Invite
+ * (type 57) at the kitchen kettle - see rooms/c/03_use_at.c - before it
+ * can be returned to her here. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -48,6 +53,9 @@ room 02 {
             text "\"So. The one they say robbed Master Vey,\" she says quietly. \"I don't believe that of you.\""
             wait_key
             text "\"Whether anyone else shares my opinion... we shall see, won't we.\""
+            wait_key
+            text "She produces a water-stained letter, the ink run to smears. \"For what it's worth - I can't make sense of this either. Perhaps you'll have better luck.\""
+            give_object 56 1
             set_flag STORY_STATE_ROOM_02_MET_ORRA 1
         } else {
             text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
@@ -115,6 +123,24 @@ room 02 {
             set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
         } else {
             text "\"Still breathing easy, thanks to you,\" Caldus says, tapping his now-loose visor."
+        }
+        wait_key
+        portrait_hide
+    }
+    entry STORY_ROOM02_ORRA_RESOLVE {
+        portrait_show 1 right
+        check_flag STORY_STATE_ROOM_02_ORRA_HELPED == 0 {
+            text "Lady Orra takes the letter, and her composure slips for just a moment as she reads it."
+            wait_key
+            text "\"So it was meant for me after all,\" she says quietly. \"I wondered.\""
+            wait_key
+            text "She unpins a small brooch from her collar, shaped like a crescent moon."
+            give_object 55 1
+            wait_key
+            text "\"Take this. Whatever door it was meant for, I'd rather you reach it than I.\""
+            set_flag STORY_STATE_ROOM_02_ORRA_HELPED 1
+        } else {
+            text "\"Whatever you find down there,\" Lady Orra says, \"I hope it's worth the asking.\""
         }
         wait_key
         portrait_hide

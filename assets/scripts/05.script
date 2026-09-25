@@ -8,13 +8,13 @@
  * the corridor doorway there.
  *
  * Of the three guest-room doors, (4,3) is Pell's blue-seal door, (9,10)
- * is Sir Caldus's silver-tower door, and (17,10) is still plain
- * decoration - "Locked." on Use, "This is a guest room." on Look (future
- * Orra evidence branch). Look on the blue and silver doors instead gives
- * the special evidence text (STORY_ROOM05_LOOK_BLUE_DOOR/_SILVER_DOOR),
- * setting BLUE_DOOR_SEEN/SILVER_DOOR_SEEN - independent corroboration for
- * each NPC's identity, not a mechanical gate on anything (see
- * MOONFEN_STORY_DESIGN.md's Branch B). Use stays "Locked." on all three.
+ * is Sir Caldus's silver-tower door, and (17,10) is Lady Orra's
+ * pale-rose door. Look on all three gives special evidence text
+ * (STORY_ROOM05_LOOK_BLUE_DOOR/_SILVER_DOOR/_ROSE_DOOR), setting
+ * BLUE_DOOR_SEEN/SILVER_DOOR_SEEN/ROSE_DOOR_SEEN - independent
+ * corroboration for each NPC's identity, not a mechanical gate on
+ * anything (see MOONFEN_STORY_DESIGN.md's Branches B and C). Use stays
+ * "Locked." on all three.
  *
  * Pell Thimble (object type 44, tile 4,7) is the user's own addition. His
  * Blue Seal check (has the seal? has he seen both pieces of evidence?)
@@ -48,9 +48,6 @@ room 05 {
     entry STORY_ROOM05_LOOK_WINDOW {
         text "Through the window you see the rain pouring down outside."
     }
-    entry STORY_ROOM05_LOOK_GUEST_DOOR {
-        text "This is a guest room."
-    }
     entry STORY_ROOM05_USE_GUEST_DOOR {
         text "Locked."
     }
@@ -80,6 +77,12 @@ room 05 {
         wait_key
         text "The same sigil is etched into the knight's dented plate downstairs - this must have been Sir Caldus's room."
         set_flag STORY_STATE_ROOM_05_SILVER_DOOR_SEEN 1
+    }
+    entry STORY_ROOM05_LOOK_ROSE_DOOR {
+        text "A third guest-room door. Its plaque is worked in the shape of a pale rose."
+        wait_key
+        text "The same pale rose is pinned to the collar of the woman downstairs who calls herself Lady Orra."
+        set_flag STORY_STATE_ROOM_05_ROSE_DOOR_SEEN 1
     }
     entry STORY_ROOM05_TALK_PELL {
         portrait_show 4 left

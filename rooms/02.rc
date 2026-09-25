@@ -9,11 +9,11 @@ look_at:
 
 use_at:
     at 8,10 -> script STORY_ROOM02_LEAVE_INN
-    at 17,9 -> script STORY_ROOM02_TALK_ORRA
-    # Sir Caldus (14,1) and the hearth (12,1) are handled in the asm
-    # fallback below instead of a plain script entry here - both need an
-    # inventory check (Lamp Oil / Long Taper) that the script DSL can't
-    # express. See rooms/c/02_use_at.c.
+    # Sir Caldus (14,1), the hearth (12,1), and now Lady Orra (17,9) are
+    # all handled in the asm fallback below instead of a plain script
+    # entry here - each needs an inventory check (Lamp Oil / Long Taper /
+    # Orra Invite) that the script DSL can't express. See
+    # rooms/c/02_use_at.c.
     # Vey's own tile (3,2) is behind the bar counter and unreachable by the
     # player (confirmed live: a flood-fill from the room's entrance shows
     # his whole alcove sealed off) - (3,3), the counter tile directly in

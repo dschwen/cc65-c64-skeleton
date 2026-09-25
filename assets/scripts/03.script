@@ -31,7 +31,18 @@ room 03 {
         room_transition 4 32 4
     }
     entry STORY_ROOM03_LOOK_STAIRS_DOWN {
-        text "These stairs seem to lead down into a dark musty basement."
+        check_flag STORY_STATE_CELLAR_OPEN == 0 {
+            text "A stairway down, sealed by an old ward. Three recesses are cut into the frame - shaped like a key, a shard, and a brooch."
+        } else {
+            text "The stairs lead down into the basement, the ward long since satisfied."
+        }
+    }
+    entry STORY_ROOM03_WARD_OPENED {
+        text "The brass key, the silver shard, and the moon brooch settle into their recesses. Something old in the frame recognizes them, and the ward releases."
+        set_flag STORY_STATE_CELLAR_OPEN 1
+    }
+    entry STORY_ROOM03_WARD_BLOCKED {
+        text "The stairway is sealed by an old ward. Three recesses are cut into the frame - shaped like a key, a shard, and a brooch. You are missing at least one."
     }
     entry STORY_ROOM03_LOOK_SHELVES {
         text "Pantry shelves, mostly bare - whatever was kept here has long since been used or taken."

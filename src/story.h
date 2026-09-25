@@ -18,6 +18,27 @@
 #define STORY_STATE_ROOM_05_PELL_INVITE_SEEN   11u
 #define STORY_STATE_ROOM_05_BLUE_DOOR_SEEN     12u
 #define STORY_STATE_ROOM_05_PELL_HELPED        13u
+#define STORY_STATE_CELLAR_OPEN                14u
+#define STORY_STATE_ROOM_05_SILVER_DOOR_SEEN   15u
+#define STORY_STATE_ROOM_02_ORRA_HELPED        16u
+#define STORY_STATE_ROOM_05_ROSE_DOOR_SEEN     17u
+#define STORY_STATE_MIRROR_REPAIRED            18u
+#define STORY_STATE_MARA_REVEALED              19u
+#define STORY_STATE_BROTH_SERVED               20u
+#define STORY_STATE_HOST_REVEALED              21u
+#define STORY_STATE_FINALE_DONE                22u
+
+/* Object type IDs 54+ reserved for the rest of MOONFEN_STORY_DESIGN.md
+ * (assets/objects.cobj; types 1-53 already assigned, see that file's own
+ * records for the roster) - listed here up front so later steps don't
+ * collide, even though each is only authored/placed when its own step
+ * lands:
+ *   54 Silver Shard   55 Moon Brooch     56 Blank Letter
+ *   57 Orra Invite    58 Empty Cup       59 Rainwater
+ *   60 Hearth Ash     61 Guest's Broth
+ * Moonmint reuses the already-placed "Moonshroom" (type 42, room 01) under
+ * its design-doc name rather than adding a new type - see that room's own
+ * object table. */
 
 /* QUEST_FLAGS bit assignments (single shared byte, see assets/scripts/*.script
  * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01). Whether the
@@ -64,6 +85,8 @@
 #define STORY_ROOM03_DESCEND_STAIRS 7u
 #define STORY_ROOM03_LOOK_STAIRS_DOWN 8u
 #define STORY_ROOM03_LOOK_WINDOW 9u
+#define STORY_ROOM03_WARD_OPENED  10u
+#define STORY_ROOM03_WARD_BLOCKED 11u
 
 #define STORY_ROOM04_ASCEND_STAIRS   1u
 #define STORY_ROOM04_LOOK_STAIRS_UP  2u

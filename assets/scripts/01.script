@@ -1,6 +1,17 @@
-/* Room 01 - crossroads and inn exterior. See rooms/01.rc/rooms/asm/
- * 01_enter_room.s for the arrival hook, and STORY_ROOM01_* in src/story.h
- * for these keys. */
+/* Room 01 - crossroads and inn exterior. See rooms/01.rc/rooms/c/
+ * 01_enter_room.c for the arrival hook, and STORY_ROOM01_* in src/story.h
+ * for these keys.
+ *
+ * Moonmint (object type 42, tile 5,0 - renamed in place from "Moonshroom",
+ * same art) is a plain takeable pickup, the first of the three Guest's
+ * Broth ingredients (MOONFEN_STORY_DESIGN.md section 7). The rain barrel
+ * (object type 65, tile 5,8) is the second: using the Empty Cup (type 58,
+ * from the kitchen - rooms/c/03_use_at.c places it) on it fills it with
+ * Rainwater (type 59) - dispatched from rooms/c/01_use_at.c, since the
+ * script DSL can't check/consume/add inventory. The third, Hearth Ash, is
+ * collected at the common room's hearth (rooms/c/02_use_at.c). All three
+ * combine at the kitchen cauldron into the Guest's Broth (type 61,
+ * rooms/c/03_use_at.c). */
 room 01 {
     entry STORY_ROOM01_ARRIVAL {
         text "Suddenly a mysterious inn appears, a stroke of luck for the weary traveler, or a cursed mirage?"
@@ -19,5 +30,17 @@ room 01 {
     }
     entry STORY_ROOM01_SEARCH_FAR {
         text "The water is too muddy, I have to get closer!"
+    }
+    entry STORY_ROOM01_USE_BARREL_FILL {
+        text "You dip the empty cup into the rain barrel and it comes up full."
+    }
+    entry STORY_ROOM01_USE_BARREL_ALREADY {
+        text "The cup is already full of rainwater."
+    }
+    entry STORY_ROOM01_USE_BARREL_NO_ITEM {
+        text "Rain drums steadily into the barrel. You'd need something to carry it in."
+    }
+    entry STORY_ROOM01_LOOK_BARREL {
+        text "An old barrel, set to catch the rain. It's nearly full."
     }
 }

@@ -154,6 +154,9 @@ room 02 {
     entry STORY_ROOM02_LIGHT_TAPER_NO_ITEM {
         text "The hearth's embers glow, but you have nothing to light."
     }
+    entry STORY_ROOM02_COLLECT_ASH {
+        text "You scoop a handful of cool ash from the edge of the hearth."
+    }
     entry STORY_ROOM02_ENTER_CORRIDOR {
         room_transition 5 4 18
     }

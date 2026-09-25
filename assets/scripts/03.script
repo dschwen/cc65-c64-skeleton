@@ -9,15 +9,20 @@
  * south at (6,10) (the walkable door tile 5 in the south wall), which
  * transitions the same way - stepping onto it, not Using it.
  *
- * Lamp Oil (object type 51, tile 5,1) and Long Taper (object type 52, tile
- * 14,1) are takeable pickups - Take is a generic engine command (see
- * game_take_tile()), so placing them in assets/03 is all the wiring they
- * need to be picked up; STORY_ROOM02_CALDUS_FREE/STORY_ROOM02_LIGHT_TAPER
- * (rooms/asm/02_use_at.s) are where they pay off.
+ * Lamp Oil (object type 51, tile 5,1), Long Taper (object type 52, tile
+ * 14,1), and Empty Cup (object type 58, tile 8,1) are takeable pickups -
+ * Take is a generic engine command (see game_take_tile()), so placing
+ * them in assets/03 is all the wiring they need to be picked up;
+ * STORY_ROOM02_CALDUS_FREE/STORY_ROOM02_LIGHT_TAPER (rooms/c/
+ * 02_use_at.c) and rooms/c/01_use_at.c's rain barrel are where the oil,
+ * taper, and cup respectively pay off.
  *
- * The Cauldron (object type 39, tile 10,6) is the user's own addition; this
- * pass only gives it a look_at flavor line - the broth-recipe check
- * mechanic (MOONFEN_STORY_DESIGN.md section 6) is a follow-up pass.
+ * The Cauldron (object type 39, tile 10,6) is the user's own addition:
+ * using it with all three Guest's Broth ingredients (Moonmint, Rainwater,
+ * Hearth Ash - MOONFEN_STORY_DESIGN.md section 7) held gives the Guest's
+ * Broth (type 61) - dispatched from rooms/c/03_use_at.c alongside the
+ * kettle, since the script DSL can't check three inventory items at once
+ * either.
  *
  * Tile 65 is a storm window - wherever it appears in this room (currently
  * 9,0 and 3,5), looking at it always shows STORY_ROOM03_LOOK_WINDOW,
@@ -78,5 +83,11 @@ room 03 {
     }
     entry STORY_ROOM03_USE_KETTLE_NO_ITEM {
         text "Steam rises from the kettle, but you have nothing to hold over it."
+    }
+    entry STORY_ROOM03_USE_CAULDRON_COOK {
+        text "Moonmint, rainwater, and a pinch of hearth ash, simmered together - the Guest's Broth is ready."
+    }
+    entry STORY_ROOM03_USE_CAULDRON_MISSING {
+        text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."
     }
 }

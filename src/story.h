@@ -42,9 +42,9 @@
  *                                        Cauldron/Brazier)
  *   63 Recipe Stone (scenery fixture, room 04)
  *   64 Witchlight (scenery fixture, room 04, light-emitting)
- * Moonmint reuses the already-placed "Moonshroom" (type 42, room 01) under
- * its design-doc name rather than adding a new type - see that room's own
- * object table. */
+ *   65 Rain Barrel (scenery fixture, room 01)
+ * Moonmint (type 42, room 01) was renamed in place from "Moonshroom" -
+ * same art, no new type - see that room's own object table. */
 
 /* QUEST_FLAGS bit assignments (single shared byte, see assets/scripts/*.script
  * set_bit/check_flag usage): bit 1 = Blue Seal found (room 01). Whether the
@@ -68,6 +68,10 @@
 #define STORY_ROOM01_ENTER_INN   2u
 #define STORY_ROOM01_FIND_SEAL   3u
 #define STORY_ROOM01_SEARCH_FAR  4u
+#define STORY_ROOM01_USE_BARREL_FILL    5u
+#define STORY_ROOM01_USE_BARREL_ALREADY 6u
+#define STORY_ROOM01_USE_BARREL_NO_ITEM 7u
+#define STORY_ROOM01_LOOK_BARREL        8u
 
 #define STORY_ROOM02_LEAVE_INN   1u
 #define STORY_ROOM02_TALK_ORRA   2u
@@ -83,6 +87,7 @@
 #define STORY_ROOM02_ENTER_CORRIDOR   12u
 #define STORY_ROOM02_LIGHT_TAPER_ALREADY 13u
 #define STORY_ROOM02_ORRA_RESOLVE     14u
+#define STORY_ROOM02_COLLECT_ASH      15u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
 #define STORY_ROOM03_LOOK_SHELVES  3u
@@ -98,6 +103,8 @@
 #define STORY_ROOM03_USE_KETTLE   13u
 #define STORY_ROOM03_USE_KETTLE_ALREADY  14u
 #define STORY_ROOM03_USE_KETTLE_NO_ITEM  15u
+#define STORY_ROOM03_USE_CAULDRON_COOK    16u
+#define STORY_ROOM03_USE_CAULDRON_MISSING 17u
 
 #define STORY_ROOM04_ASCEND_STAIRS   1u
 #define STORY_ROOM04_LOOK_STAIRS_UP  2u

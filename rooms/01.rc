@@ -2,6 +2,7 @@ enter_room: asm "rooms/c/01_enter_room.c"
 enter_tile: asm "rooms/c/01_enter_tile.c"
 
 look_at:
+    at 5,8 -> script STORY_ROOM01_LOOK_BARREL
     default -> asm "rooms/c/01_look_at.c"
 
 use_at:

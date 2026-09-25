@@ -18,7 +18,14 @@
  *     STORY_ROOM02_ORRA_RESOLVE; otherwise the ordinary
  *     STORY_ROOM02_TALK_ORRA greeting/repeat entry (which itself gives
  *     the Blank Letter on first meeting, script-side - see
- *     assets/scripts/02.script). */
+ *     assets/scripts/02.script).
+ *   - (15,4), the dining table: carrying the Guest's Broth (type 61,
+ *     MOONFEN_STORY_DESIGN.md section 10) consumes it and sets
+ *     STORY_STATE_BROTH_SERVED; already served or not carrying it gets
+ *     its own flavor entry. The service bell (2,3) is a plain state-flag
+ *     check the script DSL *can* express on its own - see
+ *     STORY_ROOM02_RING_BELL in assets/scripts/02.script, dispatched
+ *     directly from rooms/02.rc rather than from here. */
 uint8_t use_at_fallback(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 14u && tile_y == 1u) {
         if (game_inventory_has_one(51u)) { /* LAMP_OIL_TYPE */
@@ -54,6 +61,18 @@ uint8_t use_at_fallback(uint8_t tile_x, uint8_t tile_y) {
             (void)game_room_script_entry(14u); /* STORY_ROOM02_ORRA_RESOLVE */
         } else {
             (void)game_room_script_entry(2u); /* STORY_ROOM02_TALK_ORRA */
+        }
+        return GAME_USE_HANDLED;
+    }
+
+    if (tile_x == 15u && tile_y == 4u) {
+        if (game_state.flags[20]) { /* STORY_STATE_BROTH_SERVED */
+            (void)game_room_script_entry(17u); /* STORY_ROOM02_SERVE_BROTH_ALREADY */
+        } else if (game_inventory_has_one(61u)) { /* Guest's Broth */
+            game_inventory_remove_one(61u);
+            (void)game_room_script_entry(16u); /* STORY_ROOM02_SERVE_BROTH */
+        } else {
+            (void)game_room_script_entry(18u); /* STORY_ROOM02_SERVE_BROTH_NO_ITEM */
         }
         return GAME_USE_HANDLED;
     }

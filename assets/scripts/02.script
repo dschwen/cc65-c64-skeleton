@@ -37,7 +37,17 @@
  * same way its dialogue already is (a check_flag == 0 branch), so each is
  * only given once. Orra's Blank Letter is revealed into the Orra Invite
  * (type 57) at the kitchen kettle - see rooms/c/03_use_at.c - before it
- * can be returned to her here. */
+ * can be returned to her here.
+ *
+ * The finale (MOONFEN_STORY_DESIGN.md section 10) uses two new fixtures:
+ * the dining table (15,4, an existing furniture tile, not a placed
+ * object) and the service bell (object type 66, tile 2,3, on the bar
+ * counter). Serving the Guest's Broth (type 61, from the kitchen
+ * cauldron) at the table needs an inventory check, so it's dispatched
+ * from rooms/c/02_use_at.c like everything else above; ringing the bell
+ * only needs state-flag checks (HOST_REVEALED, BROTH_SERVED,
+ * FINALE_DONE), which nested check_flag can express directly in
+ * STORY_ROOM02_RING_BELL below - no C fallback needed for it. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -156,6 +166,62 @@ room 02 {
     }
     entry STORY_ROOM02_COLLECT_ASH {
         text "You scoop a handful of cool ash from the edge of the hearth."
+    }
+    entry STORY_ROOM02_SERVE_BROTH {
+        text "You set the Guest's Broth on the dining table, as the recipe stone described. It smells, unaccountably, like moonlight."
+        set_flag STORY_STATE_BROTH_SERVED 1
+    }
+    entry STORY_ROOM02_SERVE_BROTH_ALREADY {
+        text "The broth is already set out, untouched and still warm."
+    }
+    entry STORY_ROOM02_SERVE_BROTH_NO_ITEM {
+        text "An empty table. Whatever belongs here, you don't have it yet."
+    }
+    entry STORY_ROOM02_LOOK_BELL {
+        text "A small brass bell on the end of the counter, worn smooth by years of ringing."
+    }
+    entry STORY_ROOM02_LOOK_TABLE {
+        check_flag STORY_STATE_BROTH_SERVED == 0 {
+            text "A dining table, set for a guest who hasn't arrived yet."
+        } else {
+            text "The Guest's Broth, set out and waiting."
+        }
+    }
+    entry STORY_ROOM02_RING_BELL {
+        check_flag STORY_STATE_FINALE_DONE == 0 {
+            check_flag STORY_STATE_HOST_REVEALED == 0 {
+                text "A small brass bell. Ringing it summons no one in particular."
+            } else {
+                check_flag STORY_STATE_BROTH_SERVED == 0 {
+                    text "You reach for the bell, then stop. Something isn't finished yet - the broth, perhaps."
+                } else {
+                    text "You ring the bell. It doesn't sound like brass - it sounds like something much older."
+                    wait_key
+                    text "Mara steps out from the kitchen doorway, as though she'd been standing just out of sight the whole time."
+                    wait_key
+                    portrait_show 2 left
+                    text "Master Vey drops a mug. \"You - you can't be here - the cellar's been sealed since -\""
+                    wait_key
+                    text "\"Since I chose to sleep, Vey. Not since I stopped existing. You've been careless about the difference.\""
+                    wait_key
+                    text "\"I told them the truth of it,\" Vey stammers. \"A guest was robbed. Someone had to answer for it.\""
+                    wait_key
+                    text "\"No one was robbed. A traveler dropped a seal in the mud, and you built a trial out of your own fear of my cellar door.\""
+                    portrait_hide
+                    wait_key
+                    text "She turns to you. \"You found what was actually lost, returned it to those who'd lost it, and asked nothing back. That is the law of this house - not Vey's. Mine.\""
+                    wait_key
+                    text "\"The broth is the guesting-rite, older than the inn itself. You've kept it. Every guest here is free to go - Vey included, free of pretending to an authority that was never really his.\""
+                    wait_key
+                    text "Vey sags against the counter, more relieved than ashamed. Upstairs and down, you hear doors opening that have stayed shut all night."
+                    wait_key
+                    text "Moonfen Inn, whatever it truly is, has finally kept its own law - and let its guests go, you among them, accused of nothing at all."
+                    set_flag STORY_STATE_FINALE_DONE 1
+                }
+            }
+        } else {
+            text "The inn is quiet now, the storm spent. Moonfen has kept its true law, at last."
+        }
     }
     entry STORY_ROOM02_ENTER_CORRIDOR {
         room_transition 5 4 18

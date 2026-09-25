@@ -43,6 +43,7 @@
  *   63 Recipe Stone (scenery fixture, room 04)
  *   64 Witchlight (scenery fixture, room 04, light-emitting)
  *   65 Rain Barrel (scenery fixture, room 01)
+ *   66 Service Bell (scenery fixture, room 02)
  * Moonmint (type 42, room 01) was renamed in place from "Moonshroom" -
  * same art, no new type - see that room's own object table. */
 
@@ -88,6 +89,12 @@
 #define STORY_ROOM02_LIGHT_TAPER_ALREADY 13u
 #define STORY_ROOM02_ORRA_RESOLVE     14u
 #define STORY_ROOM02_COLLECT_ASH      15u
+#define STORY_ROOM02_SERVE_BROTH         16u
+#define STORY_ROOM02_SERVE_BROTH_ALREADY 17u
+#define STORY_ROOM02_SERVE_BROTH_NO_ITEM 18u
+#define STORY_ROOM02_RING_BELL           19u
+#define STORY_ROOM02_LOOK_BELL           20u
+#define STORY_ROOM02_LOOK_TABLE          21u
 
 #define STORY_ROOM03_LEAVE_KITCHEN 1u
 #define STORY_ROOM03_LOOK_SHELVES  3u

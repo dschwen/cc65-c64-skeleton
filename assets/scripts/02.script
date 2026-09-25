@@ -27,9 +27,12 @@
  * key. Lamp Oil is object type 51, Long Taper is object type 52, and
  * lighting the taper swaps it in inventory for a Lit Taper (type 53, a
  * minimal light source, assets/objects.cobj) - the item's own type is the
- * persistent "is it lit" state rather than a separate flag. The Silver
- * Tower's payoff for freeing Caldus isn't implemented yet (no Silver Shard
- * item exists), so freeing him for now is a flag-only outcome. */
+ * persistent "is it lit" state rather than a separate flag. Freeing
+ * Caldus hands over the Silver Shard (type 54, one of the three cellar
+ * tokens - MOONFEN_STORY_DESIGN.md section 5) via `give_object` directly
+ * in STORY_ROOM02_CALDUS_FREE's script text, gated the same way the
+ * dialogue itself is (the check_flag == 0 branch), so it's only given
+ * once. */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -104,6 +107,11 @@ room 02 {
             text "With a screech of metal it finally gives, and Sir Caldus draws a first unmuffled breath."
             wait_key
             text "\"You have my thanks - truly,\" he says. \"If you ever need a blade at your back, ask.\""
+            wait_key
+            text "He presses something small and cold into your hand - a shard of silver, etched with a tower's sigil."
+            give_object 54 1
+            wait_key
+            text "\"Take it. It marked me once as Silver Tower. Perhaps it will open a door for you instead.\""
             set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
         } else {
             text "\"Still breathing easy, thanks to you,\" Caldus says, tapping his now-loose visor."

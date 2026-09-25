@@ -103,6 +103,7 @@
 #define STORY_ROOM05_LOOK_BLUE_DOOR  8u
 #define STORY_ROOM05_PELL_EARLY_SEAL 9u
 #define STORY_ROOM05_PELL_RESOLVE    10u
+#define STORY_ROOM05_LOOK_SILVER_DOOR 11u
 
 /*
  * Story overlay hook for U on the selected inventory entry. The argument is

@@ -5,7 +5,7 @@ look_at:
     at 4,7 -> script STORY_ROOM05_LOOK_PELL
     at 5,7 -> script STORY_ROOM05_LOOK_INVITATION
     at 4,3 -> script STORY_ROOM05_LOOK_BLUE_DOOR
-    at 9,10 -> script STORY_ROOM05_LOOK_GUEST_DOOR
+    at 9,10 -> script STORY_ROOM05_LOOK_SILVER_DOOR
     at 17,10 -> script STORY_ROOM05_LOOK_GUEST_DOOR
     default -> asm "rooms/c/05_look_at.c"
 

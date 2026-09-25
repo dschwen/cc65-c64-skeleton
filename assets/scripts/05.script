@@ -7,11 +7,14 @@
  * matching room 02's own top doors - landing back at (15,1), just south of
  * the corridor doorway there.
  *
- * Of the three guest-room doors, (9,10) and (17,10) are still plain
+ * Of the three guest-room doors, (4,3) is Pell's blue-seal door, (9,10)
+ * is Sir Caldus's silver-tower door, and (17,10) is still plain
  * decoration - "Locked." on Use, "This is a guest room." on Look (future
- * Caldus/Orra evidence branches). (4,3) is Pell's blue-seal door: still
- * "Locked." on Use, but Look gives it the special evidence text
- * (STORY_ROOM05_LOOK_BLUE_DOOR) instead, setting BLUE_DOOR_SEEN.
+ * Orra evidence branch). Look on the blue and silver doors instead gives
+ * the special evidence text (STORY_ROOM05_LOOK_BLUE_DOOR/_SILVER_DOOR),
+ * setting BLUE_DOOR_SEEN/SILVER_DOOR_SEEN - independent corroboration for
+ * each NPC's identity, not a mechanical gate on anything (see
+ * MOONFEN_STORY_DESIGN.md's Branch B). Use stays "Locked." on all three.
  *
  * Pell Thimble (object type 44, tile 4,7) is the user's own addition. His
  * Blue Seal check (has the seal? has he seen both pieces of evidence?)
@@ -71,6 +74,12 @@ room 05 {
         wait_key
         text "Looking closer: the plaque shows a blue circle crossed by a silver thread, and a smear of blue sealing wax clings beside the latch."
         set_flag STORY_STATE_ROOM_05_BLUE_DOOR_SEEN 1
+    }
+    entry STORY_ROOM05_LOOK_SILVER_DOOR {
+        text "Another guest-room door. Its plaque bears a tower worked in silver."
+        wait_key
+        text "The same sigil is etched into the knight's dented plate downstairs - this must have been Sir Caldus's room."
+        set_flag STORY_STATE_ROOM_05_SILVER_DOOR_SEEN 1
     }
     entry STORY_ROOM05_TALK_PELL {
         portrait_show 4 left

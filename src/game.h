@@ -127,6 +127,15 @@ void game_inventory_add_one(uint8_t type);
 uint8_t game_ignite_brazier(uint8_t tile_x, uint8_t tile_y);
 
 /*
+ * Recolors the moon mirror's two tiles brighter once STORY_STATE_
+ * MIRROR_REPAIRED is set (see src/game_support.c for the full comment);
+ * a no-op otherwise. Called both at the moment of repair and from room
+ * 04's own enter_room hook, since the patch does not survive a
+ * save/load round trip on its own.
+ */
+void game_mirror_repair_apply(void);
+
+/*
  * Re-derive the player's own light radius (platform_hero_light_set(),
  * src/platform.h) from whether the current inventory holds a Lit Taper
  * (object type 53). Needed anywhere game_state.inventory can change out

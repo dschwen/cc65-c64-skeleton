@@ -40,6 +40,8 @@
  *                                        "token", just needed its own
  *                                        placed-object type like the
  *                                        Cauldron/Brazier)
+ *   63 Recipe Stone (scenery fixture, room 04)
+ *   64 Witchlight (scenery fixture, room 04, light-emitting)
  * Moonmint reuses the already-placed "Moonshroom" (type 42, room 01) under
  * its design-doc name rather than adding a new type - see that room's own
  * object table. */
@@ -101,6 +103,14 @@
 #define STORY_ROOM04_LOOK_STAIRS_UP  2u
 #define STORY_ROOM04_LIGHT_BRAZIER   3u
 #define STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM 4u
+#define STORY_ROOM04_LOOK_MIRROR     5u
+#define STORY_ROOM04_REPAIR_MIRROR   6u
+#define STORY_ROOM04_USE_MIRROR_ALREADY  7u
+#define STORY_ROOM04_USE_MIRROR_NO_ITEM  8u
+#define STORY_ROOM04_LOOK_MARA       9u
+#define STORY_ROOM04_TALK_MARA      10u
+#define STORY_ROOM04_LOOK_RECIPE_STONE 11u
+#define STORY_ROOM04_LOOK_WITCHLIGHT   12u
 
 #define STORY_ROOM05_LEAVE_CORRIDOR  1u
 #define STORY_ROOM05_LOOK_WINDOW     2u

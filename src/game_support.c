@@ -206,6 +206,34 @@ uint8_t game_ignite_brazier(uint8_t tile_x, uint8_t tile_y) {
     return GAME_USE_DEFAULT;
 }
 
+extern uint8_t tile_data[];
+
+/*
+ * Recolors the moon mirror's two tiles (83, the frame half; 84, the glass
+ * half - assets/tiles.ctil, placed only in room 04's tile grid, confirmed
+ * by scanning for their shared cyan color) brighter once repaired -
+ * MOONFEN_STORY_DESIGN.md's "The cracked moon mirror". Patches the shared
+ * runtime tile_data table (src/assets_data.c) in place rather than adding
+ * new tile IDs, since all 256 are already assigned; safe because no other
+ * room places 83/84. Idempotent and cheap to call unconditionally - does
+ * nothing unless the flag is set. Must be re-applied on every room 04
+ * enter_room (rooms/c/04_enter_room.c), not just once at the moment of
+ * repair: modules/saveload.c reuses tile_data as scratch space and
+ * reloads it from ROM on every save/load, which would otherwise silently
+ * revert the mirror's appearance after a save/load round trip even
+ * though the flag (and the room's own object state) stayed correct. */
+void game_mirror_repair_apply(void) {
+    if (!game_state.flags[18]) return; /* STORY_STATE_MIRROR_REPAIRED */
+    tile_data[83u * 8u + 1u] = 14u;
+    tile_data[83u * 8u + 3u] = 14u;
+    tile_data[83u * 8u + 5u] = 14u;
+    tile_data[83u * 8u + 7u] = 14u;
+    tile_data[84u * 8u + 1u] = 14u;
+    tile_data[84u * 8u + 3u] = 14u;
+    tile_data[84u * 8u + 5u] = 14u;
+    tile_data[84u * 8u + 7u] = 14u;
+}
+
 uint8_t game_take_object(uint8_t slot) {
     PlatformObject* object;
     PlatformObject original;

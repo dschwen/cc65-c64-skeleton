@@ -4,10 +4,12 @@
  *
  * The stairway down to the basement is at (10,1), an already-walkable
  * tile (10) among the pantry shelving - stepping onto it transitions
- * immediately (rooms/asm/03_enter_tile.s) rather than requiring Use. The
- * player arrives from the tavern at (6,9); the real door back is one tile
- * south at (6,10) (the walkable door tile 5 in the south wall), which
- * transitions the same way - stepping onto it, not Using it.
+ * immediately (rooms/c/03_enter_tile.c) rather than requiring Use, and
+ * unconditionally: the cellar's real gate is a brass-key-locked door
+ * inside the basement itself (rooms/c/04_use_at.c), not a check here.
+ * The player arrives from the tavern at (6,9); the real door back is one
+ * tile south at (6,10) (the walkable door tile 5 in the south wall),
+ * which transitions the same way - stepping onto it, not Using it.
  *
  * Lamp Oil (object type 51, tile 5,1), Long Taper (object type 52, tile
  * 14,1), and Empty Cup (object type 58, tile 8,1) are takeable pickups -
@@ -42,18 +44,7 @@ room 03 {
         room_transition 4 32 4
     }
     entry STORY_ROOM03_LOOK_STAIRS_DOWN {
-        check_flag STORY_STATE_CELLAR_OPEN == 0 {
-            text "A stairway down, sealed by an old ward. Three recesses are cut into the frame - shaped like a key, a shard, and a brooch."
-        } else {
-            text "The stairs lead down into the basement, the ward long since satisfied."
-        }
-    }
-    entry STORY_ROOM03_WARD_OPENED {
-        text "The brass key, the silver shard, and the moon brooch settle into their recesses. Something old in the frame recognizes them, and the ward releases."
-        set_flag STORY_STATE_CELLAR_OPEN 1
-    }
-    entry STORY_ROOM03_WARD_BLOCKED {
-        text "The stairway is sealed by an old ward. Three recesses are cut into the frame - shaped like a key, a shard, and a brooch. You are missing at least one."
+        text "A stairway leads down into the basement."
     }
     entry STORY_ROOM03_LOOK_SHELVES {
         text "Pantry shelves, mostly bare - whatever was kept here has long since been used or taken."

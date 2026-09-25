@@ -8,10 +8,11 @@ look_at:
     at 13,1 -> script STORY_ROOM04_LOOK_MARA
     at 5,8 -> script STORY_ROOM04_LOOK_RECIPE_STONE
     at 17,2 -> script STORY_ROOM04_LOOK_WITCHLIGHT
+    at 18,4 -> script STORY_ROOM04_LOOK_DOOR
     default -> GAME_LOOK_DEFAULT
 
 use_at:
-    # The mirror (12,1)/(12,2) and Mara (13,1) need an inventory/state
-    # check the script DSL can't express - handled in the asm fallback.
-    # See rooms/c/04_use_at.c.
+    # The door (18,4), the mirror (12,1)/(12,2), and Mara (13,1) all need
+    # an inventory/state check the script DSL can't express - handled in
+    # the asm fallback. See rooms/c/04_use_at.c.
     default -> asm "rooms/c/04_use_at.c"

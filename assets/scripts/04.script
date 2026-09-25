@@ -1,12 +1,19 @@
 /* Room 04 - Moonlit Cellar (MOONFEN_STORY_DESIGN.md section 8). See
- * rooms/04.rc for the stairs-up/mirror/Mara dispatch and STORY_ROOM04_*
- * in src/story.h for these keys. The decorative wall tile at (18,4) is
- * fully solid (blocks_passage and blocks_view both set, assets/tiles.ctil)
- * and unreachable - just a sealed-door graphic, no interaction wired.
+ * rooms/04.rc for the door/stairs-up/mirror/Mara dispatch and
+ * STORY_ROOM04_* in src/story.h for these keys.
  *
  * The stairs up to the kitchen (room 03, tile 10,1) are at (16,1) here, an
  * already-walkable tile (67) in the alcove. Stepping onto it transitions
  * immediately (rooms/c/04_enter_tile.c) rather than requiring Use.
+ *
+ * The entry alcove (where the stairs land) is separated from the rest of
+ * the cellar by a partition wall; its only opening is the locked door at
+ * (18,4). Using the Brass Key (type 10, from Pell) on it swaps the tile
+ * to plain floor (no separate "open door" graphic) and sets
+ * STORY_STATE_BASEMENT_DOOR_OPEN - dispatched from rooms/c/04_use_at.c,
+ * since the script DSL can't check inventory or mutate the tile grid.
+ * This is the real cellar gate now (MOONFEN_STORY_DESIGN.md section 5) -
+ * the stairs themselves (room 03) are unwarded.
  *
  * The two Braziers (object type 41, unlit) sit at tiles (11,3) and (13,3).
  * Using one while carrying a Lit Taper (type 53 - see rooms/c/
@@ -15,20 +22,24 @@
  * happen in game_ignite_brazier() (src/game_support.c), dispatched from
  * rooms/c/04_use_at.c since the script DSL has no opcode for either.
  *
- * The cracked moon mirror sits at tiles (12,1)/(12,2). Using the Silver
- * Shard (type 54, from Sir Caldus) on it repairs it - brightens its tiles
- * and adds Mara Moonfen (object type 37, already-authored art) beside it
- * at (13,1) - dispatched from rooms/c/04_use_at.c, since neither the
- * inventory check nor adding a room object is expressible in the script
- * DSL. STORY_ROOM04_LOOK_MIRROR and STORY_ROOM04_LOOK_MARA both branch on
- * STORY_STATE_MIRROR_REPAIRED so Look gives the right flavor before and
- * after. Mara's reveal (STORY_ROOM04_TALK_MARA) sets both
- * STORY_STATE_MARA_REVEALED and STORY_STATE_HOST_REVEALED - the finale
- * (a later step) gates on the latter. The Recipe Stone (object type 63,
- * tile 5,8; placeholder scenery) only gives its real text once Mara has
- * been revealed, matching the design doc's "becomes readable/useful"
- * after she appears; the fixed Witchlight (type 64, tile 17,2) is
- * unconditional flavor/light, present from the start. */
+ * The cracked moon mirror sits at tiles (12,1)/(12,2). Repairing it needs
+ * both the Silver Shard (type 54, from Sir Caldus) *and* the Moon Brooch
+ * worn (STORY_STATE_MOON_BROOCH_WORN, toggled from the inventory screen -
+ * see story/story.c) - using the shard while carrying but not wearing the
+ * brooch gets its own hint (STORY_ROOM04_USE_MIRROR_NEED_BROOCH) instead
+ * of repairing anything. Repairing brightens the mirror's tiles and adds
+ * Mara Moonfen (object type 37, already-authored art) beside it at
+ * (13,1) - dispatched from rooms/c/04_use_at.c, since none of this is
+ * expressible in the script DSL. STORY_ROOM04_LOOK_MIRROR and
+ * STORY_ROOM04_LOOK_MARA both branch on STORY_STATE_MIRROR_REPAIRED so
+ * Look gives the right flavor before and after. Mara's reveal
+ * (STORY_ROOM04_TALK_MARA) sets both STORY_STATE_MARA_REVEALED and
+ * STORY_STATE_HOST_REVEALED - the finale (a later step) gates on the
+ * latter. The Recipe Stone (object type 63, tile 5,8; placeholder
+ * scenery) only gives its real text once Mara has been revealed,
+ * matching the design doc's "becomes readable/useful" after she appears;
+ * the fixed Witchlight (type 64, tile 17,2) is unconditional flavor/
+ * light, present from the start. */
 room 04 {
     entry STORY_ROOM04_ASCEND_STAIRS {
         room_transition 3 20 4
@@ -59,6 +70,25 @@ room 04 {
     }
     entry STORY_ROOM04_USE_MIRROR_NO_ITEM {
         text "The crack runs deep. Whatever fits it, you don't have it."
+    }
+    entry STORY_ROOM04_USE_MIRROR_NEED_BROOCH {
+        text "The shard fits the crack, but nothing happens. Some part of this feels unfinished - as if the mirror is waiting on you, not the other way around."
+    }
+    entry STORY_ROOM04_LOOK_DOOR {
+        check_flag STORY_STATE_BASEMENT_DOOR_OPEN == 0 {
+            text "A door of old, dark wood, bound in iron. The lock looks like it wants a plain brass key."
+        } else {
+            text "The door stands open, its lock long since given up."
+        }
+    }
+    entry STORY_ROOM04_UNLOCK_DOOR {
+        text "The brass key turns easily, as though it were always meant for this lock. The door swings open onto the cellar beyond."
+    }
+    entry STORY_ROOM04_DOOR_ALREADY_OPEN {
+        text "The door stands open."
+    }
+    entry STORY_ROOM04_DOOR_LOCKED {
+        text "The door is locked. It wants a key."
     }
     entry STORY_ROOM04_LOOK_MARA {
         check_flag STORY_STATE_MIRROR_REPAIRED == 0 {

@@ -35,6 +35,7 @@ void game_state_init(void) {
     game_state.maximum_mana = 20u;
     game_entry_reason = GAME_ENTRY_STARTUP;
     game_player_sync_from_platform();
+    game_player_light_sync();
 }
 
 void game_enter_tile(void) {
@@ -54,6 +55,13 @@ void game_enter_tile(void) {
 void game_enter_room(void) {
     uint8_t bank;
     platform_rain_disable();
+    /* Re-derive the hero's light radius from current inventory on every
+     * room transition - the only other call sites (rooms/c/02_use_at.c's
+     * hearth-ignite action and modules/saveload.c's load-restore) only
+     * cover the moment the taper is lit or a save is loaded, not every way
+     * a room can be entered afterward. Idempotent and cheap; see
+     * src/hero_light.c. */
+    game_player_light_sync();
     bank = env_bank_for_room(game_state.current_room);
     if (bank == 0xffu) {
         env_install_null();

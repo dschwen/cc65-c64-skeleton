@@ -10,8 +10,11 @@
  * No keyword list is shown anywhere (by design - see GAME_DESIGNER_GUIDE.md
  * on discovery): every answer below is written to name at least one more
  * word worth asking about, so a player who only ever thinks to ask "name"
- * and "job" can still work outward to "inn", "corridor", "invitation",
- * "seal" and "vey" from what Pell says. */
+ * and "job" can work outward through "inn", "corridor", "invitation",
+ * "seal" and "vey" - and from there through "letters", "packages",
+ * "weather", "guests", "wax", "door", "courier" and "towns" - to the whole
+ * web below. Typing "bye" (modules/script.c's run_conversation()) ends the
+ * conversation the same way RUN/STOP does, with a short farewell line. */
 conversation pell {
     topic "name" {
         text "\"Thimble. Pell Thimble. Courier, ordinarily.\""
@@ -33,6 +36,30 @@ conversation pell {
     }
     topic "vey" {
         text "\"He keeps the peace here, such as it is. I'd rather he kept the door unlocked.\""
+    }
+    topic "letters" {
+        text "\"Mostly deliveries between the coastal towns - a few personal ones too, when someone trusts a courier with them.\""
+    }
+    topic "packages" {
+        text "\"Nothing fragile, if I can help it. Grain, tools, the odd bolt of cloth for whoever's paying.\""
+    }
+    topic "weather" {
+        text "\"It's been foul for days - the kind of storm that makes a man glad of any roof, even one as strange as this.\""
+    }
+    topic "guests" {
+        text "\"Vey keeps saying 'the guests' like we're one thing. I've never even met the others properly - just passed them in the corridor.\""
+    }
+    topic "wax" {
+        text "\"Blue, like I said. If you find a scrap of sealing wax like that, it's mine.\""
+    }
+    topic "door" {
+        text "\"Vey holds the keys to every door in this place but his own room. Convenient, that.\""
+    }
+    topic "courier" {
+        text "\"It's steady work, when the roads are open. Better than farming, worse than owning the farm.\""
+    }
+    topic "towns" {
+        text "\"Little places, mostly - not the kind that get a name on most maps.\""
     }
     topic "*" {
         text "\"I couldn't tell you. Ask Vey, perhaps - he seems to have opinions about everything.\""

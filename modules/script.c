@@ -515,19 +515,50 @@ static uint16_t find_room_entry(uint8_t entry_count, uint8_t key) {
     return 0u;
 }
 
+/* Reserved exit keyword, checked before any topic lookup - typed "bye"
+ * (any case, per read_keyword()'s own fold) ends the conversation the same
+ * way RUN/STOP does, just with a short farewell line first. Plain ASCII
+ * uppercase (66,89,69), matching tools/compile_script.py's own topic-
+ * keyword encoding (topic.keyword.upper().encode("ascii")) and
+ * read_keyword()'s post-fold output range - no separate encoding step
+ * needed. Deliberately spelled with *lowercase* source letters: this
+ * file's #pragma charmap (src/platform.h:9-10) reassigns uppercase source
+ * characters to 193-218 (this charset's "shifted" glyph range) and
+ * lowercase source characters to 65-90 (plain ASCII uppercase, the
+ * "unshifted" glyph range read_keyword()'s own fold and compile_script.py
+ * both actually use) - writing 'B','Y','E' here would silently compile to
+ * the wrong domain and never match. Generic, not Pell-specific: this loop
+ * is shared by every conversation. */
+static const uint8_t bye_keyword[KEYWORD_BYTES] = {'b', 'y', 'e', 0u};
+
+static uint8_t prefix_is_bye(const uint8_t* prefix) {
+    uint8_t j;
+    for (j = 0u; j < KEYWORD_BYTES; ++j) {
+        if (prefix[j] != bye_keyword[j]) return 0u;
+    }
+    return 1u;
+}
+
 /* One conversation: prompt, read a keyword, run the matching topic (or the
  * "*" fallback), and let the player read the answer before the prompt comes
  * back. No banner text and no RUN/STOP hint - just "> " and a blinking
  * cursor (read_keyword()); RUN/STOP still leaves, discovered the same way
  * as everything else here (see GAME_DESIGNER_GUIDE.md's discovery note).
- * Leaves on RUN/STOP, or when a topic used CONVERSE to hand over to another
- * conversation. */
+ * Leaves on RUN/STOP, on typed "bye", or when a topic used CONVERSE to
+ * hand over to another conversation. */
 static void run_conversation(uint8_t topic_count) {
     uint8_t prefix[KEYWORD_BYTES];
     uint16_t entry;
 
     for (;;) {
         if (!read_keyword(prefix)) return;
+        if (prefix_is_bye(prefix)) {
+            platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
+            platform_text_output_color = 1u;
+            platform_text_output_native("\"Farewell, then.\"");
+            wait_fresh_key();
+            return;
+        }
         entry = find_topic(topic_count, prefix, 0u);
         if (entry == 0u) entry = find_topic(topic_count, prefix, 1u);
         script_text_shown = 0u;

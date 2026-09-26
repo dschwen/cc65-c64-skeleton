@@ -8,12 +8,14 @@
  *
  * The entry alcove (where the stairs land) is separated from the rest of
  * the cellar by a partition wall; its only opening is the locked door at
- * (18,4). Using the Brass Key (type 10, from Pell) on it swaps the tile
- * to plain floor (no separate "open door" graphic) and sets
- * STORY_STATE_BASEMENT_DOOR_OPEN - dispatched from rooms/c/04_use_at.c,
- * since the script DSL can't check inventory or mutate the tile grid.
- * This is the real cellar gate now (MOONFEN_STORY_DESIGN.md section 5) -
- * the stairs themselves (room 03) are unwarded.
+ * (18,4), tile 6 (the locked-door graphic) until opened. Using the Brass
+ * Key (type 10, from Pell) on it swaps the tile to tile 5, the same
+ * walkable open-door graphic rooms 03 and 05 already use for their own
+ * doors, and sets STORY_STATE_BASEMENT_DOOR_OPEN - dispatched from
+ * rooms/c/04_use_at.c, since the script DSL can't check inventory or
+ * mutate the tile grid. This is the real cellar gate now
+ * (MOONFEN_STORY_DESIGN.md section 5) - the stairs themselves (room 03)
+ * are unwarded.
  *
  * The two Braziers (object type 41, unlit) sit at tiles (11,3) and (13,3).
  * Using one while carrying a Lit Taper (type 53 - see rooms/c/

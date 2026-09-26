@@ -1,7 +1,8 @@
 /* Fallback for room 04's use_at. Handles:
  *   - the entry alcove's locked door (18,4): carrying the Brass Key
- *     (type 10) unlocks it - swaps the tile to plain floor (there's no
- *     separate "open door" graphic) so the player can pass. This is the
+ *     (type 10) unlocks it - swaps the tile from the locked-door graphic
+ *     (tile 6) to the same walkable open-door tile (5) already used for
+ *     room 03's and room 05's doors, so the player can pass. This is the
  *     *only* connection between the alcove and the rest of the cellar
  *     (assets/04's own tile grid blocks the old south passage at
  *     x=15,y=7-9), so the key is mandatory to reach the mirror, Mara, or
@@ -33,7 +34,7 @@ uint8_t use_at_fallback(uint8_t tile_x, uint8_t tile_y) {
              * room->tiles[] (confirmed in src/world.c), so this tile
              * swap needs its own reapply on every room entry instead;
              * see rooms/c/04_enter_room.c. */
-            platform_room.tiles[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x] = 11u;
+            platform_room.tiles[(uint16_t)tile_y * PLATFORM_MAP_WIDTH + tile_x] = 5u;
             game_state.flags[14] = 1u; /* STORY_STATE_BASEMENT_DOOR_OPEN */
             platform_room_draw(&platform_room, platform_player);
             (void)game_room_script_entry(15u); /* STORY_ROOM04_UNLOCK_DOOR */

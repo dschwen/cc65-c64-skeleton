@@ -43,6 +43,33 @@ static uint8_t object_equal(const PlatformObject* left,
 }
 
 /*
+ * Does slot i of `room` need a delta recorded against the pristine
+ * baseline? Single source of truth for both of world_store()'s passes -
+ * the capacity precheck must count exactly what the write pass emits.
+ *
+ * The player object lives *inside* room->objects[] (platform_player points
+ * into platform_room.objects), so its own type/x/y must never be recorded
+ * as room content: x/y change every step, and a recorded copy would
+ * resurrect a frozen duplicate player actor on the next visit. But the
+ * slot itself still has room state worth persisting: the player is only
+ * ever placed by platform_room_object_add(), which exclusively picks slots
+ * whose type is already 0, so the room content of the player's slot is
+ * *always* empty - and it is empty either because the pristine asset had
+ * no object there (nothing to record) or because a delta cleared it (e.g.
+ * a Take), in which case that delta must survive, since world_store()
+ * rebuilds this room's delta list from scratch every time. Comparing the
+ * synthetic empty content against the baseline's type (rather than trying
+ * to preserve an old delta by hand) is what keeps it alive across every
+ * later visit, however many times the player happens to land in that slot.
+ */
+static uint8_t slot_delta_needed(const PlatformRoom* room, uint16_t i) {
+    if (&room->objects[i] == platform_player) {
+        return room_object_baseline[i].type != 0u ? 1u : 0u;
+    }
+    return object_equal(&room->objects[i], &room_object_baseline[i]) ? 0u : 1u;
+}
+
+/*
  * Preflight one actor slot in `room` (always called with room_stage's own
  * address, the staged destination room, before any delta from
  * game_world_deltas has been applied to it) - native (oscar64 C)
@@ -90,8 +117,7 @@ static uint8_t world_store(const PlatformRoom* room) {
     }
     changed = 0u;
     for (i = 0u; i < PLATFORM_ROOM_OBJECT_COUNT; ++i) {
-        if (&room->objects[i] == platform_player) continue;
-        if (!object_equal(&room->objects[i], &room_object_baseline[i])) ++changed;
+        if (slot_delta_needed(room, i)) ++changed;
     }
     if (existing + changed > GAME_WORLD_DELTA_CAPACITY) {
         return PLATFORM_ERR_FULL;
@@ -105,11 +131,21 @@ static uint8_t world_store(const PlatformRoom* room) {
         }
     }
     for (i = 0u; i < PLATFORM_ROOM_OBJECT_COUNT; ++i) {
-        if (&room->objects[i] == platform_player ||
-            object_equal(&room->objects[i], &room_object_baseline[i])) continue;
+        if (!slot_delta_needed(room, i)) continue;
         game_world_deltas[write].room = room->id;
         game_world_deltas[write].slot = (uint8_t)i;
-        game_world_deltas[write].object = room->objects[i];
+        if (&room->objects[i] == platform_player) {
+            /* Never the player's own type/x/y - see slot_delta_needed().
+             * Zeroed exactly like platform_room_object_remove() leaves a
+             * cleared slot (modules/room_helpers.c), so the delta is
+             * idempotent across visits and world_restore() reproduces the
+             * same bytes the original removal produced. */
+            game_world_deltas[write].object.type = 0u;
+            game_world_deltas[write].object.x = 0u;
+            game_world_deltas[write].object.y = 0u;
+        } else {
+            game_world_deltas[write].object = room->objects[i];
+        }
         ++write;
     }
     game_world_delta_count = write;
@@ -157,7 +193,14 @@ void game_world_reset(void) {
            sizeof(room_object_baseline));
     /* platform_player is always valid here: this function's only caller
      * (game_world_init()) runs right after platform_init(), which
-     * unconditionally sets platform_player before returning. */
+     * unconditionally sets platform_player before returning. Zeroing the
+     * spawn slot's baseline here (rather than leaving the spawn actor's
+     * own data in it) is what keeps the very first world_store() call for
+     * this room from treating the spawn slot's true "empty" state as a
+     * change under slot_delta_needed()'s rule above - every later
+     * transition already gets a clean (player-free) baseline for free,
+     * since world_restore() runs on room_stage before the player is added
+     * to it (see platform_room_enter() in src/platform.c). */
     memset(&room_object_baseline[platform_player_slot], 0,
            sizeof(PlatformObject));
     baseline_room = platform_room.id;

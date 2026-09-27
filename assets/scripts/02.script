@@ -10,9 +10,14 @@
  * now.
  *
  * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY/STORY_ROOM02_TALK_CALDUS
- * are one-time scripted first-meeting greetings, each gated on its own
- * STORY_STATE_ROOM_02_MET_* flag - the full topic-based "Ask about..."
- * conversation is a later pass. Portrait 0 is Sir Caldus (visor closed) -
+ * each have a one-time scripted first-meeting greeting (gated on their own
+ * STORY_STATE_ROOM_02_MET_* flag) followed unconditionally by `converse`
+ * into their own topic-based "Ask about" conversation - assets/scripts/
+ * conversations/20.script (Orra), 21.script (Vey), 22.script (Caldus).
+ * Those IDs are a "room 02, NPC slot" readability convention only -
+ * conversation IDs are their own independent 0-255 space, unrelated to
+ * room IDs (see 05.script, Pell's conversation, for the full rationale).
+ * Portrait 0 is Sir Caldus (visor closed) -
  * shown on both Look and Use/Talk. Portrait IDs 1 (Orra) and 2 (Vey) are
  * still placeholder references: neither has art authored yet
  * (assets/portraits/01, /02 - the asset editor's Portrait mode), so
@@ -70,8 +75,12 @@ room 02 {
         } else {
             text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
         }
-        wait_key
-        portrait_hide
+        /* No wait_key/portrait_hide here - converse defers to
+         * script_banked_run() (modules/script.c), which already waits for
+         * a fresh key before handing over whenever this entry's own text
+         * left something on screen; see assets/scripts/conversations/
+         * 05.script's TALK_PELL for the same pattern. */
+        converse 20
     }
     entry STORY_ROOM02_LOOK_VEY {
         text "The innkeeper wipes down the bar, glancing up at every creak of the door."
@@ -90,8 +99,12 @@ room 02 {
         } else {
             text "\"Still finding your feet, traveler?\" Vey says. \"The offer stands.\""
         }
-        wait_key
-        portrait_hide
+        /* No wait_key/portrait_hide here - converse defers to
+         * script_banked_run() (modules/script.c), which already waits for
+         * a fresh key before handing over whenever this entry's own text
+         * left something on screen; see assets/scripts/conversations/
+         * 05.script's TALK_PELL for the same pattern. */
+        converse 21
     }
     entry STORY_ROOM02_LOOK_CALDUS {
         portrait_show 0 right
@@ -111,8 +124,12 @@ room 02 {
         } else {
             text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
         }
-        wait_key
-        portrait_hide
+        /* No wait_key/portrait_hide here - converse defers to
+         * script_banked_run() (modules/script.c), which already waits for
+         * a fresh key before handing over whenever this entry's own text
+         * left something on screen; see assets/scripts/conversations/
+         * 05.script's TALK_PELL for the same pattern. */
+        converse 22
     }
     entry STORY_ROOM02_ENTER_KITCHEN {
         room_transition 3 12 18

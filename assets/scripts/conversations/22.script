@@ -1,0 +1,44 @@
+/* Sir Caldus's "Ask about" conversation - reached from
+ * STORY_ROOM02_TALK_CALDUS and STORY_ROOM02_CALDUS_FREE (assets/scripts/
+ * 02.script) once he and the player have met, via `converse`. See
+ * conversations/05.script's header for why this ID is independent of any
+ * room ID.
+ *
+ * Caldus is associated with the silver-tower sigil
+ * (MOONFEN_STORY_DESIGN.md's "Sir Caldus" section) - confirmed
+ * independently by the silver-tower guest door in room 05
+ * (STORY_ROOM05_LOOK_SILVER_DOOR). Wry and a little self-deprecating
+ * about his fallen order, in contrast to Vey's confidence and Orra's
+ * guardedness. */
+conversation caldus {
+    topic "name" {
+        text "\"Sir Caldus, formerly of the Silver Tower. Formerly a great many things, of late.\""
+    }
+    topic "job" {
+        text "\"A knight, when there was a tower left to serve. Now I mostly sit by fires.\""
+    }
+    topic "tower" {
+        text "\"The Silver Tower fell before I ever earned my spurs there properly. I carry its sigil out of habit more than duty.\""
+    }
+    topic "oil" {
+        text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
+    }
+    topic "visor" {
+        text "\"Seized somewhere on the road, in the wet. Vanity's price, wearing plate in a storm.\""
+    }
+    topic "storm" {
+        text "\"It caught all of us the same way, I'd wager - out on the road, glad of any roof.\""
+    }
+    topic "vey" {
+        text "\"Keeps a fair table, whatever else is said of him.\""
+    }
+    topic "orra" {
+        text "\"A watchful woman. I'd rather have her at my back than against me.\""
+    }
+    topic "pell" {
+        text "\"Decent sort, for a courier. Worries more than a soldier should have to.\""
+    }
+    topic "*" {
+        text "\"Can't say I know much of that.\""
+    }
+}

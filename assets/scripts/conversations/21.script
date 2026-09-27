@@ -1,0 +1,47 @@
+/* Master Vey's "Ask about" conversation - reached from
+ * STORY_ROOM02_TALK_VEY (assets/scripts/02.script) once he and the player
+ * have met, via `converse`. See conversations/05.script's header for why
+ * this ID is independent of any room ID.
+ *
+ * Vey is the apparent authority figure and the source of the game's
+ * initial, misleading framing of events (MOONFEN_STORY_DESIGN.md's
+ * "Master Vey" section - "supplies misleading initial interpretation").
+ * His answers here are confident and a little evasive, matching that -
+ * nothing here is an outright lie, but "cellar" and "robbery" both stop
+ * short of the truth the finale (STORY_ROOM02_RING_BELL) eventually
+ * reveals. */
+conversation vey {
+    topic "name" {
+        text "\"Vey. I've kept this inn twelve years, and never a night like this one.\""
+    }
+    topic "job" {
+        text "\"Innkeeper, same as my father before me. Someone has to mind the fire and the ledger both.\""
+    }
+    topic "inn" {
+        text "\"Moonfen Inn keeps its guests until accounts are settled. That's the old rule, and I didn't make it.\""
+    }
+    topic "guests" {
+        text "\"Four of you, counting yourself, and not one willing to just wait out the storm quietly.\""
+    }
+    topic "robbery" {
+        text "\"A guest lost something valuable, the night before you arrived. I'd like it back, or an honest answer.\""
+    }
+    topic "storm" {
+        text "\"Worst I've seen in years. The road's been closed since before you knocked.\""
+    }
+    topic "cellar" {
+        text "\"Locked, and best left that way. It's older than the inn, and none of your concern.\""
+    }
+    topic "orra" {
+        text "\"Keeps to herself. I don't ask a guest's business, so long as the bill's paid.\""
+    }
+    topic "caldus" {
+        text "\"A knight, or was one. Eats like one, at least.\""
+    }
+    topic "pell" {
+        text "\"A courier with no proof of his own room. Draw your own conclusions.\""
+    }
+    topic "*" {
+        text "\"That's not your concern, traveler.\""
+    }
+}

@@ -1,0 +1,40 @@
+/* Lady Orra's "Ask about" conversation - reached from
+ * STORY_ROOM02_TALK_ORRA (assets/scripts/02.script) once she and the
+ * player have met, via `converse`. See assets/scripts/conversations/
+ * 05.script's own header comment for why conversation IDs are their own
+ * independent 0-255 space, unrelated to room IDs - 20/21/22 here are just
+ * a "room 02, NPC slot" readability convention for the three tavern NPCs.
+ *
+ * Orra is associated with the pale-rose sigil (MOONFEN_STORY_DESIGN.md's
+ * "Lady Orra" section) - confirmed independently by the pale-rose guest
+ * door in room 05 (STORY_ROOM05_LOOK_ROSE_DOOR). She's guarded and
+ * composed rather than forthcoming; her answers stay short. */
+conversation orra {
+    topic "name" {
+        text "\"Orra will do. I've little use for the rest of it here.\""
+    }
+    topic "job" {
+        text "\"None, just now. I travel on my own business, when the roads allow it.\""
+    }
+    topic "inn" {
+        text "\"A strange house, holding its guests as if we were the trouble, not the storm.\""
+    }
+    topic "letter" {
+        text "\"Mine came the same way as everyone else's, I'd wager - torn, smeared, and no help to anyone.\""
+    }
+    topic "vey" {
+        text "\"He plays the wronged innkeeper well. I've yet to decide if he believes it himself.\""
+    }
+    topic "caldus" {
+        text "\"A knight who can't work his own visor. Harmless, I think - just proud.\""
+    }
+    topic "pell" {
+        text "\"The courier. Polite enough, for someone accused of nothing in particular.\""
+    }
+    topic "rose" {
+        text "\"A pale rose was my mother's mark, before it was mine. I didn't expect to see it again in a place like this.\""
+    }
+    topic "*" {
+        text "\"I couldn't say. Ask someone with more patience for this house than I have.\""
+    }
+}

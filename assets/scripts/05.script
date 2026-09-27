@@ -16,19 +16,28 @@
  * anything (see MOONFEN_STORY_DESIGN.md's Branches B and C). Use stays
  * "Locked." on all three.
  *
- * Pell Thimble (object type 44, tile 4,7) is the user's own addition. His
- * Blue Seal check (has the seal? has he seen both pieces of evidence?)
- * can't be expressed in the script DSL, so it's dispatched from
- * rooms/asm/05_use_at.s: STORY_ROOM05_TALK_PELL when the player has no
- * seal (or has already been helped), STORY_ROOM05_PELL_EARLY_SEAL when the
- * seal is offered before both evidence flags are set (kept, not
- * consumed), STORY_ROOM05_PELL_RESOLVE when both are set (the asm consumes
- * the seal before calling this entry; the entry itself hands over the
- * Brass Key - object type 10 - and sets PELL_HELPED).
+ * Pell Thimble (object type 44, tile 4,7) is the user's own addition.
+ * Using the Blue Seal at him directly no longer resolves anything -
+ * rooms/c/05_use_at.c just gives a redirect hint
+ * (STORY_ROOM05_PELL_SEAL_HINT) when the player carries it and isn't yet
+ * helped, which itself leads straight into `converse 5` (same as
+ * TALK_PELL) so the player can act on it immediately; STORY_ROOM05_
+ * TALK_PELL otherwise (no seal, or already helped - the "thanks again"
+ * repeat handles itself via check_flag). The Blue Seal check that used to
+ * live in that asm fallback (has the seal? has he seen both pieces of
+ * evidence?) is now entirely in story_topic_resolve()
+ * (modules/script.c - not story/story.c, despite being story-specific
+ * content; see that function's own comment for why): mentioning "seal"
+ * while talking to him resolves it in C if both evidence flags are set
+ * (consumes the seal, gives the Brass Key - object type 10 - and sets
+ * PELL_HELPED), or gives the existing "not proof enough" refusal (seal
+ * kept) if a clue is still missing. Same trigger-word pattern is used for
+ * Caldus/oil and Orra/
+ * letter in room 02 - see assets/scripts/02.script's header.
  *
  * TALK_PELL ends with `converse 5` (assets/scripts/conversations/05.script):
  * after Pell's scripted line for the visit, the player can ask him about
- * "name", "job", and whatever else his answers mention.
+ * "name", "job", "seal", and whatever else his answers mention.
  *
  * The torn invitation (object type 3, tile 5,7, the user's own addition -
  * currently takeable, same as any other pickup) is the first piece of
@@ -107,38 +116,12 @@ room 05 {
          * redundant keypress before the "Ask about" prompt appears. */
         converse 5
     }
-    entry STORY_ROOM05_PELL_EARLY_SEAL {
+    entry STORY_ROOM05_PELL_SEAL_HINT {
         portrait_show 4 left
-        text "Pell turns the seal over in his fingers, then hands it back."
-        wait_key
-        text "\"Blue wax, certainly. But that proves very little.\""
-        wait_key
-        text "\"Vey wants proof. And for once, I think he has a point.\""
-        wait_key
-        portrait_hide
-    }
-    entry STORY_ROOM05_PELL_RESOLVE {
-        portrait_show 4 left
-        text "Pell compares the seal with the torn invitation, then glances toward the blue-marked door."
-        wait_key
-        text "\"There. Same mark. Same wax. I knew I hadn't imagined the whole cursed thing.\""
-        wait_key
-        text "He presses the seal against the surviving corner of the invitation."
-        wait_key
-        text "\"That ought to satisfy even Vey.\""
-        wait_key
-        text "Pell searches his mailbag."
-        wait_key
-        text "\"I found this beneath the door when I arrived. Thought it was a room key, but it fits nothing upstairs.\""
-        give_object 10 1
-        wait_key
-        text "\"Odd thing, though. My invitation never named Vey.\""
-        wait_key
-        text "\"It said only that the host of Moonfen would receive the bearer before moonset.\""
-        wait_key
-        text "\"I assumed Vey was the host. Perhaps I assumed too much.\""
-        set_flag STORY_STATE_ROOM_05_PELL_HELPED 1
-        wait_key
-        portrait_hide
+        text "Pell eyes the seal in your palm, but doesn't reach for it. \"You'll have to actually tell me about it.\""
+        /* No wait_key/portrait_hide here - straight into conversation, same
+         * as STORY_ROOM05_TALK_PELL, so the player can immediately mention
+         * "seal" right where they were just told to. */
+        converse 5
     }
 }

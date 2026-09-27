@@ -1,8 +1,14 @@
 /* Fallback for room 02's use_at. Handles the three tiles that need an
  * inventory check the script DSL cannot express:
- *   - (14,1), Sir Caldus: carrying Lamp Oil (type 51) consumes it and
- *     runs STORY_ROOM02_CALDUS_FREE; otherwise the ordinary
- *     STORY_ROOM02_TALK_CALDUS greeting/repeat entry.
+ *   - (14,1), Sir Caldus: Using an item at him no longer resolves
+ *     anything directly - carrying Lamp Oil (type 51) and not yet freed
+ *     just gives a redirect hint (STORY_ROOM02_CALDUS_OIL_HINT) pointing
+ *     at conversation instead; the actual resolution happens by
+ *     mentioning "oil" while talking to him (story_conversation_topic(),
+ *     story/story.c, checked from modules/script.c's run_conversation()
+ *     before its own topic lookup). Otherwise the ordinary
+ *     STORY_ROOM02_TALK_CALDUS greeting/repeat entry, which itself leads
+ *     into that same conversation via `converse`.
  *   - (12,1), the hearth: carrying an unlit Long Taper (type 52) consumes
  *     it, adds a Lit Taper (type 53) and runs STORY_ROOM02_LIGHT_TAPER;
  *     already carrying a Lit Taper runs STORY_ROOM02_LIGHT_TAPER_ALREADY;
@@ -13,9 +19,11 @@
  *     collects a scoop of it from the embers (STORY_ROOM02_COLLECT_ASH);
  *     already holding it falls back to the plain STORY_ROOM02_
  *     LIGHT_TAPER_NO_ITEM flavor, since there's nothing further to do here.
- *   - (17,9), Lady Orra: carrying the revealed Orra Invite (type 57,
- *     rooms/c/03_use_at.c's kettle steam reveal) consumes it and runs
- *     STORY_ROOM02_ORRA_RESOLVE; otherwise the ordinary
+ *   - (17,9), Lady Orra: same redirect-hint pattern as Caldus - carrying
+ *     the revealed Orra Invite (type 57, rooms/c/03_use_at.c's kettle
+ *     steam reveal) and not yet helped just gives a hint
+ *     (STORY_ROOM02_ORRA_INVITE_HINT); mentioning "letter" while talking
+ *     to her is what actually resolves it. Otherwise the ordinary
  *     STORY_ROOM02_TALK_ORRA greeting/repeat entry (which itself gives
  *     the Blank Letter on first meeting, script-side - see
  *     assets/scripts/02.script).
@@ -28,9 +36,9 @@
  *     directly from rooms/02.rc rather than from here. */
 uint8_t use_at_fallback(uint8_t tile_x, uint8_t tile_y) {
     if (tile_x == 14u && tile_y == 1u) {
-        if (game_inventory_has_one(51u)) { /* LAMP_OIL_TYPE */
-            game_inventory_remove_one(51u);
-            (void)game_room_script_entry(9u); /* STORY_ROOM02_CALDUS_FREE */
+        if (!game_state.flags[9] && game_inventory_has_one(51u)) {
+            /* STORY_STATE_ROOM_02_CALDUS_FREED; LAMP_OIL_TYPE */
+            (void)game_room_script_entry(9u); /* STORY_ROOM02_CALDUS_OIL_HINT */
         } else {
             (void)game_room_script_entry(6u); /* STORY_ROOM02_TALK_CALDUS */
         }
@@ -56,9 +64,9 @@ uint8_t use_at_fallback(uint8_t tile_x, uint8_t tile_y) {
     }
 
     if (tile_x == 17u && tile_y == 9u) {
-        if (game_inventory_has_one(57u)) { /* Orra Invite */
-            game_inventory_remove_one(57u);
-            (void)game_room_script_entry(14u); /* STORY_ROOM02_ORRA_RESOLVE */
+        if (!game_state.flags[16] && game_inventory_has_one(57u)) {
+            /* STORY_STATE_ROOM_02_ORRA_HELPED; Orra Invite */
+            (void)game_room_script_entry(14u); /* STORY_ROOM02_ORRA_INVITE_HINT */
         } else {
             (void)game_room_script_entry(2u); /* STORY_ROOM02_TALK_ORRA */
         }

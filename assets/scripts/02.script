@@ -23,26 +23,35 @@
  * (assets/portraits/01, /02 - the asset editor's Portrait mode), so
  * portrait_show renders a blank box there for now.
  *
- * Caldus's Lamp Oil payoff (STORY_ROOM02_CALDUS_FREE), the hearth's Long
- * Taper lighting (STORY_ROOM02_LIGHT_TAPER/_ALREADY/_NO_ITEM), and now
- * Lady Orra's Invite payoff (STORY_ROOM02_ORRA_RESOLVE) are dispatched
- * from a hand-written asm fallback (rooms/c/02_use_at.c) rather than a
- * plain `at X,Y` entry in rooms/02.rc - the script DSL has no opcode to
- * check or consume inventory contents (though it can add - see
- * `give_object` below), so the has-item/consume-item logic lives in that
- * fragment and calls into these entries by key. Lamp Oil is object type
- * 51, Long Taper is object type 52, and lighting the taper swaps it in
- * inventory for a Lit Taper (type 53, a minimal light source,
- * assets/objects.cobj) - the item's own type is the persistent "is it
- * lit" state rather than a separate flag. Freeing Caldus hands over the
- * Silver Shard (type 54) and meeting/resolving Orra hands over the Blank
- * Letter (type 56) then the Moon Brooch (type 55) - three of the four
- * cellar-token items (MOONFEN_STORY_DESIGN.md section 5) - via
- * `give_object` directly in each entry's own script text, each gated the
- * same way its dialogue already is (a check_flag == 0 branch), so each is
- * only given once. Orra's Blank Letter is revealed into the Orra Invite
- * (type 57) at the kitchen kettle - see rooms/c/03_use_at.c - before it
- * can be returned to her here.
+ * Caldus's Lamp Oil payoff and Lady Orra's Invite payoff no longer
+ * resolve from Using the item directly at the NPC - that now only gives
+ * a redirect hint (STORY_ROOM02_CALDUS_OIL_HINT / _ORRA_INVITE_HINT,
+ * dispatched from rooms/c/02_use_at.c, gated on carrying the item and not
+ * yet resolved). The actual resolution happens by mentioning the item's
+ * trigger word ("oil" / "letter") while talking to them, handled entirely
+ * in C by story_conversation_topic() (story/story.c), checked from
+ * modules/script.c's run_conversation() before its own topic lookup -
+ * consuming the item, giving the payoff item, and setting the flag all
+ * happen there now, not in this file, since giving text its own multi-
+ * line beat there duplicates what used to live here rather than calling
+ * back into it (a conversation is already deep inside the same banked
+ * script interpreter a room-script entry would need to re-enter via
+ * another far_call_bank - see story_conversation_topic()'s own comment).
+ * Freeing Caldus hands over the Silver Shard (type 54); resolving Orra
+ * hands over the Moon Brooch (type 55) - two of the three cellar-token
+ * items (MOONFEN_STORY_DESIGN.md section 5); the third, the Brass Key, is
+ * Pell's payoff (assets/scripts/05.script). Orra's Blank Letter (type 56,
+ * still given script-side, in STORY_ROOM02_TALK_ORRA below) is revealed
+ * into the Orra Invite (type 57) at the kitchen kettle - see
+ * rooms/c/03_use_at.c - before "letter" can resolve anything with her.
+ *
+ * The hearth's Long Taper lighting (STORY_ROOM02_LIGHT_TAPER/_ALREADY/
+ * _NO_ITEM) is a plain Use-at-fixture interaction (no NPC, no
+ * conversation to redirect to) and is unaffected - still dispatched from
+ * rooms/c/02_use_at.c the same way it always was. Long Taper is object
+ * type 52, and lighting it swaps it in inventory for a Lit Taper (type
+ * 53, a minimal light source, assets/objects.cobj) - the item's own type
+ * is the persistent "is it lit" state rather than a separate flag.
  *
  * The finale (MOONFEN_STORY_DESIGN.md section 10) uses two new fixtures:
  * the dining table (15,4, an existing furniture tile, not a placed
@@ -134,43 +143,18 @@ room 02 {
     entry STORY_ROOM02_ENTER_KITCHEN {
         room_transition 3 12 18
     }
-    entry STORY_ROOM02_CALDUS_FREE {
+    entry STORY_ROOM02_CALDUS_OIL_HINT {
         portrait_show 0 right
-        check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
-            text "You press the vial of lamp oil into the seized hinge and work the visor back and forth."
-            wait_key
-            text "With a screech of metal it finally gives, and Sir Caldus draws a first unmuffled breath."
-            wait_key
-            text "\"You have my thanks - truly,\" he says. \"If you ever need a blade at your back, ask.\""
-            wait_key
-            text "He presses something small and cold into your hand - a shard of silver, etched with a tower's sigil."
-            give_object 54 1
-            wait_key
-            text "\"Take it. It marked me once as Silver Tower. Perhaps it will open a door for you instead.\""
-            set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
-        } else {
-            text "\"Still breathing easy, thanks to you,\" Caldus says, tapping his now-loose visor."
-        }
-        wait_key
-        portrait_hide
+        text "Sir Caldus eyes the vial in your hand, but doesn't reach for it. \"Tell me plainly what you've brought, rather than waving it at me.\""
+        /* No wait_key/portrait_hide here - straight into conversation, same
+         * as STORY_ROOM02_TALK_CALDUS, so the player can immediately
+         * mention "oil" right where they were just told to. */
+        converse 22
     }
-    entry STORY_ROOM02_ORRA_RESOLVE {
+    entry STORY_ROOM02_ORRA_INVITE_HINT {
         portrait_show 1 right
-        check_flag STORY_STATE_ROOM_02_ORRA_HELPED == 0 {
-            text "Lady Orra takes the letter, and her composure slips for just a moment as she reads it."
-            wait_key
-            text "\"So it was meant for me after all,\" she says quietly. \"I wondered.\""
-            wait_key
-            text "She unpins a small brooch from her collar, shaped like a crescent moon."
-            give_object 55 1
-            wait_key
-            text "\"Take this. Whatever door it was meant for, I'd rather you reach it than I.\""
-            set_flag STORY_STATE_ROOM_02_ORRA_HELPED 1
-        } else {
-            text "\"Whatever you find down there,\" Lady Orra says, \"I hope it's worth the asking.\""
-        }
-        wait_key
-        portrait_hide
+        text "Lady Orra glances at the letter in your hand, but says nothing. Perhaps you should simply tell her what it says."
+        converse 20
     }
     entry STORY_ROOM02_LIGHT_TAPER {
         text "You touch the taper to the hearth's embers, and it catches, flame steady."

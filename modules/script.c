@@ -539,6 +539,119 @@ static uint8_t prefix_is_bye(const uint8_t* prefix) {
     return 1u;
 }
 
+static uint8_t prefix_is(const uint8_t* prefix, const uint8_t* word) {
+    uint8_t j;
+    for (j = 0u; j < KEYWORD_BYTES; ++j) {
+        if (prefix[j] != word[j]) return 0u;
+    }
+    return 1u;
+}
+
+static void topic_say(const char* text) {
+    platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
+    platform_text_output_color = 1u;
+    platform_text_output_native(text);
+    wait_fresh_key();
+}
+
+/*
+ * Trigger-word puzzle resolutions, checked in run_conversation() before
+ * its own topic lookup, for every conversation: mentioning the right word
+ * while carrying the right item resolves a puzzle immediately, instead of
+ * needing to Use the item at the NPC (which now only gives a redirect
+ * hint - see rooms/c/02_use_at.c and rooms/c/05_use_at.c). Returns 1 if
+ * this call was fully handled (text already shown and dismissed) - the
+ * caller must skip its own topic lookup for this input; returns 0
+ * (nothing to resolve, or already resolved) to let the normal
+ * conversation flow proceed unchanged, which is what shows each topic's
+ * ordinary flavor text instead.
+ *
+ * This is story-specific content (references particular object types,
+ * flags and conversation IDs), which would normally live in story/
+ * story.c's own hook functions (see story_use_inventory() there) rather
+ * than in this generic engine file - but it's defined here instead,
+ * specifically to avoid spending resident RAM on it: story.c is entirely
+ * resident (called from banked callers like an ordinary function, per
+ * memmap.h's far_call_bank() rule), and this function's three separate
+ * multi-line resolutions were large enough on their own to overflow that
+ * already razor-thin budget (confirmed live: "oscar64: error 3034: Cannot
+ * place stack section" the first time this was written in story.c). This
+ * file is already banked (BANK_SCRIPT, src/banks.h) with ample headroom,
+ * and is the only caller, so keeping it here costs nothing scarce.
+ *
+ * Calling game_room_script_entry() from here to reuse the room-script
+ * text these resolutions used to live in (STORY_ROOM02_CALDUS_FREE etc.,
+ * now deleted) was considered and rejected: this function runs from
+ * inside run_conversation(), itself already deep inside this same file's
+ * exec_resource()/script_banked_run() call chain for the *current*
+ * conversation resource. game_room_script_entry() would trigger a nested
+ * far_call_bank() back into script_banked_run() for a *different*
+ * resource (kind ROOM), clobbering the shared script_resource_kind/
+ * script_resource_id/script_buf window state this same conversation is
+ * still mid-way through using - exactly the hazard CONVERSE's own
+ * deferred-until-return handling (script_banked_run()'s "while
+ * (script_conversation_pending)" loop) exists to avoid. So each
+ * resolution's text is written directly here instead, in full.
+ *
+ * Conversation IDs: assets/scripts/conversations/05 (Pell), 20 (Orra), 22
+ * (Caldus) - see those files and assets/scripts/02.script's header for
+ * the numbering convention. Trigger words are deliberately spelled with
+ * lowercase source letters, matching bye_keyword's own comment above
+ * ([[project_charmap_source_literal_footgun]]) - uppercase would silently
+ * compile to the wrong byte range and never match.
+ */
+static uint8_t story_topic_resolve(const uint8_t* prefix) {
+    static const uint8_t oil_word[KEYWORD_BYTES]    = {'o', 'i', 'l', 0u};
+    static const uint8_t seal_word[KEYWORD_BYTES]   = {'s', 'e', 'a', 'l'};
+    static const uint8_t letter_word[KEYWORD_BYTES] = {'l', 'e', 't', 't'};
+
+    if (script_resource_id == 22u && prefix_is(prefix, oil_word)) {
+        if (game_state.flags[9] || !game_inventory_has_one(51u)) {
+            return 0u; /* STORY_STATE_ROOM_02_CALDUS_FREED; Lamp Oil */
+        }
+        game_inventory_remove_one(51u);
+        topic_say("With a screech of metal the seized visor finally gives, and Sir Caldus draws a first unmuffled breath.");
+        game_inventory_add_one(54u); /* Silver Shard */
+        topic_say("\"You have my thanks - truly,\" he says, pressing something small and cold into your hand - a shard of silver, etched with a tower's sigil.");
+        game_state.flags[9] = 1u; /* STORY_STATE_ROOM_02_CALDUS_FREED */
+        topic_say("\"Take it. It marked me once as Silver Tower. Perhaps it will open a door for you instead.\"");
+        return 1u;
+    }
+
+    if (script_resource_id == 5u && prefix_is(prefix, seal_word)) {
+        if (game_state.flags[13] || !game_inventory_has_one(43u)) {
+            return 0u; /* STORY_STATE_ROOM_05_PELL_HELPED; Blue Seal */
+        }
+        if (!(game_state.flags[11] && game_state.flags[12])) {
+            /* STORY_STATE_ROOM_05_PELL_INVITE_SEEN, _BLUE_DOOR_SEEN */
+            topic_say("Pell turns the seal over in his fingers, then hands it back. \"Blue wax, certainly. But that proves very little.\"");
+            topic_say("\"Vey wants proof. And for once, I think he has a point.\"");
+            return 1u;
+        }
+        game_inventory_remove_one(43u);
+        topic_say("Pell compares the seal with the torn invitation, then glances toward the blue-marked door. \"There. Same mark. Same wax. I knew I hadn't imagined the whole cursed thing.\"");
+        game_inventory_add_one(10u); /* Brass Key */
+        topic_say("He searches his mailbag. \"I found this beneath the door when I arrived. Thought it was a room key, but it fits nothing upstairs.\"");
+        game_state.flags[13] = 1u; /* STORY_STATE_ROOM_05_PELL_HELPED */
+        topic_say("\"Odd thing, though. My invitation never named Vey. I assumed he was the host. Perhaps I assumed too much.\"");
+        return 1u;
+    }
+
+    if (script_resource_id == 20u && prefix_is(prefix, letter_word)) {
+        if (game_state.flags[16] || !game_inventory_has_one(57u)) {
+            return 0u; /* STORY_STATE_ROOM_02_ORRA_HELPED; Orra Invite */
+        }
+        game_inventory_remove_one(57u);
+        topic_say("Lady Orra takes the letter, and her composure slips for just a moment as she reads it. \"So it was meant for me after all,\" she says quietly.");
+        game_inventory_add_one(55u); /* Moon Brooch */
+        game_state.flags[16] = 1u; /* STORY_STATE_ROOM_02_ORRA_HELPED */
+        topic_say("She unpins a small brooch from her collar, shaped like a crescent moon. \"Take this. Whatever door it was meant for, I'd rather you reach it than I.\"");
+        return 1u;
+    }
+
+    return 0u;
+}
+
 /* One conversation: prompt, read a keyword, run the matching topic (or the
  * "*" fallback), and let the player read the answer before the prompt comes
  * back. No banner text and no RUN/STOP hint - just "> " and a blinking
@@ -559,6 +672,13 @@ static void run_conversation(uint8_t topic_count) {
             wait_fresh_key();
             return;
         }
+        /* Trigger-word puzzle resolutions (see story_topic_resolve()'s own
+         * comment above) take priority over a conversation's own topic
+         * content - mentioning the right word while carrying the right
+         * item resolves a puzzle immediately; story_topic_resolve() shows
+         * and dismisses its own text when it handles the input, so the
+         * ordinary topic lookup below is skipped entirely for that turn. */
+        if (story_topic_resolve(prefix)) continue;
         entry = find_topic(topic_count, prefix, 0u);
         if (entry == 0u) entry = find_topic(topic_count, prefix, 1u);
         script_text_shown = 0u;

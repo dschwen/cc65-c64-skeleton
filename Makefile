@@ -91,7 +91,7 @@ SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC) $(if $(CONVERSATION_IDS),$(CONVERSATION_B
 
 OUT_CRT := $(OUTDIR)/game.crt
 
-.PHONY: all cartridge run run-cartridge test clean
+.PHONY: all cartridge run run-cartridge test clean title-music run-title-music
 .DEFAULT_GOAL := all
 # Script .bin files are an intermediate step whose generated .c wrapper
 # (below) embeds a path to them - without .PRECIOUS, Make deletes the .bin
@@ -174,6 +174,18 @@ run run-cartridge: $(OUT_CRT) $(SAVE_DISK)
 
 test: $(OUT_CRT)
 	$(XVFB_RUN) python3 tools/test_oscar_boot.py --vice "$(VICE)" --c1541 "$(C1541)"
+
+# Standalone title-music preview (music/title_music.c): a plain PRG, not
+# part of the cartridge.
+TITLE_MUSIC_PRG := $(OUTDIR)/title_music.prg
+
+title-music: $(TITLE_MUSIC_PRG)
+
+$(TITLE_MUSIC_PRG): music/title_music.c | $(OUTDIR)
+	$(OSCAR64) -n -O2 music/title_music.c -o=$@
+
+run-title-music: $(TITLE_MUSIC_PRG)
+	$(XVFB_RUN) $(VICE) -autostart $(TITLE_MUSIC_PRG)
 
 clean:
 	rm -rf $(OUTDIR)

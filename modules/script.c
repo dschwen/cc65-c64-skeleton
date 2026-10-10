@@ -13,7 +13,7 @@
  * format and opcode encoding - this file must stay in sync with it by
  * hand, there is no shared source of truth).
  *
- * Called via game_script_play()/game_room_script_entry() in
+ * Called via game_room_script_entry() in
  * src/script_runtime.c, through far_call_bank(BANK_SCRIPT, script_banked_
  * run) - see script_banked_run() at the bottom of this file. The compiled
  * bytecode is separate from the service: fetched at run time via
@@ -717,8 +717,6 @@ static void exec_resource(void) {
             script_entry_found = 1u;
             exec_block(entry, script_len);
         }
-    } else {
-        exec_block(3u, script_len);
     }
 }
 

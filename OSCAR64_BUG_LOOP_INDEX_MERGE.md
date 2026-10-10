@@ -157,7 +157,7 @@ observation from one workaround succeeding, not a proven rule.
 
 Found 2026-09-22, same session, fixing a report that one voice of the
 tavern's music sometimes went missing entering it from the kitchen. A
-real-hardware-measured SID gate-retrigger workaround (`rooms/env/00.s`'s
+real-hardware-measured SID gate-retrigger workaround (cc65-era `rooms/env/00.s`'s
 original comment) - hold a voice's gate low for a couple of frames before
 re-gating it, via `for (delay = 0u; delay < 0x2000u; ++delay) { }` - was
 present in `rooms/env/rain.c` and `rooms/env/tavern_muffled.c`, but
@@ -178,7 +178,7 @@ gatelow_inner \ dex \ bne gatelow }` (0x20 * 0x100 = 0x2000 iterations,
 translated directly from the original assembly's own loop), which
 disassembly confirms survives intact. Applied to `rooms/env/tavern.c` too,
 which never had the delay at all (present in neither the oscar64 C nor the
-original `rooms/env/02.s`) - the actual cause of the reported bug.
+original cc65-era `rooms/env/02.s`) - the actual cause of the reported bug.
 
 ## Before reporting upstream
 

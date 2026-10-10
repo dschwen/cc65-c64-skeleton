@@ -62,18 +62,6 @@ uint8_t script_conversation_id;
 
 void script_banked_run(void);
 
-void game_script_play(uint8_t resource_id) {
-    script_resource_kind = PLATFORM_RESOURCE_KIND_SCRIPT;
-    script_resource_id = resource_id;
-    far_call_bank(BANK_SCRIPT, script_banked_run);
-}
-
-void game_conversation_play(uint8_t resource_id) {
-    script_resource_kind = PLATFORM_RESOURCE_KIND_CONVERSATION;
-    script_resource_id = resource_id;
-    far_call_bank(BANK_SCRIPT, script_banked_run);
-}
-
 /* Look up `key` in the current room's own script resource (resource ID ==
  * platform_current_room) and, only if a matching entry exists, run it.
  * Returns 1 if an entry was found and run, 0 otherwise (a normal outcome -

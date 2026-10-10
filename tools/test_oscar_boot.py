@@ -276,7 +276,7 @@ def check(root, monitor, artifacts):
     # Kitchen (03) back to the tavern (02) - the reported direction; the
     # loop above only ever goes tavern-to-kitchen. A SID voice left gated
     # on and held at sustain does not restart from a too-close gate-low/
-    # gate-high pair (real-hardware-measured; see rooms/env/00.s and
+    # gate-high pair (real-hardware-measured; see rooms/env/rain.c and
     # rooms/env/tavern.c's env_tavern_init()) - env_tavern_init() holds the
     # gate low for a couple of frames first to avoid it, but a plain C
     # delay loop for that (even over a `volatile` counter) does not survive

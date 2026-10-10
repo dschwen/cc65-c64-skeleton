@@ -77,13 +77,6 @@
 #define PLATFORM_ERR_BLOCKED          6u
 #define PLATFORM_ERR_NOT_FOUND        7u
 
-#define PLATFORM_TRANSITION_NONE      0u
-#define PLATFORM_TRANSITION_TOP       1u
-#define PLATFORM_TRANSITION_LEFT      2u
-#define PLATFORM_TRANSITION_BOTTOM    3u
-#define PLATFORM_TRANSITION_RIGHT     4u
-#define PLATFORM_TRANSITION_TRIGGER   5u
-
 #define PLATFORM_DIRECTION_NORTH      0u
 #define PLATFORM_DIRECTION_EAST       1u
 #define PLATFORM_DIRECTION_WEST       2u
@@ -220,9 +213,6 @@ extern const uint8_t platform_light_distance[16u * 16u];
  */
 void platform_init(void);
 
-/* Reset a room to an empty 20x11 room with text offset 0 as an empty string. */
-void platform_room_clear(PlatformRoom* room, uint8_t room_id);
-
 /* Load a fixed-size room from EasyFlash. */
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 
@@ -307,15 +297,6 @@ void platform_sprites_hide_all(void);
 uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
                             uint8_t new_x, uint8_t new_y);
 
-/* Draw one 2x2 tile at tile coordinates, clipped to the 20x11 map. */
-void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y);
-
-/* Draw all 220 room tiles, without objects. */
-void platform_map_draw(const PlatformRoom* room);
-
-/* Draw one object using its hotspot and the registered object-type graphics. */
-void platform_object_draw(const PlatformObject* object);
-
 /*
  * Draw tiles, room objects in slot order, then player last. player may point
  * at a room slot; that slot is skipped in the object pass and drawn last.
@@ -396,33 +377,11 @@ uint16_t platform_room_object_count(const PlatformRoom* room,
 /* One past the highest populated slot index; cached for the rendered room. */
 uint16_t platform_room_object_limit(const PlatformRoom* room);
 
-/* Move a room-list record between two loaded rooms using the first free slot. */
-uint8_t platform_room_object_transfer(PlatformRoom* leaving,
-                                      PlatformRoom* entering,
-                                      uint8_t leaving_slot,
-                                      uint8_t new_x, uint8_t new_y,
-                                      uint8_t* entering_slot);
-
-/*
- * Test a proposed half-tile step for an edge exit or trigger tile. This does
- * not move the object or choose a destination room. For an in-room step,
- * stepped_tile receives the tile number when non-NULL. Destination room IDs
- * and arrival coordinates remain game-defined transition-table data.
- */
-uint8_t platform_transition_check(const PlatformRoom* room,
-                                  const PlatformObject* object,
-                                  int8_t delta_x, int8_t delta_y,
-                                  uint8_t* stepped_tile);
-
 /* Convert ASCII to the custom lower-bank screen-code convention. */
 uint8_t platform_text_screen_code(char ch);
 
 /* Clear one of the two bottom text lines (line 0=row 23, line 1=row 24). */
 void platform_text_clear_line(uint8_t line);
-
-/* Write a zero-terminated string to a bottom line, clipped to 40 columns. */
-void platform_text_write_line(uint8_t line, uint8_t column,
-                              const char* text, uint8_t color);
 
 /*
  * Reject a tile hidden by line of sight or beyond the provisional range for
@@ -497,7 +456,6 @@ void platform_portrait_hide(void);
 void platform_rain_enable(void (*setup)(void));
 void platform_rain_activate(void);
 void platform_rain_disable(void);
-uint8_t platform_rain_is_active(void);
 
 /*
  * Generic sparse cartridge resource directories: three independent
@@ -517,59 +475,28 @@ uint8_t platform_rain_is_active(void);
  * capacity, or fails its stored checksum.
  */
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
-/* Matches tools/compile_script.py's KIND_SCRIPT/KIND_CONVERSATION/KIND_ROOM
- * and tools/pack_easyflash.py's RESOURCE_KIND_* - keep all three in sync.
- * PLATFORM_RESOURCE_KIND_SCRIPT also covers assets/resources/<ID> raw
- * resources (see platform_resource_fetch()'s callers), since they're
- * likewise standalone content not tied to a room or conversation. */
-#define PLATFORM_RESOURCE_KIND_SCRIPT       0u
+/* Resource kinds platform_resource_fetch()/_fetch_range() dispatch on (see
+ * src/resources.c). Each kind has its own 0-255 ID space. Values 0, 3 and 4
+ * were the cc65-era cutscene, environment and asset directories; environment
+ * modules and static assets are now compile-time embeds (src/game.c,
+ * src/assets_data.c), and nothing ships a standalone cutscene. */
 #define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
 #define PLATFORM_RESOURCE_KIND_ROOM         2u
-/* A room's environment module (weather + ambient sound) - see
- * PLATFORM_API.md's "Room environment module". resource_id is the room ID,
- * same as PLATFORM_RESOURCE_KIND_ROOM. Fetched into ENVCODE_BASE, never into
- * ordinary heap/stack memory - see game_enter_room()'s own fetch call, not
- * a generic caller. ENVCODE_BASE/_SIZE must match src/platform.inc's own
- * (asm-side) copies exactly - both hardcode the same reserved cfg/myc64.cfg
- * address since one is a linker-config constant and the other a plain
- * preprocessor one, with no single shared source to derive both from. */
-#define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
-/* Static assets that used to be linked into the program image: charsets, tile
- * definitions + properties, sprite bitmaps. Fetched at boot by platform_init()
- * straight to their fixed destinations, so they no longer occupy space in the
- * contiguous PRG blob cart/ef_boot.s copies into RAM.
- *
- * Unlike kinds 0-3, this directory lives at the head of
- * EF_RESOURCE_DIRECTORY_BANK's *ROMH* half: the four directories above are 256
- * entries x 8 bytes each, which exactly fills the 8 KiB ROML half, leaving no
- * room for a fifth. Kinds 4-7 therefore address the ROMH half instead - see
- * resource_directory_lookup() in src/platform.c and pack_resources() in
- * tools/pack_easyflash.py, which must agree on this split. */
-#define PLATFORM_RESOURCE_KIND_ASSET        4u
-/* Asset resource IDs. Destinations are fixed and known to platform_init();
- * an asset's ID and its destination are a matched pair. ASSET_TILES carries
- * the tile bitmaps and the tile property table as one blob precisely so the
- * two can never drift out of step - a mismatch there means walls you can walk
- * through, with nothing to catch it. */
-#define PLATFORM_ASSET_CHARSET_TILE 0u
-#define PLATFORM_ASSET_CHARSET_TEXT 1u
-#define PLATFORM_ASSET_TILES        2u
 /* Portraits: assets/portraits/<id>, one 256-byte file per portrait ID
  * (tools/asset-editor). One shared bank (src/banks.h's BANK_PORTRAIT_FIRST),
  * array-indexed dispatch, same scheme as PLATFORM_RESOURCE_KIND_ROOM/
- * _CONVERSATION above - not kind 4's stale fixed-destination/ROMH-split
- * scheme, which predates the oscar64 port and is unimplemented.
- * platform_portrait_show() (src/platform.c) is the only caller. */
+ * _CONVERSATION above. platform_portrait_show() (src/platform.c) is the
+ * only caller. */
 #define PLATFORM_RESOURCE_KIND_PORTRAIT 5u
 #define ENVCODE_BASE ((uint8_t*)0x7E00u)
 #define ENVCODE_SIZE 0x0200u
 /* C-callable trampolines into the module currently loaded at ENVCODE_BASE
- * (src/env_dispatch.s) - env_init() after a fresh fetch, env_enable()/
+ * (src/env_dispatch.c) - env_init() after a fresh fetch, env_enable()/
  * _disable() to pause/resume both the visual and sound side together
  * (e.g. platform_portrait_show()/_hide()). env_install_null() overwrites
  * ENVCODE_BASE with a no-op (all four vectors just rts), for a room with
  * no environment resource of its own - so calling any of these, or the
- * raster IRQ's own tick call (src/irq.s), is always safe regardless of
+ * raster IRQ's own tick call (src/irq.c), is always safe regardless of
  * which room (if any) last loaded a real module there. */
 void env_init(void);
 void env_enable(void);

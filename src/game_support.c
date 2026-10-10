@@ -262,27 +262,6 @@ uint8_t game_take_object(uint8_t slot) {
     return result;
 }
 
-uint8_t game_health(void) { return game_state.health; }
-uint8_t game_mana(void) { return game_state.mana; }
-
-void game_heal(uint8_t amount) {
-    uint16_t health;
-    health = (uint16_t)game_state.health + amount;
-    game_state.health = health > game_state.maximum_health
-                            ? game_state.maximum_health : (uint8_t)health;
-}
-
-void game_damage(uint8_t amount) {
-    game_state.health = amount >= game_state.health
-                            ? 0u : game_state.health - amount;
-}
-
-uint8_t game_spend_mana(uint8_t amount) {
-    if (amount > game_state.mana) return 0u;
-    game_state.mana -= amount;
-    return 1u;
-}
-
 void game_text_write(uint8_t line, const char* text, uint8_t color) {
     if (text == 0 || line > PLATFORM_TEXT_LINE_BOTTOM) return;
     platform_text_output_line = line;

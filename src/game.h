@@ -148,13 +148,6 @@ void game_mirror_repair_apply(void);
  */
 void game_player_light_sync(void);
 
-/* Saturating health changes; mana spend returns false without changing mana. */
-uint8_t game_health(void);
-uint8_t game_mana(void);
-void game_heal(uint8_t amount);
-void game_damage(uint8_t amount);
-uint8_t game_spend_mana(uint8_t amount);
-
 /* Write word-wrapped, paged text in the two bottom lines. */
 void game_text_write(uint8_t line, const char* text, uint8_t color);
 /* Queue an overlay-safe room change. x/y are half-tile coordinates. */
@@ -184,23 +177,10 @@ extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 
-/* Runs a compiled standalone cutscene ("script" declaration -
- * tools/compile_script.py) by its resource ID. Independent ID space from
- * game_conversation_play() and game_room_script_entry() below - each kind
- * has its own full 0-255 range (see PLATFORM_RESOURCE_KIND_* in
- * platform.h). See src/script_runtime.c and modules/script.c. */
-void game_script_play(uint8_t resource_id);
-
-/* Runs a compiled standalone conversation ("conversation" declaration) by
- * its resource ID - matches the player's typed input against the
- * conversation's topic keywords. Independent ID space from
- * game_script_play() above. */
-void game_conversation_play(uint8_t resource_id);
-
 /* Runs the current room's own script entry keyed `key`, if it has one - see
  * tools/compile_script.py's `room` declaration. Returns 1 if an entry was
  * found and run, 0 otherwise (the common case: no matching entry). Always
- * pays the interpreter's banked-call cost, same as game_script_play() - see
+ * pays the interpreter's banked-call cost - see
  * src/script_runtime.c's doc comment for why that's fine given current
  * usage. Room code calls this from enter_room(), enter_tile(), look_at(),
  * use_at() wherever it used to read the room's text pool directly; the

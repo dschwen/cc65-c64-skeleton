@@ -212,12 +212,6 @@ uint8_t game_inventory_has(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_add(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_remove(uint8_t type, uint8_t quantity);
 
-uint8_t game_health(void);
-uint8_t game_mana(void);
-void game_heal(uint8_t amount);
-void game_damage(uint8_t amount);
-uint8_t game_spend_mana(uint8_t amount);
-
 void game_text_write(uint8_t line, const char* text, uint8_t color);
 uint8_t game_room_script_entry(uint8_t key);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);

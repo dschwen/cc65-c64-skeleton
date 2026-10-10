@@ -44,17 +44,13 @@ void platform_tiles_load(void);
 
 void raster_irq_install(void);
 void platform_weather_service(void);
-void raster_irq_vectors_restore(void);
 void raster_irq_suspend(void);
 void raster_irq_resume(void);
 extern volatile uint8_t platform_raster_irq_active;
 void platform_memory_game(void);
 void platform_memory_kernal(void);
-void platform_memory_all_ram(void);
 void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
-void platform_easyflash_copy_romh(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
 uint8_t platform_irq_save_disable(void);
-void platform_irq_restore(uint8_t status);
 
 /* render.c */
 void platform_map_draw_native(const PlatformRoom* room);
@@ -200,28 +196,7 @@ static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
 static const PlatformRoom* wall_cache_room;
-static uint8_t player_spawn_room;
-static uint8_t player_spawn_slot;
 static uint8_t player_spawn_type;
-
-static void write_screen_cell(uint8_t x, uint8_t y, uint8_t ch, uint8_t color) {
-    uint16_t offset;
-    uint16_t tile_offset;
-
-    if (x >= PLATFORM_MAP_CHAR_WIDTH || y >= 25u) return;
-    offset = (uint16_t)y * PLATFORM_MAP_CHAR_WIDTH + x;
-    SCREEN_RAM[offset] = ch;
-    color &= 0x0fu;
-    if (y < PLATFORM_MAP_CHAR_HEIGHT) {
-        platform_base_colors[offset] = color;
-        tile_offset = (uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1);
-        color = platform_light_colors[
-            ((platform_brightness[tile_offset] & 0x03u) << 4) | color];
-        if (platform_view_tiles[tile_offset] == 0u) color = 0u;
-    }
-
-    COLOR_RAM[offset] = color;
-}
 
 static uint8_t object_type_is_valid(const PlatformObjectType* type) {
     uint8_t width;
@@ -404,9 +379,6 @@ uint16_t platform_room_object_limit(const PlatformRoom* room) {
 /* Oscar64 expands main only. Initialize KERNAL/CIA state and explicitly
  * load high-RAM assets before drawing or enabling the raster split.
  * Room 0 uses the same banked resource path as subsequent rooms. */
-volatile uint8_t boot_trace;
-#define TRACE(n) (boot_trace = (n))
-
 void platform_init(void) {
     /* EasyFlash enters without a KERNAL reset. Initialize hardware,
      * KERNAL vectors and editor/keyboard state, but do NOT call RAMTAS:
@@ -432,7 +404,6 @@ void platform_init(void) {
     *((volatile uint8_t*)0x0099u) = 0u; /* keyboard input */
     *((volatile uint8_t*)0x009au) = 3u; /* screen output */
     platform_cart_bank = 0u;
-    TRACE(1u);
     *((volatile uint8_t*)0xdd00u) &= 0xfcu;
     ((volatile uint8_t*)0xd000u)[0x20] = 0u;
     ((volatile uint8_t*)0xd000u)[0x21] = 0u;
@@ -446,37 +417,16 @@ void platform_init(void) {
     platform_global_light = PLATFORM_LIGHT_FULL;
     platform_room_light_level = PLATFORM_ROOM_LIGHT_LEVEL_STATIC_FULL;
     platform_room_los_enabled = 1u;
-    TRACE(2u);
     (void)platform_irq_save_disable();
-    TRACE(3u);
     platform_memory_game();
     platform_charsets_load();
     far_call_bank(BANK_OBJECT_TYPE_C, object_types_b_load);
-    TRACE(4u);
     platform_tiles_load();
-    TRACE(5u);
     (void)platform_room_load(&platform_room, 0u);
-    TRACE(6u);
     platform_player = &platform_room.objects[0];
     player_spawn_type = platform_player->type;
-    TRACE(7u);
     env_install_null();
-    TRACE(8u);
     raster_irq_install();
-    TRACE(9u);
-}
-
-void platform_room_clear(PlatformRoom* room, uint8_t room_id) {
-    if (room == 0) return;
-    if (room == rendered_room) {
-        rendered_room = 0;
-        rendered_player = 0;
-    }
-    memset(room, 0, sizeof(*room));
-    room->width = PLATFORM_MAP_WIDTH;
-    room->height = PLATFORM_MAP_HEIGHT;
-    room->id = room_id;
-    room->format = PLATFORM_ROOM_FORMAT;
 }
 
 static uint8_t room_validate(const PlatformRoom* room, uint8_t room_id) {
@@ -519,28 +469,6 @@ uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id) {
     return PLATFORM_OK;
 }
 
-void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y) {
-    const uint8_t* definition;
-    uint8_t x;
-    uint8_t y;
-
-    if (tile_x >= PLATFORM_MAP_WIDTH || tile_y >= PLATFORM_MAP_HEIGHT) return;
-    definition = tile_data + ((uint16_t)tile << 3);
-    x = tile_x << 1;
-    y = tile_y << 1;
-    write_screen_cell(x, y, definition[0], definition[1]);
-    write_screen_cell(x + 1u, y, definition[2], definition[3]);
-    write_screen_cell(x, y + 1u, definition[4], definition[5]);
-    write_screen_cell(x + 1u, y + 1u, definition[6], definition[7]);
-}
-
-void platform_map_draw(const PlatformRoom* room) {
-    if (room == 0) return;
-    platform_look_cursor_hide();
-    platform_map_draw_native(room);
-    platform_lighting_rebuild(room, room == rendered_room ? rendered_player : 0);
-}
-
 static void object_draw_base(const PlatformObject* object) {
     const PlatformObjectType* type;
     int16_t left;
@@ -576,12 +504,6 @@ static void object_draw_base(const PlatformObject* object) {
     native_object_screen_offset =
         (uint16_t)(top + source_y) * PLATFORM_MAP_CHAR_WIDTH + left + source_x;
     platform_object_draw_native();
-}
-
-void platform_object_draw(const PlatformObject* object) {
-    platform_look_cursor_hide();
-    object_draw_base(object);
-    platform_lighting_apply();
 }
 
 static void visibility_build(const PlatformRoom* room,
@@ -1079,9 +1001,10 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
 
     result = room_stage_load(room_id);
     if (result != PLATFORM_OK) goto transition_done;
-    if (removed_actor && room_id == player_spawn_room &&
-        room_stage.objects[player_spawn_slot].type == player_spawn_type) {
-        memset(&room_stage.objects[player_spawn_slot], 0, sizeof(PlatformObject));
+    /* The player starts in room 0, object slot 0 (platform_init()). */
+    if (removed_actor && room_id == 0u &&
+        room_stage.objects[0].type == player_spawn_type) {
+        memset(&room_stage.objects[0], 0, sizeof(PlatformObject));
     }
     tile = room_stage.tiles[(uint16_t)(new_y >> 1) * PLATFORM_MAP_WIDTH +
                             (new_x >> 1)];
@@ -1127,56 +1050,6 @@ transition_done:
     return result;
 }
 
-uint8_t platform_room_object_transfer(PlatformRoom* leaving,
-                                      PlatformRoom* entering,
-                                      uint8_t leaving_slot,
-                                      uint8_t new_x, uint8_t new_y,
-                                      uint8_t* entering_slot) {
-    PlatformObject object;
-    uint8_t result;
-    if (leaving == 0 || entering == 0) return PLATFORM_ERR_ARGUMENT;
-    object = leaving->objects[leaving_slot];
-    if (object.type == 0u) return PLATFORM_ERR_ARGUMENT;
-    result = platform_room_object_add(entering, object.type, new_x, new_y,
-                                      entering_slot);
-    if (result != PLATFORM_OK) return result;
-    leaving->objects[leaving_slot].type = 0;
-    leaving->objects[leaving_slot].x = 0;
-    leaving->objects[leaving_slot].y = 0;
-    if (leaving == rendered_room &&
-        (uint16_t)leaving_slot + 1u == rendered_object_limit) {
-        while (rendered_object_limit > 0u &&
-               leaving->objects[rendered_object_limit - 1u].type == 0u) {
-            --rendered_object_limit;
-        }
-    }
-    return PLATFORM_OK;
-}
-
-uint8_t platform_transition_check(const PlatformRoom* room,
-                                  const PlatformObject* object,
-                                  int8_t delta_x, int8_t delta_y,
-                                  uint8_t* stepped_tile) {
-    int16_t x;
-    int16_t y;
-    uint8_t tile;
-
-    if (room == 0 || object == 0 || object->type == 0u) {
-        return PLATFORM_TRANSITION_NONE;
-    }
-    x = (int16_t)object->x + delta_x;
-    y = (int16_t)object->y + delta_y;
-    if (y < 0) return PLATFORM_TRANSITION_TOP;
-    if (x < 0) return PLATFORM_TRANSITION_LEFT;
-    if (y >= PLATFORM_MAP_CHAR_HEIGHT) return PLATFORM_TRANSITION_BOTTOM;
-    if (x >= PLATFORM_MAP_CHAR_WIDTH) return PLATFORM_TRANSITION_RIGHT;
-
-    tile = room->tiles[(uint16_t)(y >> 1) * PLATFORM_MAP_WIDTH + (x >> 1)];
-    if (stepped_tile != 0) *stepped_tile = tile;
-    if (tile_properties[tile] & 0x10u) return PLATFORM_TRANSITION_TRIGGER;
-    return PLATFORM_TRANSITION_NONE;
-}
-
 uint8_t platform_text_screen_code(char ch) {
     if (ch >= 'a' && ch <= 'z') return (uint8_t)(ch - 'a' + 1);
     if (ch >= 'A' && ch <= 'Z') return (uint8_t)(ch - 'A' + 65);
@@ -1184,24 +1057,11 @@ uint8_t platform_text_screen_code(char ch) {
 }
 
 void platform_text_clear_line(uint8_t line) {
-    uint8_t x;
-    uint8_t y;
+    uint16_t offset;
     if (line > PLATFORM_TEXT_LINE_BOTTOM) return;
-    y = (uint8_t)(23u + line);
-    for (x = 0; x < PLATFORM_MAP_CHAR_WIDTH; ++x) {
-        write_screen_cell(x, y, 32, 0);
-    }
-}
-
-void platform_text_write_line(uint8_t line, uint8_t column,
-                              const char* text, uint8_t color) {
-    uint8_t y;
-    if (line > PLATFORM_TEXT_LINE_BOTTOM || column >= PLATFORM_MAP_CHAR_WIDTH || text == 0) return;
-    y = (uint8_t)(23u + line);
-    while (*text != '\0' && column < PLATFORM_MAP_CHAR_WIDTH) {
-        write_screen_cell(column, y, platform_text_screen_code(*text++), color);
-        ++column;
-    }
+    offset = (uint16_t)(23u + line) * PLATFORM_MAP_CHAR_WIDTH;
+    memset(SCREEN_RAM + offset, 32, PLATFORM_MAP_CHAR_WIDTH);
+    memset((uint8_t*)COLOR_RAM + offset, 0, PLATFORM_MAP_CHAR_WIDTH);
 }
 
 uint8_t* platform_room_scratch(void) {

@@ -18,17 +18,16 @@
  * lives inside the banked fetch function, where it costs nothing against
  * the tight resident budget (src/memmap.h).
  *
- * PLATFORM_RESOURCE_KIND_ROOM (room/cutscene/tile-entry script bytecode),
+ * PLATFORM_RESOURCE_KIND_ROOM (room/tile-entry script bytecode),
  * _CONVERSATION and _PORTRAIT each have their own shared bank -
  * BANK_SCRIPT_ROOM_FIRST, BANK_SCRIPT_CONVERSATION_FIRST and
  * BANK_PORTRAIT_FIRST (src/banks.h) - because each kind has an independent
  * 0-255 ID space (a conversation, a room and a portrait may all share a
  * numeric ID); one switch-on-kind here picks which bank and fetch function
  * to call, same shape as any one bank's own internal switch-on-ID.
- * PLATFORM_RESOURCE_KIND_SCRIPT/_ENVIRONMENT/_ASSET are handled elsewhere
- * already (environment modules: src/game.c's game_enter_room(); assets:
- * src/assets_data.c/src/object_types_data.c's compile-time embeds) or have
- * no content yet.
+ * Environment modules and static assets don't go through here at all
+ * (src/game.c's game_enter_room(); src/assets_data.c/
+ * src/object_types_data.c's compile-time embeds).
  *
  * script_room_bank_fetch/script_conversation_bank_fetch/portrait_bank_fetch
  * (the only functions this file ever calls through far_call_bank()) are

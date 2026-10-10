@@ -38,8 +38,6 @@ SRC_C := \
 	src/game.c \
 	src/game_support.c \
 	src/world.c \
-	src/vic.c \
-	src/sid.c \
 	story/story.c \
 	modules/typeinfo.c \
 	modules/room_helpers.c \

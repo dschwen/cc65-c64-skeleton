@@ -6,7 +6,7 @@
  * Environment module: an ominous cellar ambience instead of music - a
  * slow low drone, a sparse minor-key pluck at irregular intervals, and an
  * occasional noise "creak". Used by room 04. Structural translation of
- * rooms/env/04.s.
+ * cc65-era rooms/env/04.s.
  *
  * Voice 1 (drone, triangle): holds one note for a long stretch, then
  * glides to the next - alternates D3/A2 (a bare fifth), never re-gated

@@ -6,7 +6,7 @@
  * Environment module: a looping 3-voice medieval-tavern melody (D Dorian,
  * no rain/no sprites). Used by room 02. See rooms/env/rain.c's header
  * comment for the shared module conventions; structural translation of
- * rooms/env/02.s.
+ * cc65-era rooms/env/02.s.
  *
  * Voice 1 (lead, triangle) plays a 12-step melody, one note per beat;
  * voice 2 (bass, sawtooth) and voice 3 (pad, triangle, an open fifth
@@ -72,9 +72,9 @@ __noinline void env_tavern_init(void) {
      * apart, not enough - the envelope stays at zero and that voice is
      * silent until the next room switch re-gates it. Hold the gate low
      * across a couple of frames first. Real-hardware-measured; see
-     * rooms/env/00.s's original comment for the isolated-audio-capture
+     * rooms/env/rain.c's sound_init() comment for the isolated-audio-capture
      * finding. This environment never had the delay at all (structural
-     * translation of rooms/env/02.s, which didn't either) - the
+     * translation of cc65-era rooms/env/02.s, which didn't either) - the
      * intermittent "one voice disappears" moving from the kitchen back to
      * the tavern is this bug, not a port regression.
      *
@@ -88,7 +88,7 @@ __noinline void env_tavern_init(void) {
      * loop and were *also* silently losing it - fixed alongside this one.
      * Raw asm, unrelated to any C-level dead-code analysis, is what
      * actually survives: 0x20 * 0x100 = 0x2000 iterations, translated
-     * directly from rooms/env/00.s's own gatelow/gatelow_inner loop. */
+     * directly from cc65-era rooms/env/00.s's own gatelow/gatelow_inner loop. */
     __asm {
         ldx #$20
     gatelow:

@@ -203,23 +203,6 @@ nowhere to go anymore and is dropped on import - author the room's content
 as a script instead (Script mode). Missing fields are cleared. Export always
 writes the current 1001-byte format.
 
-Existing asset directories can be migrated in place from format 1 and assigned
-links at the same time:
-
-```bash
-python3 tools/migrate_rooms_v2.py assets \
-  --link 00:east:01 --link 01:west:00
-```
-
-Then migrate format 2 rooms to format 3:
-
-```bash
-python3 tools/migrate_rooms_v3.py assets
-```
-
-Both tools predate the resource-split; a room file they produce still has an
-embedded text pool, dropped on import as described above.
-
 ### Object type list (`.cobj`)
 
 The file contains 256 records of 64 bytes (`16384` bytes total). Type ID is

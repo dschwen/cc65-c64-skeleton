@@ -106,8 +106,7 @@ The exit mask is separate from the four neighbor bytes because every byte
 value, including room `FF`, is a valid destination. Links may be one-way. The
 editor imports legacy, format-1, and format-2 rooms and exports format 3 (any
 embedded text those legacy formats carried is dropped on import - see the
-asset editor README). Use `tools/migrate_rooms_v2.py` and then
-`tools/migrate_rooms_v3.py` for batch migration.
+asset editor README).
 
 ## Object-type file format
 
@@ -146,7 +145,6 @@ by that split, not preserved anywhere.
 
 ```c
 void platform_init(void);
-void platform_room_clear(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_load(PlatformRoom* room, uint8_t room_id);
 uint8_t platform_room_neighbor(const PlatformRoom* room, uint8_t direction,
                                uint8_t* room_id);
@@ -232,9 +230,7 @@ Every failure after step 1 follows the same resume path, so an I/O, format,
 collision, room-code, or capacity error cannot leave the raster IRQ disabled.
 
 `src/world.c` supplies that mutable policy with exact-slot deltas against the
-immutable asset. The current `platform_room_object_transfer()` still expects
-both rooms in RAM and is a low-level primitive; use save-aware game APIs for
-single-buffer gameplay. See `SAVE_GAME.md` for invariants and capacity.
+immutable asset. See `SAVE_GAME.md` for invariants and capacity.
 
 The EasyFlash backend, bank layout, RAM copy primitive, and KERNAL/IRQ
 constraints are specified in `EASYFLASH_CARTRIDGE.md`.
@@ -244,9 +240,6 @@ Room-specific handlers, `GameState`, and the room-code ABI are specified in
 ## Map and room drawing
 
 ```c
-void platform_map_draw_tile(uint8_t tile, uint8_t tile_x, uint8_t tile_y);
-void platform_map_draw(const PlatformRoom* room);
-void platform_object_draw(const PlatformObject* object);
 void platform_room_draw(const PlatformRoom* room,
                         const PlatformObject* player);
 ```
@@ -420,11 +413,6 @@ uint8_t platform_room_object_remove(PlatformRoom* room, uint8_t slot,
                                     const PlatformObject* player);
 uint16_t platform_room_object_count(const PlatformRoom* room,
                                     uint8_t actor_only);
-uint8_t platform_room_object_transfer(PlatformRoom* leaving,
-                                      PlatformRoom* entering,
-                                      uint8_t leaving_slot,
-                                      uint8_t new_x, uint8_t new_y,
-                                      uint8_t* entering_slot);
 ```
 
 `platform_object_move()` minimizes screen writes as follows:
@@ -461,11 +449,6 @@ object-type flags byte. `out_slot` may be `NULL`.
 - `0`: all populated objects;
 - `1`: actors only;
 - `2`: non-actors only.
-
-`platform_room_object_transfer()` first attempts to append to the entering
-room. It clears the leaving slot only after the add succeeds, so a full target
-room does not lose the object. The caller must have both rooms loaded and is
-responsible for persisting their modified files/state.
 
 ## Game loop, keyboard, and player movement
 
@@ -546,26 +529,6 @@ for (;;) {
 
 ## Screen transitions
 
-```c
-uint8_t platform_transition_check(const PlatformRoom* room,
-                                  const PlatformObject* object,
-                                  int8_t delta_x, int8_t delta_y,
-                                  uint8_t* stepped_tile);
-```
-
-This tests a proposed half-tile movement without changing the object. It
-returns one of:
-
-- `PLATFORM_TRANSITION_NONE`;
-- `PLATFORM_TRANSITION_TOP`;
-- `PLATFORM_TRANSITION_LEFT`;
-- `PLATFORM_TRANSITION_BOTTOM`;
-- `PLATFORM_TRANSITION_RIGHT`;
-- `PLATFORM_TRANSITION_TRIGGER`.
-
-An in-room result writes the proposed hotspot's tile ID to `stepped_tile` when
-that pointer is non-NULL. Trigger detection uses tile property bit 4.
-
 Format 3 stores four edge destinations; header bytes 9/10 are lighting settings.
 `platform_room_neighbor()` returns
 `PLATFORM_ERR_NOT_FOUND` when a direction is disabled. Before committing an
@@ -612,8 +575,6 @@ uint8_t platform_text_screen_code(char ch);
 void platform_text_screen_enter(void);
 void platform_text_screen_leave(void);
 void platform_text_clear_line(uint8_t line);
-void platform_text_write_line(uint8_t line, uint8_t column,
-                              const char* text, uint8_t color);
 uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
@@ -644,10 +605,6 @@ lower line, and continues. Explicit carriage returns and line feeds also
 advance through the same pager. The implementation is an assembly module
 whose helper block loads at `$3A00`; the pager entry remains `$3A73`.
 
-The lower-level `platform_text_write_line()` call remains available for
-fixed-position UI and clips at column 40; it does not invoke wrapping or
-paging.
-
 `platform_text_screen_enter()` tells the assembly raster IRQ to keep charset
 bank 1 selected at raster line zero, making all 25 rows text rows.
 `platform_text_screen_leave()` restores the normal tile-map/text-line split.
@@ -659,14 +616,6 @@ For C string literals, the text charset convention is:
 - lowercase ASCII `a-z` maps to screen codes 1-26;
 - uppercase ASCII `A-Z` maps to screen codes 65-90;
 - other bytes pass through unchanged.
-
-Example:
-
-```c
-platform_text_clear_line(PLATFORM_TEXT_LINE_TOP);
-platform_text_write_line(PLATFORM_TEXT_LINE_TOP, 1,
-                         "YOU FOUND A KEY", 1);
-```
 
 `platform_look_tile_check()` must run before room-specific descriptive code. It
 first checks `platform_view_tiles`, so an occluded tile reports `I cannot see
@@ -767,7 +716,6 @@ sprites 1-5 from the requested asset.
 void platform_rain_enable(void (*setup)(void));
 void platform_rain_activate(void);
 void platform_rain_disable(void);
-uint8_t platform_rain_is_active(void);
 ```
 
 Rain is an optional room effect: seven independent streaks, each a single

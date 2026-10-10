@@ -21,7 +21,7 @@ uint8_t story_use_inventory(uint8_t slot) {
     GameInventorySlot* item = &game_state.inventory[slot];
 
     if (item->type == STORY_OBJECT_HEALTH_POTION) {
-        game_heal(20u);
+        game_state.health = game_state.maximum_health;
         (void)game_inventory_remove(item->type, 1u);
         game_text_write(PLATFORM_TEXT_LINE_TOP, "You feel better.", 1u);
         return GAME_USE_HANDLED;

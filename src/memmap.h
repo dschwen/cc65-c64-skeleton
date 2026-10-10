@@ -20,8 +20,6 @@
 #define COLOR_RAM           ((volatile uint8_t*)0xd800u)
 #define SPRITE_POINTERS     ((uint8_t*)0xfbf8u)
 #define SPRITE_DATA         ((uint8_t*)0xfc00u)
-#define OBJECT_TYPE_CHARS   2u
-#define OBJECT_TYPE_COLORS  18u
 
 #define ROOM_TILES          13u
 #define MAP_WIDTH_TILES     20u

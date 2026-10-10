@@ -441,14 +441,11 @@ alongside script text, but there is still no generic rule for which portrait
 accompanies which text - that association is up to whatever script or room
 code shows both.
 
-Standalone cutscenes and NPC conversations - not tied to a specific room -
-are also authored as scripts: a cutscene at
-`assets/scripts/cutscenes/<hex ID>.script` (played via `game_script_play()`)
-and a conversation at `assets/scripts/conversations/<hex ID>.script`
-(played via `game_conversation_play()`, or more commonly ended into with a
-room/topic script's own `converse <id>` statement - see
-`assets/scripts/05.script`'s TALK_PELL entry for a worked example), each
-with its own independent 0x00-0xFF ID space.
+NPC conversations - not tied to a specific room - are also authored as
+scripts, at `assets/scripts/conversations/<hex ID>.script`, with their own
+independent 0x00-0xFF ID space. A room/topic script starts one with its
+`converse <id>` statement - see `assets/scripts/05.script`'s TALK_PELL entry
+for a worked example.
 
 A `conversation` declaration's topics are matched against the first four
 letters the player types, case-insensitive, at a bare "> " prompt with a

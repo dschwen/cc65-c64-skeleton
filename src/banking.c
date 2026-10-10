@@ -10,7 +10,6 @@
 #define CPU_DDR  (*(volatile uint8_t*)0x0000u)
 #define CPU_MAP_GAME     0x07u
 #define CPU_MAP_KERNAL   0x07u
-#define CPU_MAP_ALL_RAM  0x04u
 #define CPU_PORT_MASK   0x07u
 
 uint8_t platform_cart_bank;
@@ -58,10 +57,6 @@ void platform_memory_kernal(void) {
     set_map(CPU_MAP_KERNAL);
 }
 
-void platform_memory_all_ram(void) {
-    set_map(CPU_MAP_ALL_RAM);
-}
-
 uint8_t platform_irq_save_disable(void) {
     return __asm {
         php
@@ -71,16 +66,8 @@ uint8_t platform_irq_save_disable(void) {
     };
 }
 
-void platform_irq_restore(uint8_t status) {
-    __asm {
-        lda status
-        pha
-        plp
-    }
-}
-
 /* Copy `size` bytes from EasyFlash bank `bank`, offset `offset` within the
- * ROML (8000-9FFF) or ROMH (A000-BFFF) half, to `destination`. Replaces
+ * ROML (8000-9FFF) half, to `destination`. Replaces
  * src/banking.s's easyflash_copy_roml/romh, which used the FAR_CALL
  * bank-stack machinery to make this safe to call from already-banked
  * code; far_call_bank() gives the same reentrancy natively. */
@@ -105,11 +92,3 @@ void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset,
     far_call_bank(bank, copy_window_body);
 }
 
-void platform_easyflash_copy_romh(uint8_t bank, uint16_t offset,
-                                  void* destination, uint16_t size) {
-    copy_window = (const uint8_t*)0xa000u;
-    copy_offset = offset;
-    copy_destination = (uint16_t)destination;
-    copy_size = size;
-    far_call_bank(bank, copy_window_body);
-}

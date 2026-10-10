@@ -11,8 +11,8 @@
  * always-RAM space rather than a banked call (the raster IRQ calls the
  * tick vector every frame and can never bank-switch to reach it).
  *
- * Structural translation of rooms/env/00.s (verified identical to
- * rooms/env/01.s) - the exact SID register sequences and their ordering/
+ * Structural translation of cc65-era rooms/env/00.s (verified identical to
+ * cc65-era rooms/env/01.s) - the exact SID register sequences and their ordering/
  * timing comments (gate-low holds, filter avoidance) are preserved
  * verbatim; this is tuned analog-audio behavior, not something to
  * "clean up" while porting.
@@ -77,8 +77,11 @@ static void sound_init(void) {
     /* A SID voice left gated on and held at sustain (as room 02's tavern
      * melody leaves this voice) does not restart from a gate low/high
      * pair too close together - hold the gate low across a couple of
-     * frames first. See rooms/env/00.s's original comment for the
-     * real-hardware measurement that found this.
+     * frames first. Found live by isolating this voice and capturing real
+     * audio: after a tavern visit the rain bed measured as flat DC (no
+     * zero crossings) while the droplet voice still worked, because
+     * env_tick re-gates *that* voice every ~34 frames with real time in
+     * between.
      *
      * Raw asm, not a plain C loop: a `for (delay = 0u; delay < 0x2000u;
      * ++delay) { }` here - even with `delay` declared `volatile` - does
@@ -89,7 +92,7 @@ static void sound_init(void) {
      * env_tavern_init() for the fuller writeup - found and fixed there
      * first, then found to already be broken here too. 0x20 * 0x100 =
      * 0x2000 iterations, translated directly from this file's own
-     * original rooms/env/00.s gatelow/gatelow_inner loop. */
+     * cc65-era rooms/env/00.s gatelow/gatelow_inner loop. */
     __asm {
         ldx #$20
     gatelow:

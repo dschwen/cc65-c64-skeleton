@@ -64,7 +64,7 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
   effect) is dead code and gets removed entirely at `-Os` - confirmed live,
   even with the loop counter declared `volatile`. This silently defeated
   the real-hardware-measured SID gate-retrigger delay (rooms/env/rain.c,
-  tavern.c, tavern_muffled.c - see rooms/env/00.s's original comment) in
+  tavern.c, tavern_muffled.c - see rooms/env/rain.c's sound_init() comment) in
   all three environments that had it. Use `__asm { ... }` for a delay that
   must actually happen, not a C loop.
 - VICE audio/SID register introspection needs an explicit real backend

@@ -59,10 +59,6 @@ static void weather_animate(void);
  * still reach the underlying RAM). */
 static void raster_irq_vectors_restore_impl(void);
 
-void raster_irq_vectors_restore(void) {
-    raster_irq_vectors_restore_impl();
-}
-
 /* 8-bit Galois LFSR; cheap PRNG for streak respawn placement. */
 static uint8_t rain_prng(void) {
     uint8_t carry = (rain_seed & 0x80u) != 0u;
@@ -421,10 +417,6 @@ void raster_irq_resume(void) {
         }
     }
     __asm { plp }
-}
-
-uint8_t platform_rain_is_active(void) {
-    return rain_active;
 }
 
 /* setup is a room's rain_setup() callback, or NULL to reuse whichever was

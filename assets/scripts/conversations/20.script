@@ -20,7 +20,22 @@ conversation orra {
         text "\"A strange house, holding its guests as if we were the trouble, not the storm.\""
     }
     topic "letter" {
-        text "\"Mine came the same way as everyone else's, I'd wager - torn, smeared, and no help to anyone.\""
+        /* Also the puzzle's resolution: handing over the revealed Orra
+         * Invite earns the Moon Brooch (MOONFEN_STORY_DESIGN.md branch C). */
+        check_flag STORY_STATE_ROOM_02_ORRA_HELPED == 0 {
+            check_item OBJ_ORRA_INVITE {
+                take_item OBJ_ORRA_INVITE
+                text "Lady Orra takes the letter, and her composure slips for just a moment as she reads it. \"So it was meant for me after all,\" she says quietly."
+                wait_key
+                give_object OBJ_MOON_BROOCH 1
+                set_flag STORY_STATE_ROOM_02_ORRA_HELPED 1
+                text "She unpins a small brooch from her collar, shaped like a crescent moon. \"Take this. Whatever door it was meant for, I'd rather you reach it than I.\""
+            } else {
+                text "\"Mine came the same way as everyone else's, I'd wager - torn, smeared, and no help to anyone.\""
+            }
+        } else {
+            text "\"Mine came the same way as everyone else's, I'd wager - torn, smeared, and no help to anyone.\""
+        }
     }
     topic "vey" {
         text "\"He plays the wronged innkeeper well. I've yet to decide if he believes it himself.\""

@@ -7,11 +7,10 @@
 /* Resident, not bank-local: game_inventory_show() below (called directly
  * with far_call_bank() from src/main.c, before this bank is even paged in)
  * and this bank's own drawing code both touch these, so they must survive
- * the bank switch either way (see memmap.h's header comment). This used to
- * be src/inventory_runtime.c's job when that file's game_inventory_show()
- * was itself resident; now that function lives in this same bank (see its
- * own comment below), so only its state declarations still need a home
- * outside any bank pragma. */
+ * the bank switch either way (see memmap.h's header comment).
+ * game_inventory_show() itself lives in this bank (see its own comment
+ * below), so only its state declarations need a home outside any bank
+ * pragma. */
 uint8_t game_inventory_draw_index;
 uint8_t game_inventory_draw_type;
 uint8_t game_inventory_draw_quantity;
@@ -48,7 +47,7 @@ static uint8_t inventory_screen_code(uint8_t ch) {
 }
 
 /* Draw one compact inventory entry (quantity, then up to 14 name chars).
- * Ported from modules/inventory_draw.s. Columns zero and twenty are
+ * Ported from hand-written assembly. Columns zero and twenty are
  * deliberately left free for the selection cursor drawn below. */
 static void game_inventory_draw_item_native(void) {
     uint8_t index = game_inventory_draw_index;
@@ -196,8 +195,7 @@ void raster_irq_resume(void);
 void inventory_entry(void);
 
 /* game_inventory_show()'s entry/exit screen handling stays in this same
- * bank rather than resident: moving it out of src/inventory_runtime.c and
- * in here (an ordinary intra-bank call to inventory_entry() below, no
+ * bank rather than resident: keeping it here (an ordinary intra-bank call to inventory_entry() below, no
  * far_call_bank() needed since both are already in BANK_INVENTORY) is what
  * let the resident "main" region (memmap.h) fit again once this file's own
  * screen-transition code was added - see banks.h's BANK_DISK_IO comment

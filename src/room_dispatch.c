@@ -2,10 +2,10 @@
 #include "memmap.h"
 #include "banks.h"
 #include "game.h"
+#include "script_abi.h"
 
 /*
- * Native (oscar64 C) replacement for src/room_code.s + src/room_runtime.c
- * (the $9900 copied-overlay scheme). Under oscar64's whole-program model,
+ * Room code dispatch. Under oscar64's whole-program model,
  * every room's compiled code already exists in the finished binary,
  * living in that room's own EasyFlash bank - there is nothing to "load":
  * no runtime header/checksum validation, no copy to a fixed RAM address,
@@ -14,13 +14,13 @@
  * friends bank-switch to them directly.
  *
  * Each room provides four functions with room-specific names (see
- * rooms/room_table.h, generated alongside the rooms themselves) matching
+ * build/rooms/room_table.h, generated from rooms/rooms.manifest) matching
  * game.h's enter_room/enter_tile/look_at/use_at contract. All must be
  * __noinline (see memmap.h's far_call_bank() comment) since they live in
  * a #pragma code() bank section.
  */
 
-#include "../rooms/room_table.h"
+#include "room_table.h" /* generated into build/rooms by tools/generate_room_table.py */
 
 typedef struct RoomEntry {
     uint8_t id;
@@ -58,6 +58,16 @@ uint8_t platform_room_data_fetch(uint8_t room_id, void* destination) {
     return 0u;
 }
 
+/* Whether room_id is in the room table (a load's pre-check; see
+ * modules/saveload.c). */
+uint8_t platform_room_exists(uint8_t room_id) {
+    uint8_t i;
+    for (i = 0u; i < ROOM_TABLE_COUNT; ++i) {
+        if (room_table[i].id == room_id) return 1u;
+    }
+    return 0u;
+}
+
 /* Finds room_id's table entry and remembers it as the active room, or
  * clears the active room if room_id has no compiled room code (an
  * unrecognized ID - every current room is always found, this only
@@ -86,13 +96,23 @@ uint8_t game_room_code_load_current(void) {
     return status;
 }
 
+/* The context tile a script entry's room-object opcodes act on (see
+ * script_abi.h): the player's own tile for the entry hooks, the selected
+ * tile for look_at/use_at. */
+static void script_context_player(void) {
+    script_context_x = game_state.player_x >> 1;
+    script_context_y = game_state.player_y >> 1;
+}
+
 void game_room_enter_tile_native(void) {
     if (!game_room_code_active) return;
+    script_context_player();
     far_call_bank(active_room->bank, active_room->enter_tile);
 }
 
 void game_room_enter_room_native(void) {
     if (!game_room_code_active) return;
+    script_context_player();
     far_call_bank(active_room->bank, active_room->enter_room);
 }
 
@@ -105,6 +125,8 @@ uint8_t game_room_look_at_native(uint8_t tile_x, uint8_t tile_y) {
     if (!game_room_code_active) return GAME_LOOK_DEFAULT;
     look_at_tile_x = tile_x;
     look_at_tile_y = tile_y;
+    script_context_x = tile_x;
+    script_context_y = tile_y;
     far_call_bank(active_room->bank, look_at_call);
     return look_at_result;
 }
@@ -118,6 +140,8 @@ uint8_t game_room_use_at_native(uint8_t tile_x, uint8_t tile_y) {
     if (!game_room_code_active) return GAME_USE_DEFAULT;
     use_at_tile_x = tile_x;
     use_at_tile_y = tile_y;
+    script_context_x = tile_x;
+    script_context_y = tile_y;
     far_call_bank(active_room->bank, use_at_call);
     return use_at_result;
 }

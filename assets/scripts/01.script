@@ -1,44 +1,49 @@
-/* Room 01 - crossroads and inn exterior. See rooms/01.rc/rooms/c/
- * 01_enter_room.c for the arrival hook, and STORY_ROOM01_* in src/story.h
- * for these keys.
+/* Room 01 - crossroads and inn exterior. See rooms/01.rc for the hooks
+ * that run these entries and STORY_ROOM01_* in src/story.h for the keys.
  *
- * Moonmint (object type 42, tile 5,0 - renamed in place from "Moonshroom",
- * same art) is a plain takeable pickup, the first of the three Guest's
- * Broth ingredients (MOONFEN_STORY_DESIGN.md section 7). The rain barrel
- * (object type 65, tile 5,8) is the second: using the Empty Cup (type 58,
- * from the kitchen - rooms/c/03_use_at.c places it) on it fills it with
- * Rainwater (type 59) - dispatched from rooms/c/01_use_at.c, since the
- * script DSL can't check/consume/add inventory. The third, Hearth Ash, is
- * collected at the common room's hearth (rooms/c/02_use_at.c). All three
- * combine at the kitchen cauldron into the Guest's Broth (type 61,
- * rooms/c/03_use_at.c). */
+ * Moonmint (OBJ_MOONMINT, tile 5,0) is a plain takeable pickup, the first
+ * of the three Guest's Broth ingredients (MOONFEN_STORY_DESIGN.md section
+ * 7). The rain barrel (OBJ_RAIN_BARREL, tile 5,8) is the second: using
+ * the Empty Cup (from the kitchen) on it fills it with Rainwater. The
+ * third, Hearth Ash, is collected at the tavern hearth (02.script); all
+ * three combine at the kitchen cauldron (03.script).
+ *
+ * The Blue Seal lies in the puddle at (3,4): rooms/c/01_look_at.c and
+ * 01_use_at.c dispatch FIND_SEAL only when the player stands in it. */
 room 01 {
     entry STORY_ROOM01_ARRIVAL {
-        text "Suddenly a mysterious inn appears, a stroke of luck for the weary traveler, or a cursed mirage?"
+        check_flag STORY_STATE_ROOM_01_ARRIVAL_SHOWN == 0 {
+            set_flag STORY_STATE_ROOM_01_ARRIVAL_SHOWN 1
+            text "Suddenly a mysterious inn appears, a stroke of luck for the weary traveler, or a cursed mirage?"
+        }
     }
     entry STORY_ROOM01_ENTER_INN {
         room_transition 2 17 19
     }
     entry STORY_ROOM01_FIND_SEAL {
-        check_flag QUEST_FLAGS & 1 {
+        check_flag QUEST_FLAGS & QUEST_BIT_SEAL_FOUND {
             text "There is nothing else in the muck."
         } else {
             text "Feeling around in the muddy water you find a blue seal!"
-            give_object 43 1
-            set_bit QUEST_FLAGS 1
+            give_object OBJ_BLUE_SEAL 1
+            set_bit QUEST_FLAGS QUEST_BIT_SEAL_FOUND
         }
     }
     entry STORY_ROOM01_SEARCH_FAR {
         text "The water is too muddy, I have to get closer!"
     }
-    entry STORY_ROOM01_USE_BARREL_FILL {
-        text "You dip the empty cup into the rain barrel and it comes up full."
-    }
-    entry STORY_ROOM01_USE_BARREL_ALREADY {
-        text "The cup is already full of rainwater."
-    }
-    entry STORY_ROOM01_USE_BARREL_NO_ITEM {
-        text "Rain drums steadily into the barrel. You'd need something to carry it in."
+    entry STORY_ROOM01_USE_BARREL {
+        check_item OBJ_EMPTY_CUP {
+            take_item OBJ_EMPTY_CUP
+            give_object OBJ_RAINWATER 1
+            text "You dip the empty cup into the rain barrel and it comes up full."
+        } else {
+            check_item OBJ_RAINWATER {
+                text "The cup is already full of rainwater."
+            } else {
+                text "Rain drums steadily into the barrel. You'd need something to carry it in."
+            }
+        }
     }
     entry STORY_ROOM01_LOOK_BARREL {
         text "An old barrel, set to catch the rain. It's nearly full."

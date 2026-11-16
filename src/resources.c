@@ -6,7 +6,7 @@
 /*
  * Generic resource fetch (see src/platform.h's PLATFORM_RESOURCE_KIND_*
  * comment). Replaces the cc65-era design's shared ROML/ROMH directories
- * with checksums (tools/pack_easyflash.py, deleted this migration): under
+ * with checksums (a packer tool deleted in the oscar64 migration): under
  * oscar64 every resource is compile-time #embed'd into one shared
  * EasyFlash bank per kind (see tools/generate_script_bank.py), so there is
  * nothing to look up or verify at runtime beyond "which array" - the

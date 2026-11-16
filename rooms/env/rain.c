@@ -5,14 +5,14 @@
 /*
  * Environment module: rain (visual sprites, existing mechanism) unified
  * with rain-bed/droplet/footstep sound. Used by rooms 00 and 01 (see
- * env_banks.h). Copied verbatim to ENVCODE_BASE by game_enter_room() -
+ * rooms/rooms.manifest). Copied verbatim to ENVCODE_BASE by game_enter_room() -
  * see memmap.h's EnvTable comment for the fixed-address function-pointer
  * table every module starts with, and why this must be reserved,
  * always-RAM space rather than a banked call (the raster IRQ calls the
  * tick vector every frame and can never bank-switch to reach it).
  *
- * Structural translation of cc65-era rooms/env/00.s (verified identical to
- * cc65-era rooms/env/01.s) - the exact SID register sequences and their ordering/
+ * Ported from the cc65-era hand-written assembly module (rooms 00 and 01
+ * shared one) - the exact SID register sequences and their ordering/
  * timing comments (gate-low holds, filter avoidance) are preserved
  * verbatim; this is tuned analog-audio behavior, not something to
  * "clean up" while porting.
@@ -91,8 +91,8 @@ static void sound_init(void) {
      * defeating this whole workaround. See rooms/env/tavern.c's
      * env_tavern_init() for the fuller writeup - found and fixed there
      * first, then found to already be broken here too. 0x20 * 0x100 =
-     * 0x2000 iterations, translated directly from this file's own
-     * cc65-era rooms/env/00.s gatelow/gatelow_inner loop. */
+     * 0x2000 iterations, the cc65-era module's own gatelow/gatelow_inner
+     * loop. */
     __asm {
         ldx #$20
     gatelow:

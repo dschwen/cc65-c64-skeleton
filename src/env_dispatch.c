@@ -2,7 +2,7 @@
 #include "memmap.h"
 
 /*
- * Native (oscar64 C) replacement for src/env_dispatch.s: C-callable
+ * C-callable
  * trampolines into the current room's environment module (see
  * PLATFORM_API.md's "Room environment module"). src/irq.c's
  * weather_animate() calls ENVCODE_TICK directly since it's already C;

@@ -1,5 +1,6 @@
 #include "game.h"
 #include "world.h"
+#include "platform_native.h"
 
 void platform_text_output_native(const char* text);
 uint8_t platform_text_output_color;
@@ -120,6 +121,15 @@ uint8_t game_inventory_has(uint8_t type, uint8_t quantity) {
     return game_inventory_count(type) >= quantity;
 }
 
+/* A carried item's own light radius lights the player (see
+ * game_player_light_sync() in src/hero_light.c), so every inventory
+ * change re-derives it and, if it moved, rebuilds the room lighting. */
+static void inventory_changed(void) {
+    if (game_player_light_sync()) {
+        platform_lighting_rebuild(rendered_room, rendered_player);
+    }
+}
+
 uint8_t game_inventory_add(uint8_t type, uint8_t quantity) {
     uint8_t i;
     uint16_t combined;
@@ -135,6 +145,7 @@ uint8_t game_inventory_add(uint8_t type, uint8_t quantity) {
         if (game_state.inventory[i].type == 0u) {
             game_state.inventory[i].type = type;
             game_state.inventory[i].quantity = quantity;
+            inventory_changed();
             return PLATFORM_OK;
         }
     }
@@ -155,6 +166,7 @@ uint8_t game_inventory_remove(uint8_t type, uint8_t quantity) {
             quantity -= game_state.inventory[i].quantity;
             game_state.inventory[i].type = 0u;
             game_state.inventory[i].quantity = 0u;
+            inventory_changed();
         }
     }
     return PLATFORM_OK;
@@ -170,68 +182,6 @@ void game_inventory_remove_one(uint8_t type) {
 
 void game_inventory_add_one(uint8_t type) {
     (void)game_inventory_add(type, 1u);
-}
-
-/*
- * Locate an unlit Brazier (object type 41) at tile_x/tile_y and, if the
- * player carries a Lit Taper (type 53), swap it for a Lit Brazier (type
- * 40) - see rooms/asm/04_use_at.s and MOONFEN_STORY_DESIGN.md's "Lighting
- * the sconces". Returns GAME_USE_DEFAULT when no unlit brazier occupies
- * the tile. Was hand-written 6502 (src/brazier.s) purely because cc65's
- * codegen for this loop ran to ~500 bytes reloading the object pointer
- * from the software stack on every field access - oscar64 does not share
- * that weakness (Phase 0 measured ~2x denser codegen for comparable
- * loops), so this is ordinary C over the real room->objects array.
- */
-uint8_t game_ignite_brazier(uint8_t tile_x, uint8_t tile_y) {
-    uint8_t has_taper = game_inventory_has_one(53u); /* LIT_TAPER_TYPE */
-    uint16_t i;
-    uint16_t limit = platform_room_object_limit(&platform_room);
-
-    for (i = 0u; i < limit; ++i) {
-        PlatformObject* object = &platform_room.objects[i];
-        if (object->type != 41u) continue; /* BRAZIER_UNLIT_TYPE */
-        if ((object->x >> 1) != tile_x || (object->y >> 1) != tile_y) continue;
-
-        if (has_taper) {
-            object->type = 40u; /* BRAZIER_LIT_TYPE */
-            (void)game_world_capture_current();
-            platform_room_draw(&platform_room, platform_player);
-            (void)game_room_script_entry(3u); /* STORY_ROOM04_LIGHT_BRAZIER */
-        } else {
-            (void)game_room_script_entry(4u); /* STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM */
-        }
-        return GAME_USE_HANDLED;
-    }
-    return GAME_USE_DEFAULT;
-}
-
-extern uint8_t tile_data[];
-
-/*
- * Recolors the moon mirror's two tiles (83, the frame half; 84, the glass
- * half - assets/tiles.ctil, placed only in room 04's tile grid, confirmed
- * by scanning for their shared cyan color) brighter once repaired -
- * MOONFEN_STORY_DESIGN.md's "The cracked moon mirror". Patches the shared
- * runtime tile_data table (src/assets_data.c) in place rather than adding
- * new tile IDs, since all 256 are already assigned; safe because no other
- * room places 83/84. Idempotent and cheap to call unconditionally - does
- * nothing unless the flag is set. Must be re-applied on every room 04
- * enter_room (rooms/c/04_enter_room.c), not just once at the moment of
- * repair: modules/saveload.c reuses tile_data as scratch space and
- * reloads it from ROM on every save/load, which would otherwise silently
- * revert the mirror's appearance after a save/load round trip even
- * though the flag (and the room's own object state) stayed correct. */
-void game_mirror_repair_apply(void) {
-    if (!game_state.flags[18]) return; /* STORY_STATE_MIRROR_REPAIRED */
-    tile_data[83u * 8u + 1u] = 14u;
-    tile_data[83u * 8u + 3u] = 14u;
-    tile_data[83u * 8u + 5u] = 14u;
-    tile_data[83u * 8u + 7u] = 14u;
-    tile_data[84u * 8u + 1u] = 14u;
-    tile_data[84u * 8u + 3u] = 14u;
-    tile_data[84u * 8u + 5u] = 14u;
-    tile_data[84u * 8u + 7u] = 14u;
 }
 
 uint8_t game_take_object(uint8_t slot) {

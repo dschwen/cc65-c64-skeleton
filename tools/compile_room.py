@@ -3,13 +3,17 @@
 the mechanical patterns real room code turns out to need) into a C source
 file compiled directly into the oscar64 whole-program build, each room
 living in its own EasyFlash bank (see src/room_dispatch.c and
-src/rooms/room_table.h).
+build/rooms/room_table.h, generated from rooms/rooms.manifest).
 
-This DSL covers three mechanical shapes (an empty handler, an unconditional
-story-flag bump on tile entry, or a tile-coordinate dispatch to
-game_room_script_entry() from look_at()/use_at()) plus an escape hatch (a
-hand-written C fragment in rooms/c/, one per room per handler) for genuinely
-custom logic. Each generated room provides four externally-callable,
+This DSL covers the mechanical shapes real room code needs - an empty
+handler, an unconditional story-flag bump, running one room-script entry
+(`script KEY`), or a tile-coordinate dispatch to game_room_script_entry()
+from enter_tile()/look_at()/use_at() - plus an escape hatch (a hand-written
+C fragment in rooms/c/, one per room per handler) for logic the script DSL
+itself cannot express. Since the script DSL can check and consume
+inventory, swap or add room objects and change tiles (tools/
+compile_script.py), nearly every puzzle belongs in the .script source; a
+C fragment is for things like reading the turn counter or a tile's ID. Each generated room provides four externally-callable,
 room-prefixed functions (roomNN_enter_room/_enter_tile/_look_at/_use_at)
 matching src/room_dispatch.c's RoomEntry contract; all four (and any spliced
 fragment) are placed in that room's own #pragma code()/data()/bss() bank
@@ -18,12 +22,23 @@ __noinline (a banked function that got inlined into resident code would
 silently stop being reachable through the intended bank switch - see
 memmap.h's far_call_bank() comment).
 
-DSL syntax: unchanged from the original cc65-targeting generator - see
-git history for the full syntax doc. Only the `asm "path"` escape hatch
-changed meaning: `path` now names a C fragment (see rooms/c/*.c) providing
-a plain, room-generically-named function (enter_tile/enter_room/
-look_at_fallback/use_at_fallback), spliced in with its name substituted to
-the room-prefixed one.
+DSL syntax (see ROOM_CODE_API.md):
+
+    enter_room: default | flag NAME increment | flag NAME set VALUE
+              | script KEY | asm "rooms/c/NN_enter_room.c"
+    enter_tile: <same one-line forms as enter_room>, or a dispatch block:
+    enter_tile:
+        at X,Y -> script KEY
+        default -> none | script KEY | asm "path"
+    look_at: / use_at:
+        at X,Y -> script KEY
+        default -> GAME_LOOK_DEFAULT | asm "path"
+
+`asm "path"` names a C fragment (rooms/c/*.c) defining enter_tile/
+enter_room/look_at_fallback/use_at_fallback, spliced in with its name
+substituted to the room-prefixed one. Numbers may be #define symbols from
+the --flags files (src/story.h, src/game.h and the generated object-type
+header by default).
 """
 
 from __future__ import annotations
@@ -36,7 +51,8 @@ from pathlib import Path
 
 DEFINE_RE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)")
 
-DEFAULT_FLAG_FILES = (Path("src/story.h"), Path("src/game.h"))
+DEFAULT_FLAG_FILES = (Path("src/story.h"), Path("src/game.h"),
+                      Path("build/object_types.h"))
 
 FRAGMENT_NAMES = ("enter_tile", "enter_room", "look_at_fallback", "use_at_fallback")
 
@@ -82,23 +98,28 @@ class AtEntry:
 
 
 class DispatchHandler:
-    __slots__ = ("entries", "default_value", "default_fragment_path")
+    __slots__ = ("entries", "default_value", "default_fragment_path",
+                 "default_script_key", "default_none")
 
     def __init__(self) -> None:
         self.entries: list[AtEntry] = []
         self.default_value: int | None = None
         self.default_fragment_path: str | None = None
+        self.default_script_key: int | None = None
+        self.default_none = False
 
 
 class SimpleHandler:
-    __slots__ = ("kind", "flag_index", "flag_op", "flag_value", "fragment_path")
+    __slots__ = ("kind", "flag_index", "flag_op", "flag_value", "fragment_path",
+                 "script_key")
 
     def __init__(self) -> None:
-        self.kind = "default"  # "default" | "flag" | "fragment"
+        self.kind = "default"  # "default" | "flag" | "fragment" | "script"
         self.flag_index = 0
         self.flag_op = "increment"  # "increment" | "set"
         self.flag_value = 0
         self.fragment_path = ""
+        self.script_key = 0
 
 
 def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
@@ -113,7 +134,7 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
         if not line:
             continue
 
-        if line in ("look_at:", "use_at:"):
+        if line in ("look_at:", "use_at:", "enter_tile:"):
             name = line[:-1]
             handler = DispatchHandler()
             while i < len(lines):
@@ -141,11 +162,16 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                     handler.entries.append(AtEntry(x, y, key))
                 elif inner_line.startswith("default"):
                     am = re.match(r'default\s*->\s*asm\s+"([^"]+)"$', inner_line)
+                    sm = re.match(r"default\s*->\s*script\s+(\S+)$", inner_line)
                     if am:
                         handler.default_fragment_path = am.group(1)
+                    elif sm:
+                        handler.default_script_key = resolve(sm.group(1), symbols, inner_no)
+                    elif name == "enter_tile" and re.match(r"default\s*->\s*none$", inner_line):
+                        handler.default_none = True
                     else:
                         m = re.match(r"default\s*->\s*(\S+)$", inner_line)
-                        if not m:
+                        if not m or name == "enter_tile":
                             raise SystemExit(
                                 f"line {inner_no}: malformed 'default' line: {inner_line!r}"
                             )
@@ -153,12 +179,14 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                 else:
                     raise SystemExit(
                         f"line {inner_no}: expected 'at X,Y -> script KEY' or "
-                        f"'default -> VALUE', got {inner_line!r}"
+                        f"'default -> ...', got {inner_line!r}"
                     )
-            if handler.default_value is None and handler.default_fragment_path is None:
+            if (handler.default_value is None and handler.default_fragment_path is None
+                    and handler.default_script_key is None and not handler.default_none):
                 raise SystemExit(
-                    f"{name}: missing mandatory 'default -> VALUE' or "
-                    "'default -> asm \"path\"' line"
+                    f"{name}: missing mandatory 'default -> ...' line "
+                    "(a return value, 'script KEY', 'asm \"path\"', or for "
+                    "enter_tile 'none')"
                 )
             handlers[name] = handler
             continue
@@ -186,6 +214,12 @@ def parse(text: str, symbols: dict[str, int]) -> dict[str, object]:
                     raise SystemExit(f"line {line_no}: malformed asm statement: {rest!r}")
                 simple.kind = "fragment"
                 simple.fragment_path = am.group(1)
+            elif rest.startswith("script "):
+                sm = re.match(r"script\s+(\S+)$", rest)
+                if not sm:
+                    raise SystemExit(f"line {line_no}: malformed script statement: {rest!r}")
+                simple.kind = "script"
+                simple.script_key = resolve(sm.group(1), symbols, line_no)
             else:
                 raise SystemExit(f"line {line_no}: unrecognized {name} statement: {rest!r}")
             handlers[name] = simple
@@ -247,6 +281,8 @@ def gen_simple(name: str, room_prefix: str, handler: SimpleHandler, out: list[st
             out.append(f"    ++game_state.flags[{handler.flag_index}];")
         else:
             out.append(f"    game_state.flags[{handler.flag_index}] = {handler.flag_value};")
+    elif handler.kind == "script":
+        out.append(f"    (void)game_room_script_entry({handler.script_key});")
     out.append("}")
     out.append("")
 
@@ -255,8 +291,31 @@ def gen_dispatch(
     name: str, room_prefix: str, handler: DispatchHandler, out: list[str],
     symbols: dict[str, int],
 ) -> None:
-    handled_name = "GAME_LOOK_HANDLED" if name == "look_at" else "GAME_USE_HANDLED"
     fn_name = f"{room_prefix}{name}"
+
+    if name == "enter_tile":
+        # The player's own tile is the dispatch key; a fragment default is
+        # a whole replacement enter_tile() that runs when no `at` matched,
+        # so it is spliced under a private name and called from here.
+        if handler.default_fragment_path:
+            splice_fragment(handler.default_fragment_path, room_prefix + "unmatched_", out)
+        out.append(f"__noinline void {fn_name}(void) {{")
+        out.append("    uint8_t tile_x = game_state.player_x >> 1;")
+        out.append("    uint8_t tile_y = game_state.player_y >> 1;")
+        for entry in handler.entries:
+            out.append(f"    if (tile_x == {entry.x} && tile_y == {entry.y}) {{")
+            out.append(f"        (void)game_room_script_entry({entry.key});")
+            out.append("        return;")
+            out.append("    }")
+        if handler.default_fragment_path:
+            out.append(f"    {room_prefix}unmatched_enter_tile();")
+        elif handler.default_script_key is not None:
+            out.append(f"    (void)game_room_script_entry({handler.default_script_key});")
+        out.append("}")
+        out.append("")
+        return
+
+    handled_name = "GAME_LOOK_HANDLED" if name == "look_at" else "GAME_USE_HANDLED"
     default_call = f"{room_prefix}{name}_fallback(tile_x, tile_y)"
 
     if handler.default_fragment_path:
@@ -270,6 +329,9 @@ def gen_dispatch(
         out.append("    }")
     if handler.default_fragment_path:
         out.append(f"    return {default_call};")
+    elif handler.default_script_key is not None:
+        out.append(f"    (void)game_room_script_entry({handler.default_script_key});")
+        out.append(f"    return {handled_name};")
     else:
         out.append(f"    return {handler.default_value};")
     out.append("}")
@@ -285,6 +347,8 @@ def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int],
         "#include <stdint.h>",
         '#include "game.h"',
         '#include "banks.h"',
+        '#include "story.h"',
+        '#include "object_types.h"',
         "",
         f'#pragma section( {bank_region}data, 0 )',
         f'#pragma section( {bank_region}code, 0 )',
@@ -307,7 +371,10 @@ def generate(room_id: int, handlers: dict[str, object], symbols: dict[str, int],
         f"#pragma code({bank_region}code)",
         "",
     ]
-    gen_simple("enter_tile", room_prefix, handlers["enter_tile"], out)  # type: ignore[arg-type]
+    if isinstance(handlers["enter_tile"], DispatchHandler):
+        gen_dispatch("enter_tile", room_prefix, handlers["enter_tile"], out, symbols)
+    else:
+        gen_simple("enter_tile", room_prefix, handlers["enter_tile"], out)  # type: ignore[arg-type]
     gen_simple("enter_room", room_prefix, handlers["enter_room"], out)  # type: ignore[arg-type]
     gen_dispatch("look_at", room_prefix, handlers["look_at"], out, symbols)  # type: ignore[arg-type]
     gen_dispatch("use_at", room_prefix, handlers["use_at"], out, symbols)  # type: ignore[arg-type]

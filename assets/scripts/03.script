@@ -1,41 +1,23 @@
 /* Room 03 - the inn's kitchen and pantry (MOONFEN_STORY_DESIGN.md section
- * 6). See rooms/03.rc for the door/stairs dispatch and STORY_ROOM03_* in
- * src/story.h for these keys.
+ * 6). See rooms/03.rc for the dispatch and STORY_ROOM03_* in src/story.h
+ * for these keys.
  *
- * The stairway down to the basement is at (10,1), an already-walkable
- * tile (10) among the pantry shelving - stepping onto it transitions
- * immediately (rooms/c/03_enter_tile.c) rather than requiring Use, and
- * unconditionally: the cellar's real gate is a brass-key-locked door
- * inside the basement itself (rooms/c/04_use_at.c), not a check here.
- * The player arrives from the tavern at (6,9); the real door back is one
- * tile south at (6,10) (the walkable door tile 5 in the south wall),
- * which transitions the same way - stepping onto it, not Using it.
+ * The stairway down to the basement is at (10,1); stepping onto it
+ * transitions immediately, unconditionally - the cellar's real gate is
+ * the brass-key-locked door inside the basement (04.script). The player
+ * arrives from the tavern at (6,9); the door back is one tile south at
+ * (6,10), which also transitions on entry.
  *
- * Lamp Oil (object type 51, tile 5,1), Long Taper (object type 52, tile
- * 14,1), and Empty Cup (object type 58, tile 8,1) are takeable pickups -
- * Take is a generic engine command (see game_take_tile()), so placing
- * them in assets/03 is all the wiring they need to be picked up;
- * STORY_ROOM02_CALDUS_FREE/STORY_ROOM02_LIGHT_TAPER (rooms/c/
- * 02_use_at.c) and rooms/c/01_use_at.c's rain barrel are where the oil,
- * taper, and cup respectively pay off.
+ * Lamp Oil (5,1), Long Taper (14,1) and Empty Cup (8,1) are plain
+ * takeable pickups - Take is a generic engine command, so placing them in
+ * assets/03 is all the wiring they need. They pay off at Sir Caldus
+ * (conversations/22), the tavern hearth (02.script) and the rain barrel
+ * (01.script) respectively.
  *
- * The Cauldron (object type 39, tile 10,6) is the user's own addition:
- * using it with all three Guest's Broth ingredients (Moonmint, Rainwater,
- * Hearth Ash - MOONFEN_STORY_DESIGN.md section 7) held gives the Guest's
- * Broth (type 61) - dispatched from rooms/c/03_use_at.c alongside the
- * kettle, since the script DSL can't check three inventory items at once
- * either.
- *
- * Tile 65 is a storm window - wherever it appears in this room (currently
- * 9,0 and 3,5), looking at it always shows STORY_ROOM03_LOOK_WINDOW,
- * dispatched generically by rooms/asm/03_look_at.s rather than a per-tile
- * `at X,Y` entry.
- *
- * The Kettle (object type 62, tile 11,6, placeholder scenery) is Lady
- * Orra's branch of the cellar-token puzzle: using the Blank Letter (type
- * 56, given by Orra on first meeting, rooms/c/02_use_at.c) at the kettle
- * reveals it as the Orra Invite (type 57) - dispatched from
- * rooms/c/03_use_at.c, the script DSL has no inventory-check opcode. */
+ * The kettle (11,6) reveals Lady Orra's Blank Letter as the Orra Invite
+ * (section 5, branch C). The cauldron (10,6) cooks the Guest's Broth from
+ * Moonmint, Rainwater and Hearth Ash (section 7); the broth's presence in
+ * the inventory is its own "ready" state. */
 room 03 {
     entry STORY_ROOM03_LEAVE_KITCHEN {
         room_transition 2 4 2
@@ -65,20 +47,37 @@ room 03 {
         text "A copper kettle sits over the embers, steam curling from its spout."
     }
     entry STORY_ROOM03_USE_KETTLE {
-        text "You hold the blank letter in the rising steam. Slowly, faint lines darken into legible script."
-        wait_key
-        text "It's an invitation - addressed, you now notice, to Lady Orra."
+        check_item OBJ_BLANK_LETTER {
+            take_item OBJ_BLANK_LETTER
+            give_object OBJ_ORRA_INVITE 1
+            text "You hold the blank letter in the rising steam. Slowly, faint lines darken into legible script."
+            wait_key
+            text "It's an invitation - addressed, you now notice, to Lady Orra."
+        } else {
+            check_item OBJ_ORRA_INVITE {
+                text "The letter is already revealed - no need to steam it again."
+            } else {
+                text "Steam rises from the kettle, but you have nothing to hold over it."
+            }
+        }
     }
-    entry STORY_ROOM03_USE_KETTLE_ALREADY {
-        text "The letter is already revealed - no need to steam it again."
-    }
-    entry STORY_ROOM03_USE_KETTLE_NO_ITEM {
-        text "Steam rises from the kettle, but you have nothing to hold over it."
-    }
-    entry STORY_ROOM03_USE_CAULDRON_COOK {
-        text "Moonmint, rainwater, and a pinch of hearth ash, simmered together - the Guest's Broth is ready."
-    }
-    entry STORY_ROOM03_USE_CAULDRON_MISSING {
-        text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."
+    entry STORY_ROOM03_USE_CAULDRON {
+        check_item OBJ_MOONMINT {
+            check_item OBJ_RAINWATER {
+                check_item OBJ_HEARTH_ASH {
+                    take_item OBJ_MOONMINT
+                    take_item OBJ_RAINWATER
+                    take_item OBJ_HEARTH_ASH
+                    give_object OBJ_GUESTS_BROTH 1
+                    text "Moonmint, rainwater, and a pinch of hearth ash, simmered together - the Guest's Broth is ready."
+                } else {
+                    text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."
+                }
+            } else {
+                text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."
+            }
+        } else {
+            text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."
+        }
     }
 }

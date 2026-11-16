@@ -1,5 +1,11 @@
 enter_room: default
-enter_tile: asm "rooms/c/03_enter_tile.c"
+
+# Stepping onto the stairs down (10,1) or the door back to the tavern
+# (6,10) transitions immediately rather than requiring Use.
+enter_tile:
+    at 10,1 -> script STORY_ROOM03_DESCEND_STAIRS
+    at 6,10 -> script STORY_ROOM03_LEAVE_KITCHEN
+    default -> none
 
 look_at:
     at 10,6 -> script STORY_ROOM03_LOOK_CAULDRON
@@ -25,7 +31,7 @@ look_at:
     default -> asm "rooms/c/03_look_at.c"
 
 use_at:
-    # The kettle (11,6) needs a Blank Letter inventory check the script
-    # DSL can't express - handled in the asm fallback. See
-    # rooms/c/03_use_at.c.
-    default -> asm "rooms/c/03_use_at.c"
+    # The kettle and the cauldron check inventory inside their entries.
+    at 11,6 -> script STORY_ROOM03_USE_KETTLE
+    at 10,6 -> script STORY_ROOM03_USE_CAULDRON
+    default -> GAME_USE_DEFAULT

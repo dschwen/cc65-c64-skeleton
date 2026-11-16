@@ -6,8 +6,8 @@
  * Environment module: the tavern's melody (rooms/env/tavern.c) as heard
  * faintly through a wall - same D Dorian tune and tempo, thinner (melody
  * + bass only, no pad voice) and much quieter. Used by rooms 03 (kitchen)
- * and 05 (guest corridor). Structural translation of cc65-era rooms/env/03.s
- * (verified identical to cc65-era rooms/env/05.s).
+ * and 05 (guest corridor). Ported from the cc65-era
+ * hand-written assembly module (rooms 03 and 05 shared one).
  */
 
 #pragma section( env_tavmuf_code, 0 )
@@ -62,7 +62,7 @@ __noinline void env_tavern_muffled_init(void) {
      * env_tavern_init() for why a `for` loop here - even over a `volatile`
      * counter - does not survive Oscar64 -Os and was confirmed live to
      * have silently lost this delay entirely. 0x20 * 0x100 = 0x2000
-     * iterations, translated directly from cc65-era rooms/env/03.s's own
+     * iterations, the cc65-era module's own
      * gatelow/gatelow_inner loop. */
     __asm {
         ldx #$20

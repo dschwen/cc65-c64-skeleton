@@ -45,11 +45,9 @@ def prepare_objects(data: bytearray, path: Path) -> None:
 # "hot" part (PlatformObjectType: dimensions, hotspot, chars[16],
 # colors[16], light - kept resident, always visible) and a 15-byte "cold"
 # part (PlatformObjectTypeInfo: name[14], flags - kept in an EasyFlash
-# bank, fetched only for Look/Take text). Same layout/split
-# tools/pack_easyflash.py used under cc65; kept here now that the oscar64
-# port embeds both parts directly as C data instead of packing them into a
-# runtime-validated cartridge directory. bytes 50-63 are unused padding,
-# dropped.
+# bank, fetched only for Look/Take text). Both parts are embedded directly
+# as C data (src/object_types_data.c, modules/typeinfo.c). Bytes 50-63 are
+# unused padding, dropped.
 OBJECT_TYPE_HOT_BYTES = 35
 OBJECT_TYPE_COLD_BYTES = 15
 

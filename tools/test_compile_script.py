@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for tools/compile_script.py string syntax (<runes>/<text>).
+"""Unit tests for tools/compile_script.py: string syntax (<runes>/<text>)
+and the inventory/room-object statements.
 
 Run: python3 tools/test_compile_script.py
 """
@@ -16,10 +17,58 @@ def encode(source: str) -> bytes:
     return cs.encode_string(cs.decode_string(f'"{source}"', 1))
 
 
-def compile_script_text(source: str) -> bytes:
-    decls = cs.Parser(cs.tokenize(source), {}).parse_program()
+def compile_script_text(source: str, symbols: dict | None = None) -> bytes:
+    decls = cs.Parser(cs.tokenize(source), symbols or {}).parse_program()
     assert len(decls) == 1
     return cs.compile_decl(decls[0])
+
+
+class InventoryStatements(unittest.TestCase):
+    """Operand layouts as src/script_format.h / modules/script.c expect."""
+
+    def body(self, source: str, symbols: dict | None = None) -> bytes:
+        # kind 0 (script): 3-byte header, body, END, then the string table.
+        code = compile_script_text(source, symbols)
+        self.assertEqual(code[:3], bytes([cs.FORMAT_VERSION, cs.KIND_SCRIPT, 0]))
+        return code[3:]
+
+    def test_opcodes_come_from_the_shared_header(self):
+        header = (Path(__file__).resolve().parents[1] / "src/script_format.h").read_text()
+        self.assertIn("#define SCRIPT_OP_CHECK_ITEM", header)
+        self.assertEqual(cs.OP_CHECK_ITEM, 0x0F)
+        self.assertEqual(cs.OP_TILE_COLOR, 0x15)
+
+    def test_check_item_defaults_quantity_and_lays_out_branches(self):
+        body = self.body('script s { check_item 51 { take_item 51 } else { lightning } }')
+        self.assertEqual(body[0:3], bytes([cs.OP_CHECK_ITEM, 51, 1]))
+        true_len = int.from_bytes(body[3:5], "little")
+        false_len = int.from_bytes(body[5:7], "little")
+        self.assertEqual((true_len, false_len), (3, 1))
+        self.assertEqual(body[7:10], bytes([cs.OP_TAKE_ITEM, 51, 1]))
+        self.assertEqual(body[10], cs.OP_LIGHTNING)
+        self.assertEqual(body[11], cs.OP_END)
+
+    def test_check_item_explicit_quantity_and_symbols(self):
+        body = self.body('script s { check_item OBJ_GOLD 5 { take_item OBJ_GOLD 5 } }',
+                         {"OBJ_GOLD": 2})
+        self.assertEqual(body[0:3], bytes([cs.OP_CHECK_ITEM, 2, 5]))
+        self.assertEqual(body[7:10], bytes([cs.OP_TAKE_ITEM, 2, 5]))
+
+    def test_object_and_tile_statements(self):
+        body = self.body('script s { check_object 41 { replace_object 41 40 } '
+                         'add_object 37 26 2 set_tile 18 4 5 tile_color 83 14 }')
+        self.assertEqual(body[0:2], bytes([cs.OP_CHECK_OBJECT, 41]))
+        self.assertEqual(body[2:6], bytes([3, 0, 0, 0]))
+        self.assertEqual(body[6:9], bytes([cs.OP_REPLACE_OBJECT, 41, 40]))
+        self.assertEqual(body[9:13], bytes([cs.OP_ADD_OBJECT, 37, 26, 2]))
+        self.assertEqual(body[13:17], bytes([cs.OP_SET_TILE, 18, 4, 5]))
+        self.assertEqual(body[17:20], bytes([cs.OP_TILE_COLOR, 83, 14]))
+        self.assertEqual(body[20], cs.OP_END)
+
+    def test_room_transition_without_message_uses_no_message_marker(self):
+        body = self.body('script s { room_transition 2 17 19 }')
+        self.assertEqual(body[0:4], bytes([cs.OP_ROOM_TRANSITION, 2, 17, 19]))
+        self.assertEqual(int.from_bytes(body[4:6], "little"), cs.NO_MESSAGE)
 
 
 class StringSyntax(unittest.TestCase):

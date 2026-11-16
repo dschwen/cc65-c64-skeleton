@@ -1,0 +1,238 @@
+#include <stdint.h>
+#include <string.h>
+
+#include "memmap.h"
+#include "banks.h"
+#include "../music/waltz_state.h"
+
+/*
+ * Title screen (BANK_TITLE): a hires picture over the top 20 character
+ * rows, credit lines fading in and out below it, and the Moonfen Waltz
+ * (music/waltz_player.h) playing until a key or joystick-2 fire is pressed.
+ *
+ * Runs from src/main.c before platform_init(), with interrupts masked and
+ * no KERNAL state yet, so it touches only RAM the game initializes later:
+ * VIC bank 2 RAM beneath the cartridge window. CPU writes there reach RAM
+ * while reads return cartridge ROM, and the VIC always sees the RAM:
+ *
+ *   $8000-$83E7  screen matrix: rows 0-19 picture colors, rows 20-24 text
+ *   $9800        VIC sees the mixed-case character ROM here (bank 2)
+ *   $A000-$BF3F  hires bitmap (rows 20-24 cleared to zero)
+ *
+ * The picture is assets/title.hires: 6400 bitmap bytes (320x160, the usual
+ * 8x8-cell order) followed by 800 screen bytes (high nibble = ink, low
+ * nibble = paper). The committed file is an all-black placeholder.
+ *
+ * No raster IRQ: the frame loop polls $D012, switching to text mode at
+ * line 211 (the bad line of row 20) and back to bitmap mode at line 251.
+ * Pixel row 0 of row 20 may still be fetched in bitmap mode; its bitmap
+ * bytes are zero and its paper color (low nibble of a space, $20) is
+ * black, so that line stays black either way.
+ */
+
+/* Resident state (see memmap.h: banked code may not keep mutable data). */
+static uint8_t title_pair;
+static uint8_t title_phase;
+static uint8_t title_level;
+static uint8_t title_timer;
+
+#pragma section( title_code, 0 )
+#pragma section( title_data, 0 )
+#pragma region( title_bank, 0x8000, 0xc000, , BANK_TITLE,
+                 { title_data, title_code } )
+#pragma code(title_code)
+#pragma data(title_data)
+
+#include "../music/waltz_player.h"
+
+#define CPU_DDR     (*(volatile uint8_t*)0x0000u)
+#define CPU_PORT    (*(volatile __memmap uint8_t*)0x0001u)
+#define VIC_CTRL1   (*(volatile uint8_t*)0xd011u)
+#define VIC_RASTER  (*(volatile uint8_t*)0xd012u)
+#define VIC_SPR_EN  (*(volatile uint8_t*)0xd015u)
+#define VIC_CTRL2   (*(volatile uint8_t*)0xd016u)
+#define VIC_MEMPTR  (*(volatile uint8_t*)0xd018u)
+#define VIC_BORDER  (*(volatile uint8_t*)0xd020u)
+#define VIC_BG0     (*(volatile uint8_t*)0xd021u)
+#define CIA1_PRA    (*(volatile uint8_t*)0xdc00u)
+#define CIA1_PRB    (*(volatile uint8_t*)0xdc01u)
+#define CIA1_DDRA   (*(volatile uint8_t*)0xdc02u)
+#define CIA1_DDRB   (*(volatile uint8_t*)0xdc03u)
+#define CIA2_PRA    (*(volatile uint8_t*)0xdd00u)
+#define CIA2_DDRA   (*(volatile uint8_t*)0xdd02u)
+
+#define TITLE_SCREEN   ((uint8_t*)0x8000u)
+#define TITLE_BITMAP   ((uint8_t*)0xa000u)
+#define TITLE_COLOR    ((uint8_t*)0xd800u)
+#define IMAGE_ROWS     20u
+#define BITMAP_BYTES   (IMAGE_ROWS * 320u)
+#define COLOR_BYTES    (IMAGE_ROWS * 40u)
+#define HEADING_ROW    21u
+#define NAME_ROW       23u
+
+#define MEMPTR_BITMAP  0x08u /* screen $0000, bitmap $2000 of the bank */
+#define MEMPTR_TEXT    0x06u /* screen $0000, mixed-case char ROM $1800 */
+#define CTRL1_BITMAP   0x3bu
+#define CTRL1_TEXT     0x1bu
+#define SPLIT_LINE     211u
+#define BOTTOM_LINE    251u
+
+/* Fade: frames per color step, then hold and gap lengths in frames. */
+#define FADE_STEP_FRAMES 5u
+#define HOLD_FRAMES      150u
+#define GAP_FRAMES       30u
+#define FADE_LEVELS      5u
+#define PHASE_IN   0u
+#define PHASE_HOLD 1u
+#define PHASE_OUT  2u
+#define PHASE_GAP  3u
+
+static const uint8_t title_image[BITMAP_BYTES + COLOR_BYTES] = {
+#embed 7200 0 "../assets/title.hires"
+};
+
+/* Black, dark grey, grey, light grey, white. Headings stop one step
+ * short of white so the names stand out. */
+static const uint8_t fade_colors[FADE_LEVELS] = { 0u, 11u, 12u, 15u, 1u };
+
+#define CREDIT_PAIRS 4u
+static const char* const credit_headings[CREDIT_PAIRS] = {
+    "a game by",
+    "music by",
+    "programming by",
+    "shout out to",
+};
+static const char* const credit_names[CREDIT_PAIRS] = {
+    "Daniel Schwen",
+    "Daniel Schwen and Claude Code",
+    "Daniel Schwen and Claude Code",
+    "Idaho National Laboratory",
+};
+
+/* ASCII -> mixed-case ROM screen code: a-z are 1-26, A-Z are 65-90, and
+ * space and punctuation already match. */
+static uint8_t screen_code(char ch) {
+    uint8_t c = (uint8_t)ch;
+    if (c >= 97u && c <= 122u) return (uint8_t)(c - 96u);
+    return c;
+}
+
+static void write_centered(uint8_t row, const char* text) {
+    uint8_t* line = TITLE_SCREEN + (uint16_t)row * 40u;
+    uint8_t length = (uint8_t)strlen(text);
+    uint8_t i;
+
+    memset(line, 32, 40);
+    line += (uint8_t)((40u - length) >> 1);
+    for (i = 0u; i < length; ++i) line[i] = screen_code(text[i]);
+}
+
+static void set_fade(uint8_t level) {
+    uint8_t heading = level == FADE_LEVELS - 1u ? level - 1u : level;
+    memset(TITLE_COLOR + HEADING_ROW * 40u, fade_colors[heading], 40);
+    memset(TITLE_COLOR + NAME_ROW * 40u, fade_colors[level], 40);
+}
+
+static void show_pair(void) {
+    write_centered(HEADING_ROW, credit_headings[title_pair]);
+    write_centered(NAME_ROW, credit_names[title_pair]);
+}
+
+static void credits_tick(void) {
+    if (--title_timer != 0u) return;
+    switch (title_phase) {
+        case PHASE_IN:
+            set_fade(++title_level);
+            if (title_level == FADE_LEVELS - 1u) {
+                title_phase = PHASE_HOLD;
+                title_timer = HOLD_FRAMES;
+                return;
+            }
+            break;
+        case PHASE_HOLD:
+            title_phase = PHASE_OUT;
+            break;
+        case PHASE_OUT:
+            set_fade(--title_level);
+            if (title_level == 0u) {
+                title_phase = PHASE_GAP;
+                title_timer = GAP_FRAMES;
+                return;
+            }
+            break;
+        default:
+            if (++title_pair == CREDIT_PAIRS) title_pair = 0u;
+            show_pair();
+            title_phase = PHASE_IN;
+            break;
+    }
+    title_timer = FADE_STEP_FRAMES;
+}
+
+/* Any keyboard key, or fire on joystick port 2. */
+static uint8_t start_pressed(void) {
+    uint8_t pressed;
+    CIA1_PRA = 0xffu;
+    pressed = (CIA1_PRA & 0x10u) == 0u;
+    CIA1_PRA = 0x00u;
+    if (CIA1_PRB != 0xffu) pressed = 1u;
+    return pressed;
+}
+
+__noinline void title_banked_run(void) {
+    uint8_t i;
+
+    __asm { sei }
+    /* Startup leaves $01 at $36, which hides ROML ($8000-$9FFF) - where
+     * this bank's picture and tables live. Expose both halves (HIRAM stays
+     * set, so this code at $A000+ keeps running). */
+    CPU_DDR |= 0x07u;
+    CPU_PORT = (uint8_t)((CPU_PORT & 0xf8u) | 0x07u);
+    CIA1_DDRA = 0xffu;
+    CIA1_DDRB = 0x00u;
+    CIA2_DDRA |= 0x03u;
+    VIC_CTRL1 = 0x0bu; /* blank while drawing */
+    VIC_SPR_EN = 0u;
+    VIC_BORDER = 0u;
+    VIC_BG0 = 0u;
+
+    memcpy(TITLE_BITMAP, title_image, BITMAP_BYTES);
+    memset(TITLE_BITMAP + BITMAP_BYTES, 0, 8000u - BITMAP_BYTES);
+    memcpy(TITLE_SCREEN, title_image + BITMAP_BYTES, COLOR_BYTES);
+    memset(TITLE_SCREEN + COLOR_BYTES, 32, 1000u - COLOR_BYTES);
+    memset(TITLE_COLOR + COLOR_BYTES, 0, 1000u - COLOR_BYTES);
+
+    title_pair = CREDIT_PAIRS - 1u; /* the first tick advances to pair 0 */
+    title_level = 0u;
+    title_phase = PHASE_GAP;
+    title_timer = 1u;
+
+    CIA2_PRA = (uint8_t)((CIA2_PRA & 0xfcu) | 0x01u); /* VIC bank 2 */
+    VIC_CTRL2 = 0x08u;
+    VIC_MEMPTR = MEMPTR_BITMAP;
+    waltz_init();
+
+    /* Ignore a key still held from power-on. */
+    while (start_pressed()) { }
+
+    for (;;) {
+        while (VIC_RASTER != SPLIT_LINE) { }
+        VIC_MEMPTR = MEMPTR_TEXT;
+        VIC_CTRL1 = CTRL1_TEXT;
+        while (VIC_RASTER != BOTTOM_LINE) { }
+        VIC_MEMPTR = MEMPTR_BITMAP;
+        VIC_CTRL1 = CTRL1_BITMAP;
+        waltz_tick();
+        credits_tick();
+        if (start_pressed()) break;
+    }
+
+    /* Silence, blank, and wait for release so the key does not leak into
+     * the game's first input poll. platform_init() restores the VIC. */
+    for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    VIC_CTRL1 = 0x0bu;
+    while (start_pressed()) { }
+}
+
+#pragma code(code)
+#pragma data(data)

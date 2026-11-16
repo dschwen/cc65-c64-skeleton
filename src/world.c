@@ -72,9 +72,7 @@ static uint8_t slot_delta_needed(const PlatformRoom* room, uint16_t i) {
 /*
  * Preflight one actor slot in `room` (always called with room_stage's own
  * address, the staged destination room, before any delta from
- * game_world_deltas has been applied to it) - native (oscar64 C)
- * replacement for src/world_slots.s, which read the staged room through a
- * hardcoded fixed address instead of a parameter. Counts free (type==0)
+ * game_world_deltas has been applied to it). Counts free (type==0)
  * slots in the room's base object list, then adjusts that count for every
  * delta on file for this room: a delta that clears a previously-occupied
  * base slot frees it; a delta that fills a previously-free base slot
@@ -212,7 +210,7 @@ void game_world_init(void) {
     world_store_enabled = 1u;
 }
 
-uint8_t game_world_capture_current(void) {
+__noinline uint8_t game_world_capture_current(void) {
     world_state_room = &platform_room;
     world_state_op = WORLD_STATE_OP_STORE;
     far_call_bank(BANK_WORLD_STATE, world_state_entry);

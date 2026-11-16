@@ -147,23 +147,32 @@ changed inventory contents.
 
 Loading validates the complete record in `saveload_record_buffer`, an alias
 for `tile_data`. After the browser returns, `saveload_apply_pending()` in
-`modules/saveload.c` copies decoded state/deltas to resident storage and
-reloads all 2,304 tile/property bytes before any room draw or transition.
-It temporarily disables leaving-room capture, enters the saved room, sets
-`GAME_ENTRY_LOAD`, and invokes room entry hooks.
+`modules/saveload.c` first checks everything the record alone can prove -
+delta count against payload length, health/mana against their maxima, the
+saved room against the room table, the arrival position against the map -
+and rejects the record before touching any resident state. Only then does it
+copy decoded state/deltas to resident storage and reload all 2,304
+tile/property bytes before any room draw or transition. It temporarily
+disables leaving-room capture, enters the saved room, sets `GAME_ENTRY_LOAD`,
+and invokes room entry hooks. The one failure that can still occur inside the
+enter is a world that no longer matches the save (an asset edited since it
+was written); the player's room and position are then re-synchronized from
+the room still on screen and `Save/load error.` is shown.
 
 ## Save/load banked services
 
-- `modules/saveload.c`: bank 6, browser, load application and cleanup.
-- `modules/saveload_save.c`: bank 7, name entry, encoding, write/readback/index.
-- `src/disk_io.c`: bank 14, KERNAL sequential-file operations.
+- `modules/saveload.c`: `BANK_SAVELOAD`, browser, load application and cleanup.
+- `modules/saveload_save.c`: `BANK_SAVELOAD_SAVE`, name entry, encoding, write/readback/index.
+- `src/disk_io.c`: `BANK_DISK_IO`, KERNAL sequential-file operations.
+- `src/saveload_format.h`: the record/index constants and offsets both
+  banks compile against; keep it and the tables above in step.
 
 `src/main.c` reaches the bank-6 save/load entries through `far_call_bank`.
-Code inside banks 6/7 must not expand `far_call_bank()` itself (it writes
+Code inside those two banks must not expand `far_call_bank()` itself (it writes
 `$DE00` inline, which swaps the window under the next instruction fetch).
 The onward hops go through resident `__noinline` trampolines:
 `saveload_save_show()` (bank 6 -> 7, in `modules/saveload.c`) and
-`platform_disk_read/write/index_read/index_write()` (-> bank 14, in
+`platform_disk_read/write/index_read/index_write()` (-> `BANK_DISK_IO`, in
 `src/disk_io.c`). Each restores the caller bank via `platform_cart_bank`.
 `tools/check_bank_switches.py` fails the build if a bank switch is emitted
 inside banked code. Mutable request fields and workspace remain resident.

@@ -100,7 +100,7 @@ typedef struct PlatformObject {
 
 /*
  * The 64-byte objects.cobj/web-editor record is split at build time
- * (tools/pack_easyflash.py) into two EasyFlash-resident pieces so only the
+ * (tools/prepare_c64_assets.py objects-split) into two pieces so only the
  * fields the render/collision path needs stay in scarce resident RAM:
  *
  * PlatformObjectType (35 bytes) is fully resident for all 256 IDs.
@@ -238,9 +238,9 @@ const PlatformObjectType* platform_object_type_get(uint8_t type_id);
 
 /*
  * Overwrite object type 1's ("The Hero") own light radius in the resident
- * table directly (src/hero_light.s - hand-written, see that file's own
- * comment for why). Does not itself trigger a lighting rebuild; the
- * caller must call platform_lighting_rebuild() afterward.
+ * table directly (src/hero_light.c). Does not itself trigger a lighting
+ * rebuild; the caller must call platform_lighting_rebuild() afterward.
+ * game_player_light_sync() (game.h) derives it from the inventory.
  */
 void platform_hero_light_set(uint8_t light);
 
@@ -357,6 +357,8 @@ uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
 /* Wait for the next bottom-of-map IRQ, then scan/read one keyboard event. */
 void platform_wait_frame(void);
 uint8_t platform_input_poll(void);
+/* Block until a key that was not already held: release, press, release. */
+void platform_wait_fresh_key(void);
 
 /* Select the text charset for the whole screen, or restore the map split. */
 void platform_text_screen_enter(void);
@@ -444,8 +446,8 @@ void platform_portrait_hide(void);
  * the always-resident code: it only ever needs to run synchronously from
  * room entry or from the portrait-resume path, both of which are guaranteed
  * to still have the calling room's own EasyFlash bank paged in, so it lives
- * in that room's own code instead (see rooms/00.c's rain_setup() for the
- * pattern) and is passed in here as a callback:
+ * in that environment module instead (see rooms/env/rain.c's
+ * sprite_setup() for the pattern) and is passed in here as a callback:
  *
  *   static void rain_setup(void) { <sprite pointer/color/attribute pokes> }
  *   void enter_room(void) { platform_rain_enable(rain_setup); }

@@ -40,8 +40,8 @@ room-transition logic even when a graphic extends in several directions.
 | `$8000-$BFFF` | selected EasyFlash ROM bank |
 | `$C000-$CFFE` | hot object records 106-222, explicitly loaded at boot |
 | `$D000-$DFFF` | I/O and Color RAM |
-| `$E800-$EFFF` | tile charset, explicitly loaded from bank 15 |
-| `$F000-$F7FF` | text charset, explicitly loaded from bank 15 |
+| `$E800-$EFFF` | tile charset, explicitly loaded from `BANK_ASSET_TILES` |
+| `$F000-$F7FF` | text charset, explicitly loaded from `BANK_ASSET_TILES` |
 | `$F800-$FBFF` | screen matrix and sprite pointers |
 | `$FC00-$FDFF` | cursor/portrait/rain sprite data |
 
@@ -95,7 +95,7 @@ An object slot is:
 
 A room's text and simple logic (Look/Use/room-entry/tile-entry hooks) is not
 part of this file at all: it's a compiled *room script*, a same-ID resource
-compiled into bank 32 from DSL source
+compiled into `BANK_SCRIPT_ROOM_FIRST` from DSL source
 (`assets/scripts/<hex room id>.script`, `tools/compile_script.py`) and run via
 `game_room_script_entry()` (see "Room-code helper API" below and
 `ROOM_CODE_API.md`). Offsets 9 and 10 now carry lighting/line-of-sight settings (see Lighting).
@@ -186,13 +186,13 @@ if (result == PLATFORM_OK) {
 
 The 35-byte `PlatformObjectType` contains dimensions, hotspot, character/color
 cells and emitted light. IDs 0-105 are main data; 106-222 live at
-`$C000-$CFFE`, explicitly initialized from bank 16; 223-255 remain in bank 16
+`$C000-$CFFE`, explicitly initialized from `BANK_OBJECT_TYPE_C`; 223-255 remain in that bank
 and are copied into a one-record resident cache on a cache miss.
 `platform_object_type_get()` returns the corresponding record. Treat returned
 pointers as temporary across later lookups.
 
 Names and flags are separate 15-byte `PlatformObjectTypeInfo` records in
-bank 1. `platform_object_type_info_get()` invokes that service through a
+`BANK_TYPEINFO`. `platform_object_type_info_get()` invokes that service through a
 resident wrapper and returns resident scratch. Use it for input-paced
 Look/Take/Use/actor checks, not per rendered cell. Copy values needed across
 subsequent calls. Actor classification uses `info->flags`.
@@ -296,7 +296,10 @@ entries in Color RAM. The two status rows are deliberately unaffected.
 
 `platform_lighting_rebuild()` fills the buffer with the global ambient level,
 then max-combines every room-object and player light source before applying the
-result. It also rebuilds the internal viewer-quadrant cache for opaque tiles.
+result. The player's own light is the brightest light radius among the
+object types in the inventory (`game_player_light_sync()`, `src/hero_light.c`),
+re-derived on every inventory change - a carried lit item lights the player
+with no further engine support. It also rebuilds the internal viewer-quadrant cache for opaque tiles.
 `platform_lighting_set_global()` clamps invalid input to full light and performs
 that rebuild immediately. The sample game binds `-` and `+` to decreasing and
 increasing ambient light. Direct brightness-buffer edits must be followed by
@@ -729,7 +732,7 @@ visibility buffers.
 Sprites 1-5 are shared with portraits. The portrait API pauses/resumes the
 current environment through `env_disable()`/`env_enable()`.
 `game_enter_room()` first disables rain, then selects and initializes the
-environment from `rooms/env_banks.h`. Rooms 00/01 use the rain environment.
+environment from `rooms/rooms.manifest`. Rooms 00/01 use the rain environment.
 
 `platform_rain_enable(setup)` registers/runs a sprite-setup callback and
 activates the streaks. Passing zero reuses the saved callback; it must remain
@@ -746,7 +749,7 @@ Water/rain initialization code is compiler-placed resident code.
 
 Environment modules in `rooms/env/*.c` combine ambient SID sound and optional
 weather. Each is linked for `$7E00-$7FFF` and copied from its own ROM bank
-on room entry. `rooms/env_banks.h` selects the bank; this does not use the
+on room entry. The manifest (via the generated `build/rooms/env_banks.h`) selects the bank; this does not use the
 generic resource-kind loader.
 
 The first eight bytes are an `EnvTable`:
@@ -773,11 +776,9 @@ Replacing the module must not leave a pending call into old entry addresses.
 
 ```c
 #define PLATFORM_RESOURCE_MAX_BYTES 0x2000u
-#define PLATFORM_RESOURCE_KIND_SCRIPT       0u
 #define PLATFORM_RESOURCE_KIND_CONVERSATION 1u
 #define PLATFORM_RESOURCE_KIND_ROOM         2u
-#define PLATFORM_RESOURCE_KIND_ENVIRONMENT  3u
-#define PLATFORM_RESOURCE_KIND_ASSET        4u
+#define PLATFORM_RESOURCE_KIND_PORTRAIT     5u
 uint16_t platform_resource_fetch(uint8_t kind, uint8_t resource_id,
                                   uint8_t* destination, uint16_t capacity);
 uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
@@ -786,16 +787,15 @@ uint16_t platform_resource_fetch_range(uint8_t kind, uint8_t resource_id,
 uint16_t platform_resource_last_size(void);
 ```
 
-`PLATFORM_RESOURCE_KIND_ROOM` and `PLATFORM_RESOURCE_KIND_CONVERSATION` are
-implemented in `src/resources.c`, which dispatches to a separate bank per
-kind (independent 0-255 ID spaces - src/banks.h's `BANK_SCRIPT_ROOM_FIRST`/
-`BANK_SCRIPT_CONVERSATION_FIRST`). The Makefile compiles `assets/scripts/
-00.script` through `05.script` into bank 32 and `assets/scripts/
-conversations/*.script` into its own bank; `tools/generate_script_bank.py`
-emits each bank's arrays and dispatcher. The remaining kind constants
-reserve interfaces; they do not imply content is built or retrievable.
-Environments, charsets/tiles, rooms and object records use separate direct
-paths. There is no generic directory/checksum packer.
+The three kinds are implemented in `src/resources.c`, which dispatches to a
+separate bank per kind (independent 0-255 ID spaces - src/banks.h's
+`BANK_SCRIPT_ROOM_FIRST`/`BANK_SCRIPT_CONVERSATION_FIRST`/
+`BANK_PORTRAIT_FIRST`). The Makefile compiles every room listed in
+`rooms/rooms.manifest` from `assets/scripts/<id>.script`, and
+`assets/scripts/conversations/*.script` and `assets/portraits/*` into their
+own banks; `tools/generate_script_bank.py` emits each bank's arrays and
+dispatcher. Environments, charsets/tiles, rooms and object records use
+separate direct paths. There is no generic directory/checksum packer.
 
 `platform_resource_fetch_range()` copies a window starting at `start` into
 resident destination storage and returns the bytes copied (zero if absent or
@@ -843,7 +843,7 @@ clears HIRAM for high-RAM reads.
 
 No ROM self-modification, custom register ABI, packed service entry address
 or separate resolver is required. Inspect section pragmas and `build/game.map`
-for actual placement. Save/load services use banks 6/7 and disk I/O bank 14;
+for actual placement. Save/load services use `BANK_SAVELOAD`/`BANK_SAVELOAD_SAVE` and `BANK_DISK_IO`;
 their borrowed tile storage is restored before drawing.
 
 See [GUIDE_OSCAR64_C64.md](GUIDE_OSCAR64_C64.md) for the compiler model and

@@ -5,7 +5,7 @@
 #include "platform_native.h"
 
 /*
- * Native (oscar64 C) replacement for src/dirty_redraw.s. That file existed
+ * Dirty-cell redraw, ported from hand-written assembly that existed
  * purely to defeat cc65's software-stack calling convention (measured
  * 43-50% pure calling-convention overhead for a chain of small functions
  * passing pointer parameters - see its own header comment); oscar64's

@@ -1,67 +1,31 @@
-/* Room 02 - the inn's tavern common room. See rooms/02.rc for the door/
- * Lady Orra/Master Vey/Sir Caldus dispatch and STORY_ROOM02_* in
- * src/story.h for these keys.
+/* Room 02 - the inn's tavern common room. See rooms/02.rc for the
+ * dispatch and STORY_ROOM02_* in src/story.h for these keys.
  *
  * The two open doorways in the top wall transition the instant the player
- * steps onto them (rooms/asm/02_enter_tile.s) rather than requiring Use:
- * (2,0), behind the bar, into the kitchen (room 03); (15,0), beside the
- * hearth, into the guest corridor (room 05). The old side door at (19,6)
- * has been removed - STORY_ROOM02_ENTER_KITCHEN is reached only via (2,0)
- * now.
+ * steps onto them: (2,0), behind the bar, into the kitchen (room 03);
+ * (15,0), beside the hearth, into the guest corridor (room 05).
  *
- * STORY_ROOM02_TALK_ORRA/STORY_ROOM02_TALK_VEY/STORY_ROOM02_TALK_CALDUS
- * each have a one-time scripted first-meeting greeting (gated on their own
- * STORY_STATE_ROOM_02_MET_* flag) followed unconditionally by `converse`
- * into their own topic-based "Ask about" conversation - assets/scripts/
- * conversations/20.script (Orra), 21.script (Vey), 22.script (Caldus).
- * Those IDs are a "room 02, NPC slot" readability convention only -
- * conversation IDs are their own independent 0-255 space, unrelated to
- * room IDs (see 05.script, Pell's conversation, for the full rationale).
- * Portrait 0 is Sir Caldus (visor closed) -
- * shown on both Look and Use/Talk. Portrait IDs 1 (Orra) and 2 (Vey) are
- * still placeholder references: neither has art authored yet
- * (assets/portraits/01, /02 - the asset editor's Portrait mode), so
- * portrait_show renders a blank box there for now.
+ * TALK_ORRA/TALK_VEY/TALK_CALDUS each have a one-time scripted first
+ * meeting (gated on their STORY_STATE_ROOM_02_MET_* flag) followed by
+ * `converse` into their "Ask about" conversation - conversations/20
+ * (Orra), 21 (Vey), 22 (Caldus); those IDs are only a readability
+ * convention, conversation IDs are their own space. Portrait 0 is Sir
+ * Caldus (visor closed); portraits 1 (Orra) and 2 (Vey) have no art yet.
  *
- * Caldus's Lamp Oil payoff and Lady Orra's Invite payoff no longer
- * resolve from Using the item directly at the NPC - that now only gives
- * a redirect hint (STORY_ROOM02_CALDUS_OIL_HINT / _ORRA_INVITE_HINT,
- * dispatched from rooms/c/02_use_at.c, gated on carrying the item and not
- * yet resolved). The actual resolution happens by mentioning the item's
- * trigger word ("oil" / "letter") while talking to them, handled entirely
- * in C by story_conversation_topic() (story/story.c), checked from
- * modules/script.c's run_conversation() before its own topic lookup -
- * consuming the item, giving the payoff item, and setting the flag all
- * happen there now, not in this file, since giving text its own multi-
- * line beat there duplicates what used to live here rather than calling
- * back into it (a conversation is already deep inside the same banked
- * script interpreter a room-script entry would need to re-enter via
- * another far_call_bank - see story_conversation_topic()'s own comment).
- * Freeing Caldus hands over the Silver Shard (type 54); resolving Orra
- * hands over the Moon Brooch (type 55) - two of the three cellar-token
- * items (MOONFEN_STORY_DESIGN.md section 5); the third, the Brass Key, is
- * Pell's payoff (assets/scripts/05.script). Orra's Blank Letter (type 56,
- * still given script-side, in STORY_ROOM02_TALK_ORRA below) is revealed
- * into the Orra Invite (type 57) at the kitchen kettle - see
- * rooms/c/03_use_at.c - before "letter" can resolve anything with her.
+ * Caldus's Lamp Oil payoff and Orra's Invite payoff are resolved by
+ * mentioning the trigger word ("oil" / "letter") in conversation - see
+ * those conversation scripts' topics. Using the item at the NPC only gives
+ * a redirect hint (the check_item branches below). Freeing Caldus hands
+ * over the Silver Shard; resolving Orra hands over the Moon Brooch
+ * (MOONFEN_STORY_DESIGN.md section 5); the third token, the Brass Key, is
+ * Pell's (05.script / conversations/05). Orra's Blank Letter is revealed
+ * into the Orra Invite at the kitchen kettle (03.script).
  *
- * The hearth's Long Taper lighting (STORY_ROOM02_LIGHT_TAPER/_ALREADY/
- * _NO_ITEM) is a plain Use-at-fixture interaction (no NPC, no
- * conversation to redirect to) and is unaffected - still dispatched from
- * rooms/c/02_use_at.c the same way it always was. Long Taper is object
- * type 52, and lighting it swaps it in inventory for a Lit Taper (type
- * 53, a minimal light source, assets/objects.cobj) - the item's own type
- * is the persistent "is it lit" state rather than a separate flag.
- *
- * The finale (MOONFEN_STORY_DESIGN.md section 10) uses two new fixtures:
- * the dining table (15,4, an existing furniture tile, not a placed
- * object) and the service bell (object type 66, tile 2,3, on the bar
- * counter). Serving the Guest's Broth (type 61, from the kitchen
- * cauldron) at the table needs an inventory check, so it's dispatched
- * from rooms/c/02_use_at.c like everything else above; ringing the bell
- * only needs state-flag checks (HOST_REVEALED, BROTH_SERVED,
- * FINALE_DONE), which nested check_flag can express directly in
- * STORY_ROOM02_RING_BELL below - no C fallback needed for it. */
+ * The hearth (12,1) lights the Long Taper into a Lit Taper - the item's
+ * own type is the persistent "is it lit" state, and a carried item's light
+ * byte lights the player (src/hero_light.c) - and, with nothing to light,
+ * yields a scoop of Hearth Ash. The finale (section 10) uses the dining
+ * table (15,4) and the service bell (2,3). */
 room 02 {
     entry STORY_ROOM02_LEAVE_INN {
         room_transition 1 21 5
@@ -79,16 +43,23 @@ room 02 {
             text "\"Whether anyone else shares my opinion... we shall see, won't we.\""
             wait_key
             text "She produces a water-stained letter, the ink run to smears. \"For what it's worth - I can't make sense of this either. Perhaps you'll have better luck.\""
-            give_object 56 1
+            give_object OBJ_BLANK_LETTER 1
             set_flag STORY_STATE_ROOM_02_MET_ORRA 1
         } else {
-            text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
+            check_flag STORY_STATE_ROOM_02_ORRA_HELPED == 0 {
+                check_item OBJ_ORRA_INVITE {
+                    text "Lady Orra glances at the letter in your hand, but says nothing. Perhaps you should simply tell her what it says."
+                } else {
+                    text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
+                }
+            } else {
+                text "\"Still proving them wrong, I hope,\" Lady Orra says, and returns to watching the room."
+            }
         }
         /* No wait_key/portrait_hide here - converse defers to
          * script_banked_run() (modules/script.c), which already waits for
          * a fresh key before handing over whenever this entry's own text
-         * left something on screen; see assets/scripts/conversations/
-         * 05.script's TALK_PELL for the same pattern. */
+         * left something on screen. */
         converse 20
     }
     entry STORY_ROOM02_LOOK_VEY {
@@ -108,11 +79,6 @@ room 02 {
         } else {
             text "\"Still finding your feet, traveler?\" Vey says. \"The offer stands.\""
         }
-        /* No wait_key/portrait_hide here - converse defers to
-         * script_banked_run() (modules/script.c), which already waits for
-         * a fresh key before handing over whenever this entry's own text
-         * left something on screen; see assets/scripts/conversations/
-         * 05.script's TALK_PELL for the same pattern. */
         converse 21
     }
     entry STORY_ROOM02_LOOK_CALDUS {
@@ -131,52 +97,51 @@ room 02 {
             text "\"If you should come across oil - lamp oil, axle grease, anything - I'd count it a great kindness.\""
             set_flag STORY_STATE_ROOM_02_MET_CALDUS 1
         } else {
-            text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
+            check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
+                check_item OBJ_LAMP_OIL {
+                    text "Sir Caldus eyes the vial in your hand, but doesn't reach for it. \"Tell me plainly what you've brought, rather than waving it at me.\""
+                } else {
+                    text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
+                }
+            } else {
+                text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
+            }
         }
-        /* No wait_key/portrait_hide here - converse defers to
-         * script_banked_run() (modules/script.c), which already waits for
-         * a fresh key before handing over whenever this entry's own text
-         * left something on screen; see assets/scripts/conversations/
-         * 05.script's TALK_PELL for the same pattern. */
         converse 22
     }
     entry STORY_ROOM02_ENTER_KITCHEN {
         room_transition 3 12 18
     }
-    entry STORY_ROOM02_CALDUS_OIL_HINT {
-        portrait_show 0 right
-        text "Sir Caldus eyes the vial in your hand, but doesn't reach for it. \"Tell me plainly what you've brought, rather than waving it at me.\""
-        /* No wait_key/portrait_hide here - straight into conversation, same
-         * as STORY_ROOM02_TALK_CALDUS, so the player can immediately
-         * mention "oil" right where they were just told to. */
-        converse 22
+    entry STORY_ROOM02_USE_HEARTH {
+        check_item OBJ_LONG_TAPER {
+            take_item OBJ_LONG_TAPER
+            give_object OBJ_LIT_TAPER 1
+            text "You touch the taper to the hearth's embers, and it catches, flame steady."
+        } else {
+            check_item OBJ_LIT_TAPER {
+                text "The taper is already burning."
+            } else {
+                check_item OBJ_HEARTH_ASH {
+                    text "The hearth's embers glow, but you have nothing to light."
+                } else {
+                    give_object OBJ_HEARTH_ASH 1
+                    text "You scoop a handful of cool ash from the edge of the hearth."
+                }
+            }
+        }
     }
-    entry STORY_ROOM02_ORRA_INVITE_HINT {
-        portrait_show 1 right
-        text "Lady Orra glances at the letter in your hand, but says nothing. Perhaps you should simply tell her what it says."
-        converse 20
-    }
-    entry STORY_ROOM02_LIGHT_TAPER {
-        text "You touch the taper to the hearth's embers, and it catches, flame steady."
-    }
-    entry STORY_ROOM02_LIGHT_TAPER_ALREADY {
-        text "The taper is already burning."
-    }
-    entry STORY_ROOM02_LIGHT_TAPER_NO_ITEM {
-        text "The hearth's embers glow, but you have nothing to light."
-    }
-    entry STORY_ROOM02_COLLECT_ASH {
-        text "You scoop a handful of cool ash from the edge of the hearth."
-    }
-    entry STORY_ROOM02_SERVE_BROTH {
-        text "You set the Guest's Broth on the dining table, as the recipe stone described. It smells, unaccountably, like moonlight."
-        set_flag STORY_STATE_BROTH_SERVED 1
-    }
-    entry STORY_ROOM02_SERVE_BROTH_ALREADY {
-        text "The broth is already set out, untouched and still warm."
-    }
-    entry STORY_ROOM02_SERVE_BROTH_NO_ITEM {
-        text "An empty table. Whatever belongs here, you don't have it yet."
+    entry STORY_ROOM02_USE_TABLE {
+        check_flag STORY_STATE_BROTH_SERVED == 1 {
+            text "The broth is already set out, untouched and still warm."
+        } else {
+            check_item OBJ_GUESTS_BROTH {
+                take_item OBJ_GUESTS_BROTH
+                set_flag STORY_STATE_BROTH_SERVED 1
+                text "You set the Guest's Broth on the dining table, as the recipe stone described. It smells, unaccountably, like moonlight."
+            } else {
+                text "An empty table. Whatever belongs here, you don't have it yet."
+            }
+        }
     }
     entry STORY_ROOM02_LOOK_BELL {
         text "A small brass bell on the end of the counter, worn smooth by years of ringing."

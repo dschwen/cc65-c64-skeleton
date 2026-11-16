@@ -28,12 +28,22 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
 ## Source locations
 
 - `src/`: resident engine, hardware wrappers, memory and bank declarations.
-- `modules/`: banked services; `rooms/*.rc`: room DSL;
-  `rooms/c/`: C handler fragments; `rooms/env/`: relocated environments.
+  Engine code is story-agnostic: no object type, flag or puzzle rule is
+  named in `src/` or `modules/`. Story logic lives in `assets/scripts/*.script`
+  (the script DSL has inventory/object/tile statements for it), `story/`,
+  and - only for what the DSL cannot read - `rooms/c/` fragments.
+- `modules/`: banked services; `rooms/rooms.manifest`: the room list (ID and
+  environment module); `rooms/*.rc`: room DSL; `rooms/c/`: C handler
+  fragments; `rooms/env/`: relocated environments.
 - `assets/`: editor data and script sources; `tools/`: generators and tests.
 - `src/memmap.h`, `src/banks.h` and source pragmas define placement.
   There is no separate linker configuration or cartridge-packing step.
-- Generated room/script C and prepared assets live in `build/`; edit their sources.
+- Generated files live in `build/` - room C, script/portrait banks,
+  `build/rooms/room_table.h` + `env_banks.h` (from the manifest) and
+  `build/object_types.h` (`OBJ_*` symbols from `assets/objects.cobj`, used
+  by scripts, `.rc` files and fragments); edit their sources.
+- `src/script_format.h` is the single source of the script opcode numbering
+  (the Python compiler parses it); `src/saveload_format.h` the save format.
 
 ## Change guidance
 

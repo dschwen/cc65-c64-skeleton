@@ -3,18 +3,32 @@
 Each compiled room has a native code/data bank:
 
 ```text
-assets/00 + rooms/00.rc -> build/rooms/room00.c -> EasyFlash bank 8
+assets/00 + rooms/00.rc -> build/rooms/room00.c -> EasyFlash bank BANK_ROOM_FIRST + 0
 ```
 
 The Makefile prepares the room record and compiles the DSL to C; Oscar64 links
-that C with the rest of the game. `rooms/room_table.h` supplies the resident
-dispatch table. The current build includes rooms 00-05.
+that C with the rest of the game. `rooms/rooms.manifest` lists the rooms in
+the build; `tools/generate_room_table.py` turns it into the resident dispatch
+table (`build/rooms/room_table.h`) and the room-to-environment lookup
+(`build/rooms/env_banks.h`).
+
+## Where a room's behaviour lives
+
+Almost everything a room does is authored in its *room script*,
+`assets/scripts/<hex room id>.script` (see "Room scripts" below): text,
+flag checks, giving and consuming inventory, swapping or adding room
+objects, changing a tile, transitions, conversations. The `.rc` file only
+maps the four engine hooks onto script entries. A hand-written C fragment
+under `rooms/c/` is the escape hatch for the few things the script DSL
+cannot read - the turn counter, the tile ID under the player or cursor -
+and nothing story-specific lives in `src/` or `modules/`.
 
 ## Required handlers
 
 The DSL generates room-prefixed versions of these handlers. C fragments use
 the generic names below; the generator adds the room prefix and includes
-`game.h`. Externally callable banked entries must remain `__noinline`:
+`game.h`, `story.h` and the generated `object_types.h`. Externally callable
+banked entries must remain `__noinline`:
 
 ```c
 __noinline void enter_room(void);
@@ -27,7 +41,7 @@ __noinline uint8_t use_at(uint8_t tile_x, uint8_t tile_y);
 the player has been inserted, and `game_state` has been synchronized. It runs
 on initial startup and after a successful room transition, but not while the
 player moves between tiles in the same room. Use it for room-wide state changes,
-entry narration, and initialization that must happen on every visit.
+entry narration, and re-applying tile changes on every visit.
 
 `enter_tile()` takes no coordinates. Read `game_state.player_x` and
 `game_state.player_y`; both are half-tile/character coordinates. The engine
@@ -44,83 +58,53 @@ description cannot reveal a hidden or insufficiently lit tile. Return
 `use_at()` receives the tile selected by the adjacent-tile Use cursor after
 the same visibility/light check used by Take. Return `GAME_USE_HANDLED` after
 performing the complete room-specific action, or `GAME_USE_DEFAULT` to make
-the resident command print `Nothing happens.`. Door, lever, container, and
-terrain interactions belong here; generic inventory-item use belongs in
-`story/story.c` instead.
+the resident command print `Nothing happens.`. Generic inventory-item use
+belongs in `story/story.c` instead (see `STORY_CODE_API.md`).
 
-Example:
-
-```c
-#include "game.h"
-
-__noinline void enter_room(void) {
-    if (game_entry_reason == GAME_ENTRY_STARTUP) {
-        game_text_write(PLATFORM_TEXT_LINE_TOP, "You wake by the sea.", 1u);
-    }
-}
-
-__noinline void enter_tile(void) {
-    if ((game_state.player_x >> 1) == 4u &&
-        (game_state.player_y >> 1) == 2u) {
-        game_state.flags[3] = 1u;
-    }
-}
-
-__noinline uint8_t look_at(uint8_t tile_x, uint8_t tile_y) {
-    if (tile_x == 4u && tile_y == 2u) {
-        game_text_write(PLATFORM_TEXT_LINE_TOP,
-                        "The sea is rough today.", 1u);
-        return GAME_LOOK_HANDLED;
-    }
-    return GAME_LOOK_DEFAULT;
-}
-
-__noinline uint8_t use_at(uint8_t tile_x, uint8_t tile_y) {
-    if (tile_x == 7u && tile_y == 3u) {
-        game_text_write(PLATFORM_TEXT_LINE_TOP, "The door opens.", 1u);
-        return GAME_USE_HANDLED;
-    }
-    return GAME_USE_DEFAULT;
-}
-```
+Before any of the four hooks runs, `src/room_dispatch.c` records the
+*context tile* for the script interpreter's object statements: the selected
+tile for `look_at`/`use_at`, the player's own tile for the entry hooks.
 
 ## Room-code DSL (.rc files)
 
-The room DSL in `rooms/XX.rc` covers empty handlers, flag changes and
-coordinate dispatch to script entries. `tools/compile_room.py` emits
-`build/rooms/roomXX.c`, including the prepared room asset with `#embed`.
-The current Makefile requires the DSL source; it does not select a standalone
-`rooms/XX.c` alternative.
-
 ```
-enter_room: default
-enter_tile: flag STORY_STATE_ROOM_01_TILE_ENTRY_COUNT increment
+enter_room: script STORY_ROOM04_ENTER_ROOM
+
+enter_tile:
+    at 16,1 -> script STORY_ROOM04_ASCEND_STAIRS
+    default -> none
 
 look_at:
-    at 18,3 -> script STORY_ROOM00_LOOK_TREE
+    at 12,1 -> script STORY_ROOM04_LOOK_MIRROR
     default -> GAME_LOOK_DEFAULT
 
 use_at:
-    at 18,3 -> script STORY_ROOM00_USE_TREE
+    at 18,4 -> script STORY_ROOM04_USE_DOOR
+    at 11,3 -> script STORY_ROOM04_USE_BRAZIER
     default -> GAME_USE_DEFAULT
 ```
 
-`enter_room`/`enter_tile` take one line: `default` (empty handler),
-`flag NAME increment`, `flag NAME set VALUE`, or `asm "path"` (see escape
-hatch below). `look_at`/`use_at` each start an indented block of zero or
-more `at X,Y -> script KEY` lines followed by a mandatory default line -
-either `default -> RETURN_CONST` or `default -> asm "path"` (same escape
-hatch, see below). `X`, `Y`, `KEY`, and `RETURN_CONST` may be
-decimal/hex literals or `#define` symbols from `src/story.h`/`src/game.h`
-(or files passed via `--flags`).
+`enter_room` and `enter_tile` take one line: `default` (empty handler),
+`flag NAME increment`, `flag NAME set VALUE`, `script KEY` (run that room
+script entry), or `asm "path"` (a C fragment, see below). `enter_tile` may
+instead be an indented dispatch block of `at X,Y -> script KEY` lines
+followed by `default -> none`, `default -> script KEY` or
+`default -> asm "path"`; the player's tile is the key.
 
-The DSL keeps repetitive dispatch logic concise. The room's record, constants
-and handlers share one 16 KiB ROM bank; there is no separate 1 KiB overlay limit.
+`look_at`/`use_at` each start an indented block of zero or more
+`at X,Y -> script KEY` lines followed by a mandatory default line: a return
+constant (`default -> GAME_LOOK_DEFAULT`), `default -> script KEY`, or
+`default -> asm "path"`. Explicit coordinate matches run before the default.
 
-### Escape hatch: genuinely custom logic
+`X`, `Y`, `KEY`, `VALUE` and return constants may be decimal/hex literals or
+`#define` symbols from `src/story.h`, `src/game.h` and the generated
+`build/object_types.h` (or any file passed via `--flags`). Lines starting
+with `#` are comments.
 
-The parser retains the keyword `asm`, but the referenced file is now a C
-fragment, not assembler:
+The room's record, constants and handlers share one 16 KiB ROM bank; there
+is no separate overlay limit.
+
+### Escape hatch: C fragments
 
 ```text
 enter_tile: asm "rooms/c/01_enter_tile.c"
@@ -129,17 +113,91 @@ look_at:
     default -> asm "rooms/c/01_look_at.c"
 ```
 
-Entry fragments define `__noinline void enter_room(void)` or
-`__noinline void enter_tile(void)`. Fallback fragments define
-`__noinline uint8_t look_at_fallback(uint8_t tile_x, uint8_t tile_y)`
-or `use_at_fallback` with the same signature. Return the usual
-`GAME_LOOK_*`/`GAME_USE_*` result.
-
-The generator substitutes the room-prefixed names and splices the C into the
-room's code section. Explicit coordinate matches run before fallback code.
-Use normal C parameters/results, not a hand-coded stack ABI. See
-`rooms/c/01_enter_tile.c`, `01_look_at.c` and `01_use_at.c`.
+Entry fragments define `void enter_room(void)` or `void enter_tile(void)`.
+Fallback fragments define `uint8_t look_at_fallback(uint8_t tile_x, uint8_t
+tile_y)` or `use_at_fallback` with the same signature and return the usual
+`GAME_LOOK_*`/`GAME_USE_*` result. The generator marks them `__noinline`,
+substitutes the room-prefixed names and splices the C into the room's code
+section. Use `story.h` and `OBJ_*` symbols rather than numbers; a fragment
+that only checks inventory and flags should be a script entry instead. See
+`rooms/c/00_enter_tile.c` (turn counter and road tile), `01_enter_tile.c`
+(tile under the player) and `01_look_at.c` (cursor tile versus player tile).
 The Makefile tracks `rooms/c/*.c` changes as generator dependencies.
+
+## Room scripts
+
+A room script declares numbered *entries*, run by key from the hooks above:
+
+```
+room 04 {
+    entry STORY_ROOM04_USE_BRAZIER {
+        check_object OBJ_BRAZIER {
+            check_item OBJ_LIT_TAPER {
+                replace_object OBJ_BRAZIER OBJ_LIT_BRAZIER
+                text "You touch the taper's flame to the brazier, and it catches."
+            } else {
+                text "The brazier is cold. You have nothing to light it with."
+            }
+        } else {
+            text "The brazier is already burning."
+        }
+    }
+}
+```
+
+It compiles (`tools/compile_script.py`) to the room-kind resource with the
+same ID as the room (`PLATFORM_RESOURCE_KIND_ROOM`), fetched by the banked
+interpreter in `modules/script.c`. `game_room_script_entry(key)` returns 1
+if a matching entry was found and run, 0 otherwise - a normal outcome for a
+key nothing was authored for. Each room picks its own key numbering; name
+the keys in `src/story.h` so the `.rc` and the `.script` share one constant.
+
+Statements (operand encodings in `tools/compile_script.py`'s docstring; the
+opcode numbers themselves are in `src/script_format.h`, which both the
+compiler and the interpreter read):
+
+| Statement | Effect |
+|---|---|
+| `text "..."` | Word-wrapped, paged text in the two bottom rows |
+| `wait_key` | Wait for a fresh keypress |
+| `portrait_show ID left/right`, `portrait_hide` | Speaker portrait |
+| `set_flag F V`, `set_bit F B`, `clear_bit F B` | Story flags |
+| `check_flag F op V { } [else { }]` | Branch on a flag (`== != < > <= >= &`) |
+| `check_item TYPE [QTY] { } [else { }]` | Branch on carrying at least QTY of TYPE |
+| `give_object TYPE QTY`, `take_item TYPE [QTY]` | Change the inventory |
+| `check_object TYPE { } [else { }]` | Branch on an object of TYPE on the context tile |
+| `replace_object FROM TO` | Retype objects of FROM on the context tile; journaled and redrawn |
+| `add_object TYPE X Y` | Add an object at half-tile X,Y; journaled and redrawn |
+| `set_tile X Y TILE` | Change one tile of the grid; redrawn, not journaled |
+| `tile_color TILE COLOR` | Recolor a tile definition; not persisted |
+| `room_transition ROOM X Y ["message"]`, `room_transition_here ROOM ["message"]` | Queue a transition |
+| `lightning` | Two-frame white flash |
+| `converse ID` | Start a conversation once this entry finishes |
+| `sound ID` | Reserved; no effect table yet |
+
+`TYPE` is an `OBJ_*` symbol from the generated `build/object_types.h`
+(one per named type in `assets/objects.cobj`) or a number.
+
+Two things are not journaled, because the world-state journal tracks room
+objects only: a tile changed with `set_tile`, and a tile definition
+recolored with `tile_color` (the shared tile table is also reloaded after
+every save/load). Re-apply both from the room's `enter_room` entry, gated
+on the flag that records the change - see `assets/scripts/04.script`'s
+`STORY_ROOM04_ENTER_ROOM`.
+
+A carried item's own light radius lights the player (`src/hero_light.c`),
+so `give_object`/`take_item` of a light-emitting type changes the lighting
+immediately; no script statement is needed for a lit torch.
+
+An entry's `text` output waits for a fresh keypress before the engine clears
+it and redraws the room; an entry that only runs effects adds no wait. A
+script run from `enter_room`/`enter_tile` during a transition leaves the
+display blanked until its first statement that needs it (text, a portrait,
+a keypress wait), so a silent re-apply entry causes no flicker.
+
+The four exit-description bytes in the room file header (see
+`PLATFORM_API.md`) are still unread, so `platform_look_exit()` shows a
+generic message when the Look cursor is pushed off an edge.
 
 ## Global game state
 
@@ -162,49 +220,21 @@ The engine synchronizes room, player type, and player coordinates after movement
 and room transitions. `turn` increments after each successful player half-step.
 Time fields are reserved but are not advanced yet. `game_entry_reason` reports
 `GAME_ENTRY_STARTUP`, `GAME_ENTRY_MOVEMENT`, `GAME_ENTRY_TRANSITION`, or
-`GAME_ENTRY_LOAD` to room handlers without becoming persistent state. Room
-code may use `flags` for small persistent facts. See `SAVE_GAME.md` for the
-implemented sparse room-object journal and serialized save format.
+`GAME_ENTRY_LOAD` to room handlers without becoming persistent state. See
+`SAVE_GAME.md` for the sparse room-object journal and serialized save format.
 
 ### Game flags
 
-`game_state.flags` contains 32 persistent bytes. Put story-specific flag
-indices, masks, room IDs, and object IDs in `src/story.h`; keep reusable engine
-contracts in `game.h` and `platform.h`. Prefer named indices instead of
-unexplained numeric offsets:
-
-```c
-#define GAME_FLAG_LIGHTHOUSE_LIT  3u
-
-if (game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] != 0u) {
-    /* The flag is set. */
-}
-game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] = 1u; /* set */
-game_state.flags[GAME_FLAG_LIGHTHOUSE_LIT] = 0u; /* clear */
-```
-
-A byte can hold several boolean facts when flag space becomes tight:
-
-```c
-#define GAME_FLAGS_HOUSE          4u
-#define GAME_FLAG_DOOR_OPEN       0x01u
-
-if (game_state.flags[GAME_FLAGS_HOUSE] & GAME_FLAG_DOOR_OPEN) {
-    /* The door is open. */
-}
-game_state.flags[GAME_FLAGS_HOUSE] |= GAME_FLAG_DOOR_OPEN;
-game_state.flags[GAME_FLAGS_HOUSE] &= (uint8_t)~GAME_FLAG_DOOR_OPEN;
-```
-
-Direct reads and writes are the current public API. These bytes are part of
-`GameState`, so they survive room transitions and are included in save
-records.
+`game_state.flags` contains 32 persistent bytes. Story-specific flag indices
+and entry keys live in `src/story.h`; object-type IDs come from the generated
+`build/object_types.h`; reusable engine contracts stay in `game.h` and
+`platform.h`. Scripts and fragments name flags, never bare indices. A byte
+can hold several boolean facts (`set_bit`/`clear_bit`/`check_flag F & BIT`,
+or `|=`/`&=` in C) when flag space becomes tight.
 
 ## Room-callable API
 
-The following functions are implemented by resident `src/game_support.c`.
-Room handlers call their declared interfaces in the whole-program build; they are not copied
-into every room binary:
+C fragments can call the resident engine API in `src/game_support.c`:
 
 ```c
 uint8_t game_inventory_count(uint8_t type);
@@ -217,110 +247,33 @@ uint8_t game_room_script_entry(uint8_t key);
 uint8_t game_transition_request(uint8_t room, uint8_t x, uint8_t y);
 uint8_t game_take_object(uint8_t slot);
 uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
-void game_inventory_show(void);
 ```
 
 Inventory type 0 is invalid. Adds saturate a matching slot at 255 and otherwise
 use the first empty slot. Removes are atomic: insufficient total quantity
-returns `PLATFORM_ERR_NOT_FOUND` without changing inventory.
-
-`game_text_write()` uses the two-line bottom pager for a literal C string.
-Text wraps at word boundaries, does not begin the second line with
-whitespace, and pauses before continuing when output exceeds two lines. A
-room's own text (and any accompanying logic - flag checks, giving an
-object, branching) is not a literal string in room code at all; it's a
-*room script* instead - see the next section.
+returns `PLATFORM_ERR_NOT_FOUND` without changing inventory. Both re-derive
+the player's light from the inventory.
 
 `game_transition_request()` defers the transition until the next main-loop
 frame, so current handlers can return before the active room/environment
 changes. The engine loads the destination record, selects its handler bank,
-synchronizes `game_state`, and calls `enter_room()` then `enter_tile()`.
-Coordinates are half-tile coordinates within `40x22`.
+synchronizes `game_state`, and calls `enter_room()` then `enter_tile()`. A
+transition that fails (blocked arrival tile, full journal, no free actor
+slot) leaves the old room active and tells the player so. Coordinates are
+half-tile coordinates within `40x22`.
 
-`game_take_object()` is a transactional persistent mutation. It accepts a
-non-actor object slot, adds one item of that type to inventory, removes the map
-object, and captures the room's sparse delta. Journal-capacity or inventory
-failure restores both the object and inventory before returning an error.
-
-`game_take_tile()` finds non-actor objects by their rendered intersection with
-the selected tile rather than by hotspot alone. With multiple matches it runs
-the resident object selector before delegating to `game_take_object()`.
-The main loop reaches `game_inventory_show()` in bank 5 through `far_call_bank`. It
-prepares a 40x25 text screen and lists all 32 inventory slots in two columns.
-Cursor keys move the selection marker, `U` dispatches the selected slot to
-`story_use_inventory()`, and `I` closes the screen. The service cleanup then
-restores the charset split and redraws the current room.
+`game_take_object()` is a transactional persistent mutation. `game_take_tile()`
+finds non-actor objects by their rendered intersection with the selected tile
+and runs the object selector when several match.
 
 Banked handlers can call resident APIs and functions within their selected
 bank. Cross-bank services need the established resident wrappers/gates;
 ordinary pointers and declarations do not select a bank. See
 [EASYFLASH_CARTRIDGE.md](EASYFLASH_CARTRIDGE.md).
 
-## Room scripts
-
-A room's text and simple logic - Look/Use descriptions, room-entry and
-tile-entry narration, anything that used to be a literal string in room
-code - is authored as a *room script*: DSL source at
-`assets/scripts/<hex room id>.script` (`tools/compile_script.py`, edited in
-the asset editor's Script mode), compiled to the room-kind resource with
-the same ID as the room itself (`PLATFORM_RESOURCE_KIND_ROOM` - an
-ID space reserved separately from conversations and standalone scripts).
-Only room scripts are currently compiled/embedded and supported by the resource
-fetch path; the other kinds are not yet wired up. See `PLATFORM_API.md`'s
-"Generic cartridge resources".
-
-A room script declares one or more numbered *entries*:
-
-```
-room 00 {
-    entry STORY_ROOM00_LOOK_TREE {
-        text "The tree has a knot hole."
-    }
-    entry STORY_ROOM00_USE_TREE {
-        text "You knock on the tree, but nothing happens."
-        give_object 9 1
-    }
-}
-```
-
-Room code runs one by key:
-
-```c
-__noinline uint8_t look_at(uint8_t tile_x, uint8_t tile_y) {
-    if (tile_x == 18u && tile_y == 3u) {
-        (void)game_room_script_entry(STORY_ROOM00_LOOK_TREE);
-        return GAME_LOOK_HANDLED;
-    }
-    return GAME_LOOK_DEFAULT;
-}
-```
-
-`game_room_script_entry()` returns 1 if a matching entry was found and run,
-0 otherwise - a normal, expected outcome for a key nothing was authored for,
-not an error. A room picks its own entry-key numbering (there's no global
-convention); naming the keys via `#define` in `src/story.h` - the same file
-flag indices already use, and `tools/compile_script.py`'s default symbol
-source - keeps the DSL source and room code's call sites in sync through one
-shared constant instead of a bare number on each side (`STORY_ROOM00_*`
-above). A script's own opcode set (branching on flags, giving an object,
-etc.) is documented in `tools/compile_script.py`'s module docstring.
-
-An entry's `text` output waits for a fresh keypress before the engine clears
-it and redraws the room, the same way the bottom pager already waits between
-pages of a message longer than two lines - so a room's own description text
-is always given a chance to be read, however long it is, with no `wait_key`
-needed just to keep it on screen. An entry
-that only runs effects or a transition, with no `text` at all, does not add
-this wait.
-
-The four exit-description bytes in the room file header (see
-`PLATFORM_API.md`) are currently unread/reserved - not wired onto this
-mechanism yet, so `platform_look_exit()` always shows a generic message
-when the Look cursor is pushed off an edge.
-
 ## Room-code ABI and memory
 
-`src/room_dispatch.c` looks up a room ID in `rooms/room_table.h` and calls its
+`src/room_dispatch.c` looks up a room ID in the generated table and calls its
 native handlers through `far_call_bank`. There is no runtime room-code header,
 checksum, relocation copy or per-entry BSS clear. Mutable state remains in
 resident RAM; use `game_state` flags/deltas for state that must persist in saves.
@@ -332,17 +285,12 @@ different bank selected.
 
 ## Adding a room
 
-1. Export `assets/XX`, write `rooms/XX.rc`, and add any C fragments under `rooms/c/`.
-2. Add `assets/scripts/XX.script` (even an empty room script if appropriate)
-   and its symbols in `src/story.h`.
-3. Add the ID to Makefile `ROOM_IDS` and declarations/table entries in
-   `rooms/room_table.h`. Generated symbols use lowercase hexadecimal IDs.
-4. Check the generator's `BANK_ROOM_FIRST + room_id` assignment against
-   `src/banks.h`. The next sequential room currently collides with bank 14;
-   extending the list requires an explicit allocation change, not just a new file.
-5. Update `rooms/env_banks.h` if the room needs an environment.
-6. Build and inspect `build/game.map` for room data/code and any new resident
+1. Export `assets/XX` from the asset editor and write `rooms/XX.rc`.
+2. Write `assets/scripts/XX.script` and add its entry keys (and any new
+   flags) to `src/story.h`.
+3. Add one line to `rooms/rooms.manifest`: the hex ID and its environment
+   module (`rain`, `tavern`, `tavern_muffled`, `cellar`, or `none`).
+4. Build. Room `XX` occupies EasyFlash bank `BANK_ROOM_FIRST + XX`; the
+   compiler rejects a collision, and `src/banks.h` documents the range.
+5. Inspect `build/game.map` for the room's data/code and any new resident
    state, then test entry, exit, input, narration and the environment in VICE.
-
-Use save-aware mutation APIs from [SAVE_GAME.md](SAVE_GAME.md); ordinary
-resident globals survive room changes but are not automatically serialized.

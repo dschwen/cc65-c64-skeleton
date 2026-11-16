@@ -15,7 +15,7 @@ runtime alternative.
 
 Compiler startup expands main from bank 0 into `$0900-$7DFF` and initializes
 normal BSS. `platform_init()` establishes KERNAL/CIA keyboard state and VIC
-bank 3, copies charsets from bank 15 and object zone B from bank 16, and
+bank 3, copies charsets from `BANK_ASSET_TILES` and object zone B from `BANK_OBJECT_TYPE_C`, and
 installs interrupts. Arrays assigned to other RAM regions are not implicitly
 included in the startup copy. Never call RAMTAS after compiler startup:
 it clears live compiler zero page.
@@ -38,22 +38,26 @@ object offsets come from `build/game.map`, not hand-maintained packed offsets.
 | 5 | Inventory and story inventory actions |
 | 6 | Save/load browser |
 | 7 | Save encoding and write workflow |
-| 8-13 | Rooms 00-05: immutable room record and native handlers |
-| 14 | KERNAL disk I/O |
-| 15 | Tile/text charset sources, tile definitions and properties |
-| 16 | Object zone B boot source and zone C records |
-| 17 | World-delta store/restore code |
-| 20 | Rain environment (rooms 00, 01) |
-| 21 | Tavern environment (02) |
-| 22 | Muffled tavern environment (03, 05) |
-| 23 | Cellar environment (04) |
-| 24 | Compiled portrait sprite images and bank-local fetch dispatcher |
-| 32 | Compiled room-script bytecode and bank-local fetch dispatcher |
-| 33 | Compiled conversation bytecode and bank-local fetch dispatcher |
+| 8 | KERNAL disk I/O |
+| 9 | Tile/text charset sources, tile definitions and properties |
+| 10 | Object zone B boot source and zone C records |
+| 11 | World-delta store/restore code |
+| 12 | Title screen: picture, credits and the Moonfen Waltz player |
+| 13 | Rain environment (rooms 00, 01) |
+| 14 | Tavern environment (02) |
+| 15 | Muffled tavern environment (03, 05) |
+| 16 | Cellar environment (04) |
+| 17 | Compiled portrait sprite images and bank-local fetch dispatcher |
+| 18 | Compiled room-script bytecode and bank-local fetch dispatcher |
+| 19 | Compiled conversation bytecode and bank-local fetch dispatcher |
+| 24-63 | Rooms: room N's immutable record and native handlers in bank 24+N (IDs 0-39) |
 
-Banks have a 16 KiB CPU window, `$8000-$BFFF`. Unlisted banks are not permission
-to extend a contiguous room/portrait range across another allocation; check
-all declarations before adding content.
+Banks have a 16 KiB CPU window, `$8000-$BFFF`. Oscar64 rejects two regions
+assigned to the same bank ("Overlapping data section"), so a collision is a
+build error rather than a silent overlap; still check `src/banks.h` before
+extending a contiguous range. The generated resource banks and room code
+name their bank through the `src/banks.h` symbols, so the numbers live only
+there.
 
 ## Banked code and data
 
@@ -109,11 +113,12 @@ Portrait pause/resume uses the same environment enable/disable interface.
 ## Resources and verification
 
 Room scripts are compiled from `assets/scripts/NN.script`, combined by
-`tools/generate_script_bank.py`, and embedded into bank 32.
-`assets/scripts/conversations/NN.script` is compiled and embedded the same
-way, into its own bank (`BANK_SCRIPT_CONVERSATION_FIRST`, src/banks.h - a
-separate bank because conversations have an independent 0-255 ID space from
-rooms). `PLATFORM_RESOURCE_KIND_ROOM` and `_CONVERSATION` are implemented by
+`tools/generate_script_bank.py`, and embedded into `BANK_SCRIPT_ROOM_FIRST`.
+`assets/scripts/conversations/NN.script` (decimal IDs) is compiled and
+embedded the same way, into `BANK_SCRIPT_CONVERSATION_FIRST` - a separate
+bank because conversations have an independent 0-255 ID space from rooms.
+The script opcode numbering is shared through `src/script_format.h`, which
+both the interpreter and `tools/compile_script.py` read. `PLATFORM_RESOURCE_KIND_ROOM` and `_CONVERSATION` are implemented by
 the generic fetch API (src/resources.c dispatches on kind). Charsets, tiles,
 object records and environments have their own direct paths; reserved
 resource-kind constants do not imply implemented loaders.

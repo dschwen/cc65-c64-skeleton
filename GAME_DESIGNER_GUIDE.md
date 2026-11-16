@@ -22,12 +22,12 @@ programmer connects that design to the room.
 | Objects | 256 slots per room; at most 200 non-actor objects |
 | Object catalogue | 255 usable global types; type 0 means an empty slot |
 | Inventory | 32 distinct item stacks, up to 255 of an item type |
-| Room text | 256 bytes shared by descriptions and dialogue in each room |
+| Room text | A compiled room script of up to 8 KiB per room |
 | On-map text | Two 40-character lines with word wrapping and paging |
 | Lighting | Four tile-level brightness levels with light-blocking walls |
 | Vision | 360-degree line of sight; opaque tiles hide what lies behind them |
 | Persistent story state | Global story flags and in-memory room changes |
-| Saved games | Data format is designed; disk save writing (the only save path) is not yet implemented |
+| Saved games | F1 saves and F3 loads one of eight slots on a disk in drive 8 |
 
 ## A world made of rooms
 
@@ -277,10 +277,12 @@ The room begins with a global ambient level. Light sources can raise a tile's
 brightness above ambient but can never lower it. If ambient is full light,
 lamps have no visible effect.
 
-Ambient level is not currently stored in the room asset. The sample begins at
-full light and exposes `+` and `-` as development controls. A story design that
-needs darkness, dawn, a light switch, or room-specific ambience must state
-when the level changes so it can be attached to room entry or story state.
+Each room's ambient level is stored in the room asset (the Room Editor's
+"Light level" field, 0-3, or "full, lighting disabled" for a room where the
+per-object lighting pass is skipped entirely). The `+` and `-` keys still
+change the global level in the running game as development controls. A story
+design that needs the level to change while in a room (a light switch, dawn)
+must say when, so it can be attached to a script entry.
 
 ### Object light sources
 
@@ -304,11 +306,14 @@ Two dim lights do not combine into twilight. Because light radius belongs to
 the global object type, individual instances cannot have different strengths
 without using different types.
 
-Only objects present in the room emit light. An emitting object stops lighting
-the room when it is taken into inventory. Carried inventory does not emit
-light automatically. A torch, lantern, or magical light puzzle therefore needs
-an explicit design for how carrying, equipping, placing, lighting, and
-extinguishing it should work.
+Objects present in the room emit light from their own position. A carried
+object lights the *player* instead: the player's light radius is the
+brightest light radius among the item types in the inventory, and it
+changes the moment an item is picked up, given, or consumed. A lit torch is
+therefore just an item type with a light radius; "lighting" it is a swap
+from an unlit to a lit item type (the taper and hearth in Moonfen do exactly
+this). Extinguishing, equipping, or placing a light still needs an explicit
+design.
 
 ### Light-blocking walls
 
@@ -403,7 +408,8 @@ still check the current room and story state when necessary.
 There is currently no built-in command flow for "choose an inventory item,
 then target something on the map." Common alternatives are:
 
-- map Use checks whether the player possesses the required item;
+- map Use checks whether the player possesses the required item (a script
+  `check_item` - the usual pattern);
 - inventory Use changes a story flag, after which map Use completes the action;
 - a new combined-use interface is added as an explicit engine feature.
 
@@ -417,16 +423,20 @@ boundaries. If it needs more than two lines, the engine pauses for a keypress,
 scrolls, and continues. The second line does not begin with leftover whitespace.
 
 A room's content - Look descriptions, Use results, room-entry and tile-entry
-narration, and any logic attached to them (checking or setting a story flag,
-giving the player an object, branching on a condition) - is authored as a
-*room script*: DSL source at `assets/scripts/<hex room id>.script`, written
-and edited in the asset editor's Script mode (see `ROOM_CODE_API.md` for the
-exact syntax and how room code runs an entry). There is no longer a
-fixed-size text budget assigned per room the way there once was; a room
-script is compiled like any other asset and only costs cartridge space
-for what it actually contains, up to a compiled ceiling of 8 KiB per room
-(`PLATFORM_RESOURCE_MAX_BYTES` - see `PLATFORM_API.md`'s "Generic cartridge
-resources"), far more than any room script has needed so far.
+narration, and the puzzle logic attached to them - is authored as a *room
+script*: DSL source at `assets/scripts/<hex room id>.script`, written and
+edited in the asset editor's Script mode (see `ROOM_CODE_API.md` for the
+exact syntax and the full statement table). A script can check and set
+story flags, check whether the player carries an item, give and consume
+items, test for and swap a room object on the tile being used (an unlit
+brazier into a lit one), add an object (an NPC who appears), change a tile
+(a door that opens), queue a room transition, show a portrait, and start a
+conversation. Items are named by their object-type name from the catalogue
+(`OBJ_LAMP_OIL`), flags by the names in the story flag ledger. A room script
+is compiled like any other asset and only costs cartridge space for what it
+contains, up to 8 KiB per room, far more than any room has needed. Nothing
+in a puzzle needs a programmer unless it reads something the script
+language cannot - the turn counter, or the tile under the player.
 
 Inside any script string, `<runes>` switches to the rune alphabet (letters
 print as rune glyphs; spaces, digits and punctuation are unchanged) and
@@ -503,10 +513,12 @@ running and remain changed when the player revisits a room. The current journal
 can remember at most **200 changed object slots across the whole world**. This
 is separate from the per-room limit of 200 non-actor objects.
 
-The save-file structure has been designed, but writing and loading saves from
-disk is not finished (saves are disk-only; there is no cartridge-flash save
-path, by design). At present, progress is not expected to survive ending the
-emulator or powering off the C64.
+F1 saves and F3 loads one of eight named slots on the disk in drive 8 (saves
+are disk-only; there is no cartridge-flash save path, by design). A save
+records the player, inventory, the 32 story flags and every room-object
+change made so far. Two things are *not* saved and must be re-applied by a
+room's enter-room script entry from a story flag: a tile swapped by a script
+(an opened door) and a recolored tile definition.
 
 ## Puzzle patterns that fit the engine
 
@@ -517,8 +529,8 @@ emulator or powering off the C64.
 - Interior lights whose walls remain dark when viewed from outside.
 - A switch that changes ambient light or swaps unlit objects for lit types.
 - A clue visible through an opening but too dim to examine from far away.
-- A light source that must remain in one room, because inventory items do not
-  emit light automatically.
+- A carried light that reveals clues only while the player holds it, or that
+  must be given up to progress.
 
 Avoid puzzles that depend on sub-tile shadow precision, reflected light, or two
 weak lights adding together.
@@ -560,16 +572,15 @@ the current light range.
 - Movement collision is tile-based and uses Solid land only.
 - Objects and NPCs do not inherently block movement.
 - Object lighting is fixed per global type and evaluated per full tile.
-- Inventory objects do not emit room light.
 - There is no Drop, Equip, item-combination, or inventory-target-map command.
 - There is no generic conversation choice UI, and no automatic link between
   dialogue text and the portrait API.
 - NPC schedules, AI, combat, game time, and quests are not generic systems yet.
-- A room has only 256 bytes of local text and about 1 KiB for bespoke behavior.
+- A room script may compile to at most 8 KiB.
 - The automatic Look list is limited to two lines.
 - Only 32 distinct inventory stacks can be carried.
 - Only 200 room-object differences can be remembered globally during a run.
-- Persistent disk save writing (the only planned save path) is not implemented yet.
+- Saves go to a disk in drive 8; the cartridge itself is never written.
 
 These are platform boundaries, not prohibitions. A story can request an engine
 extension, but it should identify that dependency before maps and dialogue are

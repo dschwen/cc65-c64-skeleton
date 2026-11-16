@@ -1,59 +1,58 @@
 /* Room 04 - Moonlit Cellar (MOONFEN_STORY_DESIGN.md section 8). See
- * rooms/04.rc for the door/stairs-up/mirror/Mara dispatch and
- * STORY_ROOM04_* in src/story.h for these keys.
+ * rooms/04.rc for the dispatch and STORY_ROOM04_* in src/story.h for
+ * these keys.
  *
- * The stairs up to the kitchen (room 03, tile 10,1) are at (16,1) here, an
- * already-walkable tile (67) in the alcove. Stepping onto it transitions
- * immediately (rooms/c/04_enter_tile.c) rather than requiring Use.
+ * The stairs up to the kitchen are at (16,1), an already-walkable tile in
+ * the entry alcove; stepping onto it transitions immediately.
  *
- * The entry alcove (where the stairs land) is separated from the rest of
- * the cellar by a partition wall; its only opening is the locked door at
- * (18,4), tile 6 (the locked-door graphic) until opened. Using the Brass
- * Key (type 10, from Pell) on it swaps the tile to tile 5, the same
- * walkable open-door graphic rooms 03 and 05 already use for their own
- * doors, and sets STORY_STATE_BASEMENT_DOOR_OPEN - dispatched from
- * rooms/c/04_use_at.c, since the script DSL can't check inventory or
- * mutate the tile grid. This is the real cellar gate now
- * (MOONFEN_STORY_DESIGN.md section 5) - the stairs themselves (room 03)
- * are unwarded.
+ * The alcove is separated from the rest of the cellar by a partition
+ * wall; its only opening is the locked door at (18,4), tile
+ * STORY_TILE_DOOR_LOCKED until opened. Using the Brass Key (from Pell)
+ * swaps the tile to STORY_TILE_DOOR_OPEN, the walkable open-door tile
+ * rooms 03 and 05 use, and sets STORY_STATE_BASEMENT_DOOR_OPEN. The tile
+ * grid is reloaded from ROM on every room entry and is not part of the
+ * world-state journal, so ENTER_ROOM re-applies the swap from the flag.
  *
- * The two Braziers (object type 41, unlit) sit at tiles (11,3) and (13,3).
- * Using one while carrying a Lit Taper (type 53 - see rooms/c/
- * 02_use_at.c's hearth handling) swaps it for a Lit Brazier (type 40,
- * already-authored art/light); the inventory check and object-type swap
- * happen in game_ignite_brazier() (src/game_support.c), dispatched from
- * rooms/c/04_use_at.c since the script DSL has no opcode for either.
+ * The two braziers (OBJ_BRAZIER, tiles 11,3 and 13,3) ignite from a Lit
+ * Taper into OBJ_LIT_BRAZIER (already-authored art and light) -
+ * replace_object acts on the brazier at the tile the Use cursor chose.
  *
  * The cracked moon mirror sits at tiles (12,1)/(12,2). Repairing it needs
- * both the Silver Shard (type 54, from Sir Caldus) *and* the Moon Brooch
- * worn (STORY_STATE_MOON_BROOCH_WORN, toggled from the inventory screen -
- * see story/story.c) - using the shard while carrying but not wearing the
- * brooch gets its own hint (STORY_ROOM04_USE_MIRROR_NEED_BROOCH) instead
- * of repairing anything. Repairing brightens the mirror's tiles and adds
- * Mara Moonfen (object type 37, already-authored art) beside it at
- * (13,1) - dispatched from rooms/c/04_use_at.c, since none of this is
- * expressible in the script DSL. STORY_ROOM04_LOOK_MIRROR and
- * STORY_ROOM04_LOOK_MARA both branch on STORY_STATE_MIRROR_REPAIRED so
- * Look gives the right flavor before and after. Mara's reveal
- * (STORY_ROOM04_TALK_MARA) sets both STORY_STATE_MARA_REVEALED and
- * STORY_STATE_HOST_REVEALED - the finale (a later step) gates on the
- * latter. The Recipe Stone (object type 63, tile 5,8; placeholder
- * scenery) only gives its real text once Mara has been revealed,
- * matching the design doc's "becomes readable/useful" after she appears;
- * the fixed Witchlight (type 64, tile 17,2) is unconditional flavor/
- * light, present from the start. */
+ * the Silver Shard (from Sir Caldus) *and* the Moon Brooch worn
+ * (STORY_STATE_MOON_BROOCH_WORN, toggled from the inventory screen - see
+ * story/story.c). Repairing recolors the mirror's two tile definitions
+ * (tile_color; re-applied by ENTER_ROOM, since the shared tile table is
+ * reloaded after every save/load) and adds Mara Moonfen beside it at
+ * half-tile (26,2). Mara's reveal (TALK_MARA) sets MARA_REVEALED and
+ * HOST_REVEALED; the finale (02.script) gates on the latter. The Recipe
+ * Stone (5,8) only gives its real text once Mara has been revealed. */
 room 04 {
+    entry STORY_ROOM04_ENTER_ROOM {
+        check_flag STORY_STATE_MIRROR_REPAIRED == 1 {
+            tile_color STORY_TILE_MIRROR_FRAME STORY_COLOR_MIRROR_LIT
+            tile_color STORY_TILE_MIRROR_GLASS STORY_COLOR_MIRROR_LIT
+        }
+        check_flag STORY_STATE_BASEMENT_DOOR_OPEN == 1 {
+            set_tile 18 4 STORY_TILE_DOOR_OPEN
+        }
+    }
     entry STORY_ROOM04_ASCEND_STAIRS {
         room_transition 3 20 4
     }
     entry STORY_ROOM04_LOOK_STAIRS_UP {
         text "The stairs lead up to the kitchen."
     }
-    entry STORY_ROOM04_LIGHT_BRAZIER {
-        text "You touch the taper's flame to the brazier, and it catches."
-    }
-    entry STORY_ROOM04_LIGHT_BRAZIER_NO_ITEM {
-        text "The brazier is cold. You have nothing to light it with."
+    entry STORY_ROOM04_USE_BRAZIER {
+        check_object OBJ_BRAZIER {
+            check_item OBJ_LIT_TAPER {
+                replace_object OBJ_BRAZIER OBJ_LIT_BRAZIER
+                text "You touch the taper's flame to the brazier, and it catches."
+            } else {
+                text "The brazier is cold. You have nothing to light it with."
+            }
+        } else {
+            text "The brazier is already burning."
+        }
     }
     entry STORY_ROOM04_LOOK_MIRROR {
         check_flag STORY_STATE_MIRROR_REPAIRED == 0 {
@@ -62,19 +61,27 @@ room 04 {
             text "The mirror shines whole and bright now, more moonlight than glass - and it holds no reflection of the room at all."
         }
     }
-    entry STORY_ROOM04_REPAIR_MIRROR {
-        text "You fit the silver shard into the crack. It seats with a faint chime, and the whole mirror flares silver-white."
-        wait_key
-        text "When your eyes adjust, the glass is whole - and someone is standing beside it who was not there a moment ago."
-    }
-    entry STORY_ROOM04_USE_MIRROR_ALREADY {
-        text "The mirror is whole. There is nothing left to repair."
-    }
-    entry STORY_ROOM04_USE_MIRROR_NO_ITEM {
-        text "The crack runs deep. Whatever fits it, you don't have it."
-    }
-    entry STORY_ROOM04_USE_MIRROR_NEED_BROOCH {
-        text "The shard fits the crack, but nothing happens. Some part of this feels unfinished - as if the mirror is waiting on you, not the other way around."
+    entry STORY_ROOM04_USE_MIRROR {
+        check_flag STORY_STATE_MIRROR_REPAIRED == 1 {
+            text "The mirror is whole. There is nothing left to repair."
+        } else {
+            check_item OBJ_SILVER_SHARD {
+                check_flag STORY_STATE_MOON_BROOCH_WORN == 0 {
+                    text "The shard fits the crack, but nothing happens. Some part of this feels unfinished - as if the mirror is waiting on you, not the other way around."
+                } else {
+                    take_item OBJ_SILVER_SHARD
+                    set_flag STORY_STATE_MIRROR_REPAIRED 1
+                    tile_color STORY_TILE_MIRROR_FRAME STORY_COLOR_MIRROR_LIT
+                    tile_color STORY_TILE_MIRROR_GLASS STORY_COLOR_MIRROR_LIT
+                    add_object OBJ_MARA_MOONFEN 26 2
+                    text "You fit the silver shard into the crack. It seats with a faint chime, and the whole mirror flares silver-white."
+                    wait_key
+                    text "When your eyes adjust, the glass is whole - and someone is standing beside it who was not there a moment ago."
+                }
+            } else {
+                text "The crack runs deep. Whatever fits it, you don't have it."
+            }
+        }
     }
     entry STORY_ROOM04_LOOK_DOOR {
         check_flag STORY_STATE_BASEMENT_DOOR_OPEN == 0 {
@@ -83,14 +90,18 @@ room 04 {
             text "The door stands open, its lock long since given up."
         }
     }
-    entry STORY_ROOM04_UNLOCK_DOOR {
-        text "The brass key turns easily, as though it were always meant for this lock. The door swings open onto the cellar beyond."
-    }
-    entry STORY_ROOM04_DOOR_ALREADY_OPEN {
-        text "The door stands open."
-    }
-    entry STORY_ROOM04_DOOR_LOCKED {
-        text "The door is locked. It wants a key."
+    entry STORY_ROOM04_USE_DOOR {
+        check_flag STORY_STATE_BASEMENT_DOOR_OPEN == 1 {
+            text "The door stands open."
+        } else {
+            check_item OBJ_BRASS_KEY {
+                set_tile 18 4 STORY_TILE_DOOR_OPEN
+                set_flag STORY_STATE_BASEMENT_DOOR_OPEN 1
+                text "The brass key turns easily, as though it were always meant for this lock. The door swings open onto the cellar beyond."
+            } else {
+                text "The door is locked. It wants a key."
+            }
+        }
     }
     entry STORY_ROOM04_LOOK_MARA {
         check_flag STORY_STATE_MIRROR_REPAIRED == 0 {
@@ -100,22 +111,27 @@ room 04 {
         }
     }
     entry STORY_ROOM04_TALK_MARA {
-        check_flag STORY_STATE_MARA_REVEALED == 0 {
-            text "\"You've done well to reach me,\" she says. \"I am Mara. This inn has been mine far longer than it has been Vey's.\""
-            wait_key
-            text "\"He tells guests they cannot leave until the matter of a robbery is settled. There was no robbery. There is only the old law: a guest may not leave unwelcomed by the house.\""
-            wait_key
-            text "\"I am the house. Vey only pours the ale.\""
-            wait_key
-            text "\"Bring me a proper Guest's Broth, made as it always was, and I will welcome your fellow guests myself - and let you all go.\""
-            wait_key
-            text "\"The recipe is carved behind me still, if your memory needs the help mine no longer does.\""
-            set_flag STORY_STATE_MARA_REVEALED 1
-            set_flag STORY_STATE_HOST_REVEALED 1
+        check_flag STORY_STATE_MIRROR_REPAIRED == 0 {
+            /* Mara only stands here once the mirror is repaired. */
+            text "Nothing happens."
         } else {
-            text "\"The broth, when you're ready,\" Mara says. \"I'll be here. I'm always here.\""
+            check_flag STORY_STATE_MARA_REVEALED == 0 {
+                text "\"You've done well to reach me,\" she says. \"I am Mara. This inn has been mine far longer than it has been Vey's.\""
+                wait_key
+                text "\"He tells guests they cannot leave until the matter of a robbery is settled. There was no robbery. There is only the old law: a guest may not leave unwelcomed by the house.\""
+                wait_key
+                text "\"I am the house. Vey only pours the ale.\""
+                wait_key
+                text "\"Bring me a proper Guest's Broth, made as it always was, and I will welcome your fellow guests myself - and let you all go.\""
+                wait_key
+                text "\"The recipe is carved behind me still, if your memory needs the help mine no longer does.\""
+                set_flag STORY_STATE_MARA_REVEALED 1
+                set_flag STORY_STATE_HOST_REVEALED 1
+            } else {
+                text "\"The broth, when you're ready,\" Mara says. \"I'll be here. I'm always here.\""
+            }
+            wait_key
         }
-        wait_key
     }
     entry STORY_ROOM04_LOOK_RECIPE_STONE {
         check_flag STORY_STATE_MARA_REVEALED == 0 {

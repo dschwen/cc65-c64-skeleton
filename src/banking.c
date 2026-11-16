@@ -67,10 +67,8 @@ uint8_t platform_irq_save_disable(void) {
 }
 
 /* Copy `size` bytes from EasyFlash bank `bank`, offset `offset` within the
- * ROML (8000-9FFF) half, to `destination`. Replaces
- * src/banking.s's easyflash_copy_roml/romh, which used the FAR_CALL
- * bank-stack machinery to make this safe to call from already-banked
- * code; far_call_bank() gives the same reentrancy natively. */
+ * ROML (8000-9FFF) half, to `destination`. far_call_bank()'s software
+ * shadow restores whichever bank the caller had selected. */
 static uint16_t copy_offset;
 static uint16_t copy_destination;
 static uint16_t copy_size;

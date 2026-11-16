@@ -17,7 +17,11 @@ extern uint8_t platform_text_output_line;
 
 static uint8_t text_column;
 
-static void wait_for_fresh_key(void) {
+/* Blocks until a keypress that wasn't already held when this was called -
+ * release (drain whatever's buffered), press, release again. The one
+ * resident copy; the pager, the script interpreter and the transition
+ * reveal all share it. */
+void platform_wait_fresh_key(void) {
     while (platform_input_poll() != 0u) platform_wait_frame();
     while (platform_input_poll() == 0u) platform_wait_frame();
     while (platform_input_poll() != 0u) platform_wait_frame();
@@ -40,7 +44,7 @@ static void next_text_line(void) {
         ++platform_text_output_line;
         return;
     }
-    wait_for_fresh_key();
+    platform_wait_fresh_key();
     platform_copy_vic_ram(TEXT_ROW_0, TEXT_ROW_1, MAP_WIDTH_CHARS);
     for (x = 0u; x < MAP_WIDTH_CHARS; ++x) {
         COLOR_ROW_0[x] = COLOR_ROW_1[x];

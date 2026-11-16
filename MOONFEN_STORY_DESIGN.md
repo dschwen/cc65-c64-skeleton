@@ -3,6 +3,18 @@
 
 *A compact fantasy adventure for the C64 adventure/RPG engine*
 
+> **As built.** This is the original design brief; the implementation
+> diverged in places. The build has six rooms, numbered differently:
+> `00` Storm Crossroads, `01` the inn's yard and puddle (where the Blue Seal
+> lies), `02` the tavern common room, `03` the kitchen, `04` the cellar,
+> `05` the guest corridor. The three-recess cellar ward became a
+> brass-key-locked door inside the cellar; the Silver Shard repairs the
+> mirror only while the Moon Brooch is worn (toggled from the inventory);
+> the three NPC hand-offs happen by mentioning the trigger word (`oil`,
+> `letter`, `seal`) in conversation rather than by Using the item. The
+> authoritative content is `assets/scripts/*.script` and
+> `assets/scripts/conversations/*.script`; the flag ledger is `src/story.h`.
+
 ---
 
 ## 1. Design Goals

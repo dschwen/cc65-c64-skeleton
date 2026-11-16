@@ -1,6 +1,5 @@
 /* Sir Caldus's "Ask about" conversation - reached from
- * STORY_ROOM02_TALK_CALDUS and STORY_ROOM02_CALDUS_FREE (assets/scripts/
- * 02.script) once he and the player have met, via `converse`. See
+ * STORY_ROOM02_TALK_CALDUS (assets/scripts/02.script) via `converse`. See
  * conversations/05.script's header for why this ID is independent of any
  * room ID.
  *
@@ -21,7 +20,24 @@ conversation caldus {
         text "\"The Silver Tower fell before I ever earned my spurs there properly. I carry its sigil out of habit more than duty.\""
     }
     topic "oil" {
-        text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
+        /* Also the puzzle's resolution: carrying Lamp Oil frees the visor
+         * and earns the Silver Shard (MOONFEN_STORY_DESIGN.md branch B). */
+        check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
+            check_item OBJ_LAMP_OIL {
+                take_item OBJ_LAMP_OIL
+                text "With a screech of metal the seized visor finally gives, and Sir Caldus draws a first unmuffled breath."
+                wait_key
+                give_object OBJ_SILVER_SHARD 1
+                text "\"You have my thanks - truly,\" he says, pressing something small and cold into your hand - a shard of silver, etched with a tower's sigil."
+                wait_key
+                set_flag STORY_STATE_ROOM_02_CALDUS_FREED 1
+                text "\"Take it. It marked me once as Silver Tower. Perhaps it will open a door for you instead.\""
+            } else {
+                text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
+            }
+        } else {
+            text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
+        }
     }
     topic "visor" {
         text "\"Seized somewhere on the road, in the wet. Vanity's price, wearing plate in a storm.\""

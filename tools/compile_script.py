@@ -14,15 +14,17 @@ tile-entry/exit-description hook full script logic (flags, give_object,
 branching) instead of a static string.
 
 Each of the three declaration kinds has its own independent 0-255 resource
-ID space (three separate directories in the cartridge - see
-src/platform.h's PLATFORM_RESOURCE_KIND_* and EASYFLASH_CARTRIDGE.md), so a
-conversation and a standalone script can both use ID 5 without colliding,
-and rooms can use the full 0-255 range without needing to leave IDs free
-for the other two kinds. Source location determines which directory a file
-compiles into (see the Makefile): assets/scripts/<ID>.script for a room
-(ID == the room's own ID), assets/scripts/conversations/<ID>.script for a
-conversation, and assets/scripts/cutscenes/<ID>.script for a standalone
-script.
+ID space (one EasyFlash bank per kind - see src/platform.h's
+PLATFORM_RESOURCE_KIND_* and EASYFLASH_CARTRIDGE.md), so a conversation and
+a room can both use ID 5 without colliding. Source location determines
+which bank a file compiles into (see the Makefile):
+assets/scripts/<hex room ID>.script for a room (ID == the room's own ID),
+and assets/scripts/conversations/<decimal ID>.script for a conversation -
+the decimal number a script's `converse` statement names.
+
+The opcode numbers below are *read from src/script_format.h* at startup
+(the SCRIPT_OP_*/SCRIPT_CMP_*/SCRIPT_KIND_* defines) - that header is the
+single source of truth shared with the interpreter, modules/script.c.
 
 Resource layout (all multi-byte fields little-endian; all offsets are
 absolute, counted from byte 0 of the resource):
@@ -106,7 +108,7 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          clears bit `bit` (0-7) of flags[index], leaving its
                          other bits untouched - a no-op if bit >= 8.
     0x0D LIGHTNING                                       no operands
-                         calls platform_lightning() (src/render.s): flashes
+                         calls platform_lightning() (src/render.c): flashes
                          the border/background white and the map's Color
                          RAM black for two frames, then restores the
                          current lighting. Blocks for those two frames;
@@ -122,10 +124,42 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          must not nest. Put it last. Inside a conversation
                          topic it ends the current conversation and starts
                          the named one.
+    0x0F CHECK_ITEM        type:1  qty:1  true_len:2  false_len:2
+                         like CHECK_FLAG, true when the inventory holds at
+                         least qty of object type `type`.
+    0x10 TAKE_ITEM         type:1  qty:1
+                         removes qty of `type` from the inventory (all or
+                         nothing - a no-op if fewer are carried).
+    0x11 CHECK_OBJECT      type:1  true_len:2  false_len:2
+                         true when a room object of `type` has its hotspot
+                         on the *context tile* - the tile a look_at/use_at
+                         entry was dispatched for, or the player's own tile
+                         for an enter_room/enter_tile entry (see
+                         src/script_abi.h's script_context_x/y).
+    0x12 REPLACE_OBJECT    from:1  to:1
+                         changes every room object of type `from` on the
+                         context tile to type `to`, captures the change in
+                         the world-state journal and redraws the room.
+    0x13 ADD_OBJECT        type:1  x:1  y:1
+                         adds a room object at half-tile x,y (journaled and
+                         redrawn like REPLACE_OBJECT); silently does nothing
+                         if the room is full.
+    0x14 SET_TILE          x:1  y:1  tile:1
+                         replaces one tile of the current room's grid
+                         (whole-tile coordinates) and redraws. NOT journaled
+                         - the grid is reloaded from ROM on every room
+                         entry, so the room's enter_room entry must re-apply
+                         it (gated on whatever flag records the change).
+    0x15 TILE_COLOR        tile:1  color:1
+                         recolors all four cells of tile definition `tile`
+                         in the shared runtime tile table - a palette patch
+                         for a tile with no spare ID for a second state.
+                         Also not persisted (the table is reloaded after
+                         every save/load): re-apply from enter_room.
 
 A block (the top level of a script, a conversation topic, or either branch
-of a CHECK_FLAG) always ends with END; there is no separate "return"
-opcode. What "the block ended" means - resume the game, or show the topic
+of a CHECK_FLAG/CHECK_ITEM/CHECK_OBJECT) always ends with END; there is no
+separate "return" opcode. What "the block ended" means - resume the game, or show the topic
 prompt again - is the interpreter's job, not the format's.
 
 String syntax (every string literal, including text/room-transition
@@ -195,6 +229,31 @@ DSL syntax:
         }
     }
 
+    // Inventory and room-object statements (see the opcodes above):
+    //   check_item TYPE [QTY] { ... } [else { ... }]
+    //   take_item TYPE [QTY]
+    //   check_object TYPE { ... } [else { ... }]
+    //   replace_object FROM TO
+    //   add_object TYPE X Y
+    //   set_tile X Y TILE
+    //   tile_color TILE COLOR
+    // TYPE/FROM/TO may be OBJ_* symbols from the generated object-type
+    // header (tools/generate_object_types.py) or bare numbers.
+    room 04 {
+        entry STORY_ROOM04_USE_BRAZIER {
+            check_object OBJ_BRAZIER {
+                check_item OBJ_LIT_TAPER {
+                    replace_object OBJ_BRAZIER OBJ_LIT_BRAZIER
+                    text "You touch the taper's flame to the brazier."
+                } else {
+                    text "The brazier is cold. You have nothing to light it with."
+                }
+            } else {
+                text "The brazier is already burning."
+            }
+        }
+    }
+
     room 00 {
         entry 0 {
             text "A warm light shines from the window."
@@ -233,14 +292,15 @@ DSL syntax:
     }
 
 A room's entry keys are whatever numbering convention its own C code (see
-rooms/XX.c and game_room_script_entry() in src/script_runtime.c) picks -
+rooms/XX.rc and game_room_script_entry() in src/script_runtime.c) picks -
 e.g. tile index for tile-entry hooks, a reserved constant range for exit
 descriptions. This compiler doesn't assign or interpret them; it just
 stores whatever key literal/symbol you write.
 
 Flag names (MET_WIZARD above) resolve against #define NAME value lines in
---flags (default src/story.h); portrait/room/sound/object-type IDs may be a
-bare decimal/hex literal or any symbol from the same file. give_object's
+the --flags files (repeatable; default src/story.h - the Makefile also
+passes build/object_types.h); portrait/room/sound/object-type IDs may be a
+bare decimal/hex literal or any symbol from those files. give_object's
 type is an object-type ID (see the asset editor's Object mode); quantity 0
 is legal but a no-op.
 """
@@ -252,28 +312,74 @@ import re
 import struct
 from pathlib import Path
 
-FORMAT_VERSION = 1
-KIND_SCRIPT = 0
-KIND_CONVERSATION = 1
-KIND_ROOM = 2
+DEFINE_RE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)")
 
-OP_END = 0x00
-OP_TEXT = 0x01
-OP_PORTRAIT_SHOW = 0x02
-OP_PORTRAIT_HIDE = 0x03
-OP_SET_FLAG = 0x04
-OP_CHECK_FLAG = 0x05
-OP_WAIT_KEY = 0x06
-OP_ROOM_TRANSITION = 0x07
-OP_SOUND = 0x08
-OP_GIVE_OBJECT = 0x09
-OP_ROOM_TRANSITION_HERE = 0x0A
-OP_SET_BIT = 0x0B
-OP_CLEAR_BIT = 0x0C
-OP_LIGHTNING = 0x0D
-OP_CONVERSE = 0x0E
 
-CMP_OPS = {"==": 0, "!=": 1, "<": 2, ">": 3, "<=": 4, ">=": 5, "&": 6}
+def load_symbols(path: Path) -> dict[str, int]:
+    """Reads `#define NAME value` lines (one per line, value a C integer
+    literal with an optional u/l suffix) into a name -> value map."""
+    if not path.exists():
+        return {}
+    symbols: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = DEFINE_RE.match(line)
+        if not match:
+            continue
+        name, raw_value = match.groups()
+        text = raw_value.rstrip("uUlL")
+        try:
+            symbols[name] = int(text, 0)
+        except ValueError:
+            continue
+    return symbols
+
+
+# The binary format's numbering comes from the header the interpreter
+# compiles against, so the two sides cannot drift apart.
+FORMAT_HEADER = Path(__file__).resolve().parents[1] / "src" / "script_format.h"
+_FORMAT = load_symbols(FORMAT_HEADER)
+
+
+def _fmt(name: str) -> int:
+    try:
+        return _FORMAT[name]
+    except KeyError:
+        raise SystemExit(f"{FORMAT_HEADER}: missing #define {name}") from None
+
+
+FORMAT_VERSION = _fmt("SCRIPT_FORMAT_VERSION")
+KIND_SCRIPT = _fmt("SCRIPT_KIND_SCRIPT")
+KIND_CONVERSATION = _fmt("SCRIPT_KIND_CONVERSATION")
+KIND_ROOM = _fmt("SCRIPT_KIND_ROOM")
+
+OP_END = _fmt("SCRIPT_OP_END")
+OP_TEXT = _fmt("SCRIPT_OP_TEXT")
+OP_PORTRAIT_SHOW = _fmt("SCRIPT_OP_PORTRAIT_SHOW")
+OP_PORTRAIT_HIDE = _fmt("SCRIPT_OP_PORTRAIT_HIDE")
+OP_SET_FLAG = _fmt("SCRIPT_OP_SET_FLAG")
+OP_CHECK_FLAG = _fmt("SCRIPT_OP_CHECK_FLAG")
+OP_WAIT_KEY = _fmt("SCRIPT_OP_WAIT_KEY")
+OP_ROOM_TRANSITION = _fmt("SCRIPT_OP_ROOM_TRANSITION")
+OP_SOUND = _fmt("SCRIPT_OP_SOUND")
+OP_GIVE_OBJECT = _fmt("SCRIPT_OP_GIVE_OBJECT")
+OP_ROOM_TRANSITION_HERE = _fmt("SCRIPT_OP_ROOM_TRANSITION_HERE")
+OP_SET_BIT = _fmt("SCRIPT_OP_SET_BIT")
+OP_CLEAR_BIT = _fmt("SCRIPT_OP_CLEAR_BIT")
+OP_LIGHTNING = _fmt("SCRIPT_OP_LIGHTNING")
+OP_CONVERSE = _fmt("SCRIPT_OP_CONVERSE")
+OP_CHECK_ITEM = _fmt("SCRIPT_OP_CHECK_ITEM")
+OP_TAKE_ITEM = _fmt("SCRIPT_OP_TAKE_ITEM")
+OP_CHECK_OBJECT = _fmt("SCRIPT_OP_CHECK_OBJECT")
+OP_REPLACE_OBJECT = _fmt("SCRIPT_OP_REPLACE_OBJECT")
+OP_ADD_OBJECT = _fmt("SCRIPT_OP_ADD_OBJECT")
+OP_SET_TILE = _fmt("SCRIPT_OP_SET_TILE")
+OP_TILE_COLOR = _fmt("SCRIPT_OP_TILE_COLOR")
+NO_MESSAGE = _fmt("SCRIPT_NO_MESSAGE")
+
+CMP_OPS = {"==": _fmt("SCRIPT_CMP_EQ"), "!=": _fmt("SCRIPT_CMP_NE"),
+           "<": _fmt("SCRIPT_CMP_LT"), ">": _fmt("SCRIPT_CMP_GT"),
+           "<=": _fmt("SCRIPT_CMP_LE"), ">=": _fmt("SCRIPT_CMP_GE"),
+           "&": _fmt("SCRIPT_CMP_BIT")}
 
 
 # --------------------------------------------------------------------------
@@ -466,6 +572,55 @@ class GiveObjectStmt(Stmt):
 class ConverseStmt(Stmt):
     def __init__(self, conversation_id: int) -> None:
         self.conversation_id = conversation_id
+
+
+class CheckItemStmt(Stmt):
+    def __init__(self, object_type: int, quantity: int,
+                 true_body: list[Stmt], false_body: list[Stmt]) -> None:
+        self.object_type = object_type
+        self.quantity = quantity
+        self.true_body = true_body
+        self.false_body = false_body
+
+
+class TakeItemStmt(Stmt):
+    def __init__(self, object_type: int, quantity: int) -> None:
+        self.object_type = object_type
+        self.quantity = quantity
+
+
+class CheckObjectStmt(Stmt):
+    def __init__(self, object_type: int,
+                 true_body: list[Stmt], false_body: list[Stmt]) -> None:
+        self.object_type = object_type
+        self.true_body = true_body
+        self.false_body = false_body
+
+
+class ReplaceObjectStmt(Stmt):
+    def __init__(self, from_type: int, to_type: int) -> None:
+        self.from_type = from_type
+        self.to_type = to_type
+
+
+class AddObjectStmt(Stmt):
+    def __init__(self, object_type: int, x: int, y: int) -> None:
+        self.object_type = object_type
+        self.x = x
+        self.y = y
+
+
+class SetTileStmt(Stmt):
+    def __init__(self, x: int, y: int, tile: int) -> None:
+        self.x = x
+        self.y = y
+        self.tile = tile
+
+
+class TileColorStmt(Stmt):
+    def __init__(self, tile: int, color: int) -> None:
+        self.tile = tile
+        self.color = color
 
 
 class Topic:
@@ -702,7 +857,64 @@ class Parser:
         if tok.value == "converse":
             self.advance()
             return ConverseStmt(self.resolve_number())
+        if tok.value == "check_item":
+            self.advance()
+            object_type = self.resolve_number()
+            quantity = self.optional_number(1)
+            true_body, false_body = self.parse_branches()
+            return CheckItemStmt(object_type, quantity, true_body, false_body)
+        if tok.value == "take_item":
+            self.advance()
+            object_type = self.resolve_number()
+            quantity = self.optional_number(1)
+            return TakeItemStmt(object_type, quantity)
+        if tok.value == "check_object":
+            self.advance()
+            object_type = self.resolve_number()
+            true_body, false_body = self.parse_branches()
+            return CheckObjectStmt(object_type, true_body, false_body)
+        if tok.value == "replace_object":
+            self.advance()
+            from_type = self.resolve_number()
+            to_type = self.resolve_number()
+            return ReplaceObjectStmt(from_type, to_type)
+        if tok.value == "add_object":
+            self.advance()
+            object_type = self.resolve_number()
+            x = self.resolve_number()
+            y = self.resolve_number()
+            return AddObjectStmt(object_type, x, y)
+        if tok.value == "set_tile":
+            self.advance()
+            x = self.resolve_number()
+            y = self.resolve_number()
+            tile = self.resolve_number()
+            return SetTileStmt(x, y, tile)
+        if tok.value == "tile_color":
+            self.advance()
+            tile = self.resolve_number()
+            color = self.resolve_number()
+            return TileColorStmt(tile, color)
         raise SystemExit(f"line {tok.line}: unknown statement {tok.value!r}")
+
+    def optional_number(self, default: int) -> int:
+        """A trailing number/symbol operand that may be omitted (e.g.
+        check_item's quantity) - present if the next token is one and the
+        statement's block/next statement hasn't started yet."""
+        tok = self.peek()
+        if tok.kind == "number":
+            return self.resolve_number()
+        if tok.kind == "ident" and tok.value in self.symbols:
+            return self.resolve_number()
+        return default
+
+    def parse_branches(self) -> tuple[list[Stmt], list[Stmt]]:
+        true_body = self.parse_block()
+        false_body: list[Stmt] = []
+        if self.at_keyword("else"):
+            self.advance()
+            false_body = self.parse_block()
+        return true_body, false_body
 
     def parse_check_flag(self) -> CheckFlagStmt:
         self.expect("ident", "check_flag")
@@ -712,36 +924,8 @@ class Parser:
             raise SystemExit(f"line {cmp_tok.line}: bad comparison {cmp_tok.value!r}")
         cmp_op = CMP_OPS[cmp_tok.value]
         value = self.resolve_number()
-        true_body = self.parse_block()
-        false_body: list[Stmt] = []
-        if self.at_keyword("else"):
-            self.advance()
-            false_body = self.parse_block()
+        true_body, false_body = self.parse_branches()
         return CheckFlagStmt(index, cmp_op, value, true_body, false_body)
-
-
-# --------------------------------------------------------------------------
-# Symbol table (flag/portrait/room/sound names)
-# --------------------------------------------------------------------------
-
-DEFINE_RE = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)")
-
-
-def load_symbols(path: Path) -> dict[str, int]:
-    if not path.exists():
-        return {}
-    symbols: dict[str, int] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        match = DEFINE_RE.match(line)
-        if not match:
-            continue
-        name, raw_value = match.groups()
-        text = raw_value.rstrip("uUlL")
-        try:
-            symbols[name] = int(text, 0)
-        except ValueError:
-            continue
-    return symbols
 
 
 # --------------------------------------------------------------------------
@@ -779,17 +963,31 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
             buf += bytes([OP_CLEAR_BIT, check_u8(stmt.index),
                           check_u8(stmt.bit)])
         elif isinstance(stmt, CheckFlagStmt):
-            true_bytes, true_patches = compile_stmts(stmt.true_body)
-            false_bytes, false_patches = compile_stmts(stmt.false_body)
             buf += bytes([OP_CHECK_FLAG, check_u8(stmt.index), stmt.cmp_op,
                           check_u8(stmt.value)])
-            buf += struct.pack("<HH", len(true_bytes), len(false_bytes))
-            base = len(buf)
-            buf += true_bytes
-            patches.extend(Patch(base + p.position, p.text) for p in true_patches)
-            base = len(buf)
-            buf += false_bytes
-            patches.extend(Patch(base + p.position, p.text) for p in false_patches)
+            emit_branches(buf, patches, stmt.true_body, stmt.false_body)
+        elif isinstance(stmt, CheckItemStmt):
+            buf += bytes([OP_CHECK_ITEM, check_u8(stmt.object_type),
+                          check_u8(stmt.quantity)])
+            emit_branches(buf, patches, stmt.true_body, stmt.false_body)
+        elif isinstance(stmt, CheckObjectStmt):
+            buf += bytes([OP_CHECK_OBJECT, check_u8(stmt.object_type)])
+            emit_branches(buf, patches, stmt.true_body, stmt.false_body)
+        elif isinstance(stmt, TakeItemStmt):
+            buf += bytes([OP_TAKE_ITEM, check_u8(stmt.object_type),
+                          check_u8(stmt.quantity)])
+        elif isinstance(stmt, ReplaceObjectStmt):
+            buf += bytes([OP_REPLACE_OBJECT, check_u8(stmt.from_type),
+                          check_u8(stmt.to_type)])
+        elif isinstance(stmt, AddObjectStmt):
+            buf += bytes([OP_ADD_OBJECT, check_u8(stmt.object_type),
+                          check_u8(stmt.x), check_u8(stmt.y)])
+        elif isinstance(stmt, SetTileStmt):
+            buf += bytes([OP_SET_TILE, check_u8(stmt.x), check_u8(stmt.y),
+                          check_u8(stmt.tile)])
+        elif isinstance(stmt, TileColorStmt):
+            buf += bytes([OP_TILE_COLOR, check_u8(stmt.tile),
+                          check_u8(stmt.color)])
         elif isinstance(stmt, WaitKeyStmt):
             buf += bytes([OP_WAIT_KEY])
         elif isinstance(stmt, LightningStmt):
@@ -801,14 +999,14 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
                 patches.append(Patch(len(buf), stmt.text))
                 buf += bytes(2)
             else:
-                buf += b"\xff\xff"
+                buf += struct.pack("<H", NO_MESSAGE)
         elif isinstance(stmt, RoomTransitionHereStmt):
             buf += bytes([OP_ROOM_TRANSITION_HERE, check_u8(stmt.room)])
             if stmt.text is not None:
                 patches.append(Patch(len(buf), stmt.text))
                 buf += bytes(2)
             else:
-                buf += b"\xff\xff"
+                buf += struct.pack("<H", NO_MESSAGE)
         elif isinstance(stmt, SoundStmt):
             buf += bytes([OP_SOUND, check_u8(stmt.sound_id)])
         elif isinstance(stmt, GiveObjectStmt):
@@ -819,6 +1017,21 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
         else:
             raise SystemExit(f"internal error: unhandled statement {stmt!r}")
     return buf, patches
+
+
+def emit_branches(buf: bytearray, patches: list[Patch],
+                  true_body: list[Stmt], false_body: list[Stmt]) -> None:
+    """Appends `true_len:2 false_len:2` then both compiled bodies - the
+    shared tail of every CHECK_* opcode."""
+    true_bytes, true_patches = compile_stmts(true_body)
+    false_bytes, false_patches = compile_stmts(false_body)
+    buf += struct.pack("<HH", len(true_bytes), len(false_bytes))
+    base = len(buf)
+    buf += true_bytes
+    patches.extend(Patch(base + p.position, p.text) for p in true_patches)
+    base = len(buf)
+    buf += false_bytes
+    patches.extend(Patch(base + p.position, p.text) for p in false_patches)
 
 
 def check_u8(value: int) -> int:
@@ -996,8 +1209,9 @@ def main() -> None:
                              "resource ID, e.g. "
                              "assets/scripts/cutscenes/05.script -> "
                              "build/assets/RS05")
-    parser.add_argument("--flags", type=Path, default=Path("src/story.h"),
-                        help="file to read #define NAME value symbols from "
+    parser.add_argument("--flags", type=Path, action="append", default=None,
+                        help="file to read #define NAME value symbols from; "
+                             "repeatable, later files override earlier ones "
                              "(default: src/story.h)")
     parser.add_argument("--expect-kind", choices=("script", "conversation", "room"),
                         help="with --single-output, fail if the input's one "
@@ -1009,7 +1223,9 @@ def main() -> None:
                              "cutscenes/ source path) as a build error")
     args = parser.parse_args()
 
-    symbols = load_symbols(args.flags)
+    symbols: dict[str, int] = {}
+    for path in args.flags or [Path("src/story.h")]:
+        symbols.update(load_symbols(path))
     tokens = tokenize(args.input.read_text(encoding="utf-8"))
     decls = Parser(tokens, symbols).parse_program()
     if not decls:

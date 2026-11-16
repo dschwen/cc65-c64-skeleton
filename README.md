@@ -42,6 +42,8 @@ It prints an artifact directory containing logs and screenshots.
 - [GUIDE_OSCAR64_C64.md](GUIDE_OSCAR64_C64.md): agent-oriented compiler manual summary.
 - `tools/asset-editor/README.md`: HTML asset editor and asset formats.
 
-Memory placement is expressed by Oscar64 pragmas in `src/memmap.h`
-and the banked source files. Charset/sprite data remain in VIC bank 3
+Rooms are listed in `rooms/rooms.manifest`; each room is an asset
+(`assets/NN`), a hook map (`rooms/NN.rc`) and a script
+(`assets/scripts/NN.script`). Memory placement is expressed by Oscar64
+pragmas in `src/memmap.h` and the banked source files. Charset/sprite data remain in VIC bank 3
 beneath KERNAL ROM, leaving main RAM available for code and game state.

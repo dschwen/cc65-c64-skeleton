@@ -190,11 +190,17 @@ static PlatformRoom room_stage;
 #define PLATFORM_ROOM_SCRATCH_BUFFER ((uint8_t*)&room_stage)
 #define PLATFORM_ROOM_SCRATCH_MAX_BYTES ((uint16_t)sizeof(room_stage))
 
+/* Per opaque tile: its tile-grid offset, its packed x/y (x in the low 5
+ * bits, y in the high 3 - PLATFORM_MAP_WIDTH/HEIGHT are 20/11, so both
+ * fit), and its packed per-quadrant light. Packing x/y into one byte
+ * rather than two parallel arrays saves 220 bytes of scarce resident RAM
+ * for a shift and a mask per lookup. */
 static uint8_t wall_light_cache[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_tile_offsets[PLATFORM_MAP_TILE_COUNT];
-static uint8_t wall_x[PLATFORM_MAP_TILE_COUNT];
-static uint8_t wall_y[PLATFORM_MAP_TILE_COUNT];
+static uint8_t wall_xy[PLATFORM_MAP_TILE_COUNT];
 static uint8_t wall_count;
+#define WALL_X(i) ((uint8_t)(wall_xy[i] & 0x1fu))
+#define WALL_Y(i) ((uint8_t)(wall_xy[i] >> 5))
 static const PlatformRoom* wall_cache_room;
 static uint8_t player_spawn_type;
 
@@ -636,8 +642,7 @@ static void wall_cache_prepare(const PlatformRoom* room) {
         for (x = 0u; x < PLATFORM_MAP_WIDTH; ++x, ++tile_offset) {
             if (tile_properties[room->tiles[tile_offset]] & PLATFORM_TILE_BLOCKS_VIEW) {
                 wall_tile_offsets[wall_count] = tile_offset;
-                wall_x[wall_count] = x;
-                wall_y[wall_count] = y;
+                wall_xy[wall_count] = (uint8_t)((y << 5) | x);
                 wall_light_cache[wall_count] = 0u;
                 ++wall_count;
             }
@@ -655,8 +660,8 @@ static void wall_cache_add_source(void) {
         if (platform_light_visibility[wall_tile_offsets[i]] == 0u) continue;
         quadrants = wall_quadrants(native_light_source_x,
                                    native_light_source_y,
-                                   wall_x[i], wall_y[i]);
-        level = light_level_at(wall_x[i], wall_y[i]);
+                                   WALL_X(i), WALL_Y(i));
+        level = light_level_at(WALL_X(i), WALL_Y(i));
         if (level != PLATFORM_LIGHT_NONE) {
             wall_light_cache[i] = packed_light_add(
                 wall_light_cache[i], quadrants, level);
@@ -685,7 +690,7 @@ static void wall_cache_apply(const PlatformRoom* room,
     }
     for (i = 0u; i < wall_count; ++i) {
         quadrants = player_x == 0xffu ? 0x0fu
-            : wall_quadrants(player_x, player_y, wall_x[i], wall_y[i]);
+            : wall_quadrants(player_x, player_y, WALL_X(i), WALL_Y(i));
         level = packed_light_max(wall_light_cache[i], quadrants);
         platform_brightness[wall_tile_offsets[i]] =
             level > platform_global_light ? level : platform_global_light;
@@ -1012,10 +1017,6 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
         result = PLATFORM_ERR_BLOCKED;
         goto transition_done;
     }
-    result = game_room_code_prepare(room_id);
-    if (result != PLATFORM_OK) {
-        goto transition_done;
-    }
     if (world_store_enabled) {
         world_state_room = &platform_room;
         world_state_op = WORLD_STATE_OP_STORE;
@@ -1038,6 +1039,12 @@ uint8_t platform_room_enter(uint8_t room_id, uint8_t actor_type,
         goto transition_done;
     }
 
+    /* Only now, past the last failure point: a failed transition must
+     * leave the *old* room's code active, or Look/Use/tile hooks would
+     * dispatch into the destination's bank while the old room is still
+     * on screen. room_stage_load() already rejected an unknown room ID
+     * through the same table, so this cannot fail here. */
+    (void)game_room_code_prepare(room_id);
     if (removed_actor) {
         platform_player->type = 0;
     }

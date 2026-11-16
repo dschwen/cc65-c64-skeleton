@@ -5,7 +5,7 @@
 #include "platform_native.h"
 
 /*
- * Native (oscar64 C) replacement for src/irq.s. Split-screen raster IRQ:
+ * Split-screen raster IRQ (ported from the cc65-era hand-written 6502):
  * switches between the tile and text charsets partway down the frame,
  * drives the frame counter, and animates water/rain. Structural translation
  * (not a rewrite) of the original hand-written 6502 - this code runs with
@@ -70,9 +70,9 @@ static uint8_t rain_prng(void) {
 /* Returns a uniformly random sprite-X position in [23,342] (the map's full
  * pixel width): *out_hi = 0/1 (9th bit), returns rain_x_lo. 320 isn't a
  * power of two, so this draws a 9-bit value from two independent sources
- * and rejects the 192 values outside the target range - see src/irq.s's
- * own header comment for why the coin flip must come from
- * platform_frame_counter, not a second rain_prng() call. */
+ * and rejects the 192 values outside the target range. The coin flip
+ * comes from platform_frame_counter, not a second rain_prng() call, so the
+ * two sources stay independent. */
 static uint8_t rain_pick_x(uint8_t* out_hi) {
     for (;;) {
         uint8_t candidate = rain_prng();
@@ -278,6 +278,17 @@ __interrupt void kernal_irq_entry(void) {
         byt 0x81
         byt 0xea
     }
+}
+
+/* Installs only the NMI handler, through the KERNAL's RAM vector at $0318
+ * (its hardware NMI entry at $FE43 jumps through it). main() calls this
+ * before the title screen, which runs ahead of platform_init() with the
+ * KERNAL's own NMI handler otherwise still live: RUN/STOP+RESTORE there
+ * would warm-start into BASIC. The game's own handler just acknowledges
+ * CIA2 and returns. KERNAL RESTOR in platform_init() resets $0318 again;
+ * raster_irq_install() re-points it with the rest of the vectors. */
+void platform_nmi_install(void) {
+    *(void**)0x0318u = direct_nmi_entry;
 }
 
 static void raster_irq_vectors_restore_impl(void) {

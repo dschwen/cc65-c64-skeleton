@@ -4,7 +4,7 @@
 #include "world.h"
 #include "memmap.h"
 #include "banks.h"
-#include "../rooms/env_banks.h"
+#include "env_banks.h" /* generated into build/rooms by tools/generate_room_table.py */
 
 void platform_easyflash_copy_roml(uint8_t bank, uint16_t offset, void* destination, uint16_t size);
 void game_room_enter_tile_native(void);
@@ -35,7 +35,7 @@ void game_state_init(void) {
     game_state.maximum_mana = 20u;
     game_entry_reason = GAME_ENTRY_STARTUP;
     game_player_sync_from_platform();
-    game_player_light_sync();
+    (void)game_player_light_sync();
 }
 
 void game_enter_tile(void) {
@@ -55,13 +55,9 @@ void game_enter_tile(void) {
 void game_enter_room(void) {
     uint8_t bank;
     platform_rain_disable();
-    /* Re-derive the hero's light radius from current inventory on every
-     * room transition - the only other call sites (rooms/c/02_use_at.c's
-     * hearth-ignite action and modules/saveload.c's load-restore) only
-     * cover the moment the taper is lit or a save is loaded, not every way
-     * a room can be entered afterward. Idempotent and cheap; see
-     * src/hero_light.c. */
-    game_player_light_sync();
+    /* Re-derive the hero's light radius from the current inventory (see
+     * src/hero_light.c). Idempotent and cheap. */
+    (void)game_player_light_sync();
     bank = env_bank_for_room(game_state.current_room);
     if (bank == 0xffu) {
         env_install_null();
@@ -111,21 +107,6 @@ uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {
     return PLATFORM_OK;
 }
 
-/* Blocks until a keypress that wasn't already held when this was called -
- * release (drain whatever's buffered), press, release again. Not static:
- * src/script_runtime.c also calls this. */
-void game_wait_fresh_key(void) {
-    do {
-        platform_wait_frame();
-    } while (platform_input_poll() != 0u);
-    do {
-        platform_wait_frame();
-    } while (platform_input_poll() == 0u);
-    do {
-        platform_wait_frame();
-    } while (platform_input_poll() != 0u);
-}
-
 /* Called directly by modules/script.c right when a room_transition/
  * room_transition_here opcode with a message operand runs - long before
  * the deferred transition itself is applied. Shows the message
@@ -151,7 +132,7 @@ void game_transition_message_show(void) {
  * place of a bare platform_room_draw()+platform_screen_unblank(). */
 void game_transition_reveal(void) {
     if (game_transition_pending_message) {
-        game_wait_fresh_key();
+        platform_wait_fresh_key();
     }
     platform_screen_blank();
     platform_room_draw(&platform_room, platform_player);
@@ -189,5 +170,11 @@ uint8_t game_process_pending_transition(void) {
     }
     raster_irq_resume();
     game_transition_reveal();
+    if (result != PLATFORM_OK) {
+        /* A blocked arrival tile, a full world-state journal, or a
+         * destination with no free actor slot: the old room is back on
+         * screen, so say why nothing happened rather than fail silently. */
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "You cannot go that way.", 1u);
+    }
     return result;
 }

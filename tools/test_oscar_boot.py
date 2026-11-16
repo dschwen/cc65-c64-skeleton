@@ -76,9 +76,40 @@ def check(root, monitor, artifacts):
     listing = (root / "build/game.asm").read_text()
     poll = listing.split("\nplatform_input_poll:", 1)[1].split("\n----", 1)[0]
     poll_return = int(re.search(r"^([0-9a-f]+) : .* RTS", poll, re.M)[1], 16)
-    monitor.command(f"break exec {labels['platform_input_poll']:04x}")
-    monitor.run()
+
+    screen = display.Display()
+    window = find_window(screen.screen().root)
+    assert window, "VICE window not found"
+    window.set_input_focus(X.RevertToParent, X.CurrentTime)
+    screen.sync()
+
+    # Title screen (modules/title.c): runs before platform_init(), polling
+    # start_pressed() once per frame. No other banked code has run yet, so
+    # a breakpoint on its banked address can only hit the title.
+    monitor.command(f"break exec {labels['start_pressed']:04x}")
+    for _ in range(60):
+        monitor.run()
     monitor.command("delete")
+    assert monitor.memory(0xdd00, 1)[0] & 3 == 1, "title: VIC bank 2 not selected"
+    heading = bytes([1, 32, 7, 1, 13, 5, 32, 2, 25])  # "a game by"
+    assert monitor.memory(0x8000 + 21 * 40 + 15, 9, "ram") == heading, \
+        "title: first credit heading not drawn"
+    title_art = (root / "assets/title.hires").read_bytes()
+    assert monitor.memory(0xa000, 64, "ram") == title_art[:64], "title: bitmap not loaded"
+    monitor.command(f'screenshot "{artifacts / "title.png"}" 2')
+    # Any key starts the game; the title waits for the release itself.
+    monitor.command(f"break exec {labels['platform_input_poll']:04x}")
+    space = screen.keysym_to_keycode(XK.string_to_keysym("space"))
+    monitor.connection.sendall(b"x\n")
+    time.sleep(.5)
+    xtest.fake_input(screen, X.KeyPress, space)
+    screen.sync()
+    time.sleep(.5)
+    xtest.fake_input(screen, X.KeyRelease, space)
+    screen.sync()
+    monitor.receive()
+    monitor.command("delete")
+    print("PASS: title screen picture, credits and key to start", flush=True)
 
     charset = (root / "assets/charset.cchr").read_bytes()[8:4104]
     actual = monitor.memory(0xe800, 4096, "ram")
@@ -100,11 +131,6 @@ def check(root, monitor, artifacts):
     print("PASS: cold-boot assets, water, CIA configuration and KERNAL vectors", flush=True)
 
     monitor.command(f"break exec {poll_return:04x}")
-    screen = display.Display()
-    window = find_window(screen.screen().root)
-    assert window, "VICE window not found"
-    window.set_input_focus(X.RevertToParent, X.CurrentTime)
-    screen.sync()
 
     def polls(count):
         keys = []
@@ -272,6 +298,58 @@ def check(root, monitor, artifacts):
             press("l", 76)
             polls(15)
             print("PASS: Sir Caldus's portrait renders the authored asset", flush=True)
+
+            # Script-driven inventory (modules/script.c's check_item/
+            # give_object, dispatched from rooms/02.rc's `at 12,1 -> script
+            # STORY_ROOM02_USE_HEARTH` - no C fragment involved): standing
+            # one tile below the hearth with nothing to light, Use collects
+            # Hearth Ash. Tile (12,2) is half-tile (24,4), walkable floor.
+            inventory = labels["game_state"] + 20  # GameState.inventory[32]
+            def inventory_has(object_type):
+                slots = monitor.memory(inventory, 64)
+                return any(slots[i] == object_type and slots[i + 1] >= 1
+                           for i in range(0, 64, 2))
+            monitor.command(f"> {pending:04x} 01 02 18 04")
+            polls(5)
+            assert not inventory_has(60), "Hearth Ash carried before using the hearth"
+            press("u", 85)
+            press("Up", 145)
+            press("Return", 13)
+            polls(5)
+            assert inventory_has(60), "Hearth Ash not given by the hearth script"
+            monitor.command(f'screenshot "{artifacts / "hearth-ash.png"}" 2')
+            press("space", 32)  # dismiss the script's text
+            polls(5)
+            # A second Use must not hand out a second scoop (the check_item
+            # OBJ_HEARTH_ASH branch), only the "nothing to light" flavor.
+            press("u", 85)
+            press("Up", 145)
+            press("Return", 13)
+            polls(5)
+            slots = monitor.memory(inventory, 64)
+            ash = [slots[i + 1] for i in range(0, 64, 2) if slots[i] == 60]
+            assert ash == [1], f"Hearth Ash quantity {ash} after a second Use"
+            press("space", 32)
+            polls(5)
+            print("PASS: script check_item/give_object at the hearth", flush=True)
+
+            # Take (the resident command, src/game_support.c): the Plant at
+            # tile (1,6) from the floor tile beside it, (2,6) = half (4,12).
+            # Removes the room object, journals a delta, adds the item.
+            delta_count = labels["game_world_delta_count"]
+            monitor.command(f"> {pending:04x} 01 02 04 0c")
+            polls(5)
+            before_deltas = monitor.memory(delta_count, 2)
+            press("t", 84)
+            press("Left", 157)
+            press("Return", 13)
+            polls(5)
+            assert inventory_has(46), "Plant not added to the inventory by Take"
+            after_deltas = int.from_bytes(monitor.memory(delta_count, 2), "little")
+            assert after_deltas == int.from_bytes(before_deltas, "little") + 1, \
+                "Take did not journal exactly one world-state delta"
+            monitor.command(f'screenshot "{artifacts / "take-plant.png"}" 2')
+            print("PASS: Take removes the object, journals a delta, fills the inventory", flush=True)
 
     # Kitchen (03) back to the tavern (02) - the reported direction; the
     # loop above only ever goes tavern-to-kitchen. A SID voice left gated

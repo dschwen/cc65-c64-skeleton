@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "saveload_abi.h"
+#include "saveload_format.h"
 #include "world.h"
 #include "banks.h"
 
@@ -16,26 +17,8 @@
  * write for the slot chosen by the browser (modules/saveload.c, "SL") - a
  * second service in its own bank. See SAVE_GAME.md. */
 
-#define SAVE_NAME_BYTES      16u
-#define SAVE_HEADER_BYTES    16u
-#define SAVE_PREFIX_BYTES    130u
-#define SAVE_DELTA_BYTES     5u
-#define SAVE_MAX_DELTAS      200u
-#define SAVE_MAX_BYTES       (SAVE_HEADER_BYTES + SAVE_PREFIX_BYTES + \
-                              SAVE_MAX_DELTAS * SAVE_DELTA_BYTES)
-#define SAVE_PEEK_BYTES      (SAVE_HEADER_BYTES + SAVE_NAME_BYTES + 6u)
-#define SAVE_FORMAT_VERSION  1u
-#define SAVE_SLOT_COUNT      8u
-#define SAVE_INDEX_HEADER_BYTES 10u
-#define SAVE_INDEX_ENTRY_BYTES  17u
-#define SAVE_INDEX_BYTES \
-    (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
 #define SAVE_INDEX_RAM       saveload_record_buffer
 #define SAVE_RECORD_RAM      saveload_record_buffer
-
-#define FILE_C 0x43u
-#define FILE_I 0x49u
-#define FILE_S 0x53u
 
 #define SCREEN        ((uint8_t*)0xf800)
 #define COLOR         ((uint8_t*)0xd800)
@@ -162,9 +145,9 @@ static uint8_t load_full(uint8_t slot) {
 
     got = disk_read_bytes(slot, SAVE_MAX_BYTES);
     if (!header_valid(got)) return 0u;
-    payload_len = get16(record_buffer + 10);
+    payload_len = get16(record_buffer + SAVE_HEADER_PAYLOAD_LEN);
     if ((uint16_t)(SAVE_HEADER_BYTES + payload_len) != got) return 0u;
-    checksum = get16(record_buffer + 12);
+    checksum = get16(record_buffer + SAVE_HEADER_CHECKSUM);
     computed = 0u;
     for (i = SAVE_HEADER_BYTES; i < got; ++i) computed += record_buffer[i];
     if (computed != checksum) return 0u;
@@ -254,12 +237,12 @@ static uint16_t encode_record(const uint8_t* name) {
     }
 
     payload_len = (uint16_t)(q - (p + SAVE_HEADER_BYTES));
-    put16(p + 10, payload_len);
+    put16(p + SAVE_HEADER_PAYLOAD_LEN, payload_len);
     checksum = 0u;
     for (i = SAVE_HEADER_BYTES; i < SAVE_HEADER_BYTES + payload_len; ++i) {
         checksum += p[i];
     }
-    put16(p + 12, checksum);
+    put16(p + SAVE_HEADER_CHECKSUM, checksum);
     return (uint16_t)(SAVE_HEADER_BYTES + payload_len);
 }
 
@@ -284,7 +267,7 @@ static uint8_t save_slot(uint8_t slot) {
     if (!ok) return 0u;
 
     entry[0] = 1u;
-    put16(index_buffer + 8, index_checksum(index_buffer));
+    put16(index_buffer + SAVE_INDEX_CHECKSUM, index_checksum(index_buffer));
     ok = disk_index_write();
     return ok;
 }

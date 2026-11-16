@@ -59,6 +59,9 @@ uint8_t script_text_shown;
  * script buffer with whatever started it. */
 uint8_t script_conversation_pending;
 uint8_t script_conversation_id;
+uint8_t script_context_x;
+uint8_t script_context_y;
+uint8_t script_display_deferred;
 
 void script_banked_run(void);
 

@@ -10,7 +10,7 @@
 #pragma charmap(97, 97, 26)
 
 /*
- * Native (oscar64 C) replacement for modules/disk_io.s: block-oriented
+ * Block-oriented
  * KERNAL sequential-file I/O for save/load. Hand-written __asm KERNAL
  * calls, not oscar64's built-in c64/kernalio.h wrappers: that header's
  * krnio_pstatus[] global and its several non-BANKINLINE functions are
@@ -38,7 +38,7 @@
  * driver leaves them, matching the original.
  *
  * The on-disk filenames and command sequences are unchanged byte-for-byte
- * from the original modules/disk_io.s.
+ * from the original cc65-era driver.
  */
 
 void platform_memory_kernal(void);
@@ -243,8 +243,7 @@ static void read_named(uint8_t name_len) {
     k_close(2u);
 }
 
-/* Read names exclude the ",W" suffix (length 2 / 6, as in the original
- * modules/disk_io.s): opening "Sn,W" for reading would open it for WRITE,
+/* Read names exclude the ",W" suffix (length 2 / 6): opening "Sn,W" for reading would open it for WRITE,
  * creating/truncating the file - including the save just written, which
  * made every save's readback verification fail. */
 static void read_slot_block(void) {

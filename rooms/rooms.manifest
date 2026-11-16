@@ -1,0 +1,11 @@
+# Rooms in the build, one per line: <two-digit hex room id> <environment>.
+# The environment names a rooms/env/*.c module (BANK_ENV_<NAME> in
+# src/banks.h) or `none`. tools/generate_room_table.py turns this into the
+# dispatch table and environment lookup; the Makefile reads it for ROOM_IDS.
+# Room N's code and record occupy EasyFlash bank BANK_ROOM_FIRST + N.
+00  rain
+01  rain
+02  tavern
+03  tavern_muffled
+04  cellar
+05  tavern_muffled

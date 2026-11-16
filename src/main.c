@@ -18,7 +18,15 @@ static uint8_t cursor_max_x;
 static uint8_t cursor_min_y;
 static uint8_t cursor_max_y;
 
+void title_banked_run(void);
+void platform_nmi_install(void);
+
 int main(void) {
+    /* Before platform_init(): the title screen only uses RAM and hardware
+     * state that platform_init() sets up again afterwards. RESTORE is the
+     * one input the title cannot mask, so own its vector first. */
+    platform_nmi_install();
+    far_call_bank(BANK_TITLE, title_banked_run);
     platform_init();
     game_state_init();
     game_world_init();

@@ -1,3 +1,5 @@
 doc-master
 **/__pycache__
 build
+monitor.log
+.codegraph/

@@ -4,7 +4,7 @@
 #include "platform_native.h"
 
 /*
- * Native (oscar64 C) replacement for src/render.s. Phase 0 of the oscar64
+ * Rendering loops, ported from hand-written assembly. Phase 0 of the oscar64
  * migration measured plain C here beating the hand-tuned cc65-ABI assembly
  * by ~1.9-2x on code size (see OSCAR64_MIGRATION.md) - that hand-tuning
  * existed only to defeat cc65's calling-convention overhead, which oscar64
@@ -215,7 +215,7 @@ static void vis_write_child(uint8_t outgoing_state, int8_t child_x, int8_t child
     }
 }
 
-/* Structural translation of write_children in the original src/render.s -
+/* Structural translation of write_children in the original assembly -
  * the exact corner/edge/gap-child geometry is preserved verbatim rather
  * than re-derived, since "each ring partitions every cell in the next
  * ring" (no merge/conflict resolution) depends on precisely which cell

@@ -1,7 +1,7 @@
 /* Pell Thimble's "Ask about" conversation - reached from
- * STORY_ROOM05_TALK_PELL (assets/scripts/05.script) once he and the player
- * have met, via `converse`. See PELL_THIMBLE_PUZZLE.md's "Initial dialogue"
- * section for the source material.
+ * STORY_ROOM05_TALK_PELL (assets/scripts/05.script) via `converse`. See
+ * PELL_THIMBLE_PUZZLE.md's "Initial dialogue" section for the source
+ * material.
  *
  * Conversation ID 5 has no required relationship to room 05 - conversation
  * IDs are their own independent space (tools/compile_script.py's module
@@ -13,8 +13,11 @@
  * and "job" can work outward through "inn", "corridor", "invitation",
  * "seal" and "vey" - and from there through "letters", "packages",
  * "weather", "guests", "wax", "door", "courier" and "towns" - to the whole
- * web below. Typing "bye" (modules/script.c's run_conversation()) ends the
- * conversation the same way RUN/STOP does, with a short farewell line. */
+ * web below. Typing "bye" ends the conversation the same way RUN/STOP does.
+ *
+ * "seal" is also the puzzle's resolution: carrying the Blue Seal with both
+ * pieces of evidence examined hands it over for the Brass Key; with a clue
+ * still missing Pell refuses and keeps nothing. */
 conversation pell {
     topic "name" {
         text "\"Thimble. Pell Thimble. Courier, ordinarily.\""
@@ -32,7 +35,34 @@ conversation pell {
         text "\"Half the writing is gone. And the seal came off somewhere outside.\""
     }
     topic "seal" {
-        text "\"Blue wax, I think. Small enough to lose in a storm, and I've had no luck finding it.\""
+        check_flag STORY_STATE_ROOM_05_PELL_HELPED == 0 {
+            check_item OBJ_BLUE_SEAL {
+                check_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN == 0 {
+                    text "Pell turns the seal over in his fingers, then hands it back. \"Blue wax, certainly. But that proves very little.\""
+                    wait_key
+                    text "\"Vey wants proof. And for once, I think he has a point.\""
+                } else {
+                    check_flag STORY_STATE_ROOM_05_BLUE_DOOR_SEEN == 0 {
+                        text "Pell turns the seal over in his fingers, then hands it back. \"Blue wax, certainly. But that proves very little.\""
+                        wait_key
+                        text "\"Vey wants proof. And for once, I think he has a point.\""
+                    } else {
+                        take_item OBJ_BLUE_SEAL
+                        text "Pell compares the seal with the torn invitation, then glances toward the blue-marked door. \"There. Same mark. Same wax. I knew I hadn't imagined the whole cursed thing.\""
+                        wait_key
+                        give_object OBJ_BRASS_KEY 1
+                        text "He searches his mailbag. \"I found this beneath the door when I arrived. Thought it was a room key, but it fits nothing upstairs.\""
+                        wait_key
+                        set_flag STORY_STATE_ROOM_05_PELL_HELPED 1
+                        text "\"Odd thing, though. My invitation never named Vey. I assumed he was the host. Perhaps I assumed too much.\""
+                    }
+                }
+            } else {
+                text "\"Blue wax, I think. Small enough to lose in a storm, and I've had no luck finding it.\""
+            }
+        } else {
+            text "\"Blue wax, I think. Small enough to lose in a storm, and I've had no luck finding it.\""
+        }
     }
     topic "vey" {
         text "\"He keeps the peace here, such as it is. I'd rather he kept the door unlocked.\""

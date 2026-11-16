@@ -17,7 +17,7 @@ Layout is defined by pragmas in `src/memmap.h` and the banked source files;
 | `$0800-$08FF` | Oscar64 startup |
 | `$0900-$7DFF` | main: resident code, initialized data, BSS and stacks |
 | `$7E00-$7FFF` | relocated room environment module; excluded from main |
-| `$8000-$BFFF` | selected EasyFlash ROM bank, never resident workspace |
+| `$8000-$BFFF` | selected EasyFlash ROM bank, never resident workspace; the RAM beneath holds the title screen (VIC bank 2) until the game starts |
 | `$C000-$CFFE` | hot object records 106-222 (4,095 bytes) |
 | `$CFFF` | unallocated |
 | `$D000-$DFFF` | VIC/SID/CIA, Color RAM and EasyFlash registers |
@@ -46,6 +46,14 @@ Oscar64's `-tf=crt` startup expands **only main** from bank 0 and clears
 main BSS. Merely declaring an initialized array in another RAM region does
 not put that region into the boot image.
 
+Before `platform_init()`, `main()` installs the NMI vector and runs the title screen (`BANK_TITLE`,
+`modules/title.c`) with interrupts masked. Startup leaves `$01` at `$36`,
+which hides ROML, so the title selects `$37` first. It shows a hires
+picture and credits from the RAM beneath the cartridge window through VIC
+bank 2 (screen `$8000`, bitmap `$A000`, character ROM seen at `$9800`),
+plays the Moonfen Waltz, and returns once a key or joystick-2 fire is
+pressed and released. Everything it touches is set up again below.
+
 `platform_init()` runs with interrupts masked and:
 
 1. Calls KERNAL IOINIT and RESTOR; sets the KERNAL screen page to `$04`
@@ -53,13 +61,13 @@ not put that region into the boot image.
 2. Disables CIA interrupts and initializes the default I/O channels.
    RAMTAS must not be called after Oscar64 startup: it clears live zero page.
 3. Configures VIC bank 3 and 40-column hires text, initially blanked.
-4. Copies the tile/text charsets from bank 15 to `$E800/$F000`, and hot
-   object zone B from bank 16 to `$C000`; then loads tiles and the room.
+4. Copies the tile/text charsets from `BANK_ASSET_TILES` to `$E800/$F000`, and hot
+   object zone B from `BANK_OBJECT_TYPE_C` to `$C000`; then loads tiles and the room.
 5. Installs the raster/NMI vectors before enabling interrupts.
 
 Zone A is initialized as main data. Zone B is explicitly loaded at boot
 (the compiler can reduce its copy to a fill when every source byte is zero).
-Zone C (types 223-255) remains in bank 16 with a resident one-record cache.
+Zone C (types 223-255) remains in `BANK_OBJECT_TYPE_C` with a resident one-record cache.
 Tiles and properties are reloadable because save/load borrows their storage.
 
 ## CPU and cartridge mapping

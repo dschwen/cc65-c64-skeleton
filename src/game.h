@@ -61,11 +61,6 @@ extern uint8_t game_entry_reason;
  * use (see game_transition_reveal()). */
 extern uint8_t game_transition_pending_message;
 
-/* Blocks until a keypress that wasn't already held when this was called -
- * release, press, release. See src/game.c's definition for why this is
- * exported rather than static. */
-void game_wait_fresh_key(void);
-
 /* Resident (unlike platform_text_output_native, not a banked overlay - the
  * script interpreter reaches this through its resident-RAM host gate using
  * its own windowed string data). Blanks,
@@ -110,43 +105,20 @@ uint8_t game_inventory_count(uint8_t type);
 uint8_t game_inventory_has(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_add(uint8_t type, uint8_t quantity);
 uint8_t game_inventory_remove(uint8_t type, uint8_t quantity);
-/* Single-arg wrappers for quantity 1, trivial to call from
- * hand-written room asm (lda #type; jsr _game_inventory_has_one). */
+/* Single-arg wrappers for quantity 1. */
 uint8_t game_inventory_has_one(uint8_t type);
 void game_inventory_remove_one(uint8_t type);
 void game_inventory_add_one(uint8_t type);
 
 /*
- * Locate an unlit Brazier (object type 41) at tile_x/tile_y and, if the
- * player carries a Lit Taper (type 53), swap it for a Lit Brazier (type
- * 40) - see rooms/asm/04_use_at.s and MOONFEN_STORY_DESIGN.md's "Lighting
- * the sconces". Returns GAME_USE_DEFAULT when no unlit brazier occupies
- * the tile. Declared (tile_y in A, tile_x pushed first via
- * `jsr pusha`) so hand-written room asm can call it directly.
- */
-uint8_t game_ignite_brazier(uint8_t tile_x, uint8_t tile_y);
-
-/*
- * Recolors the moon mirror's two tiles brighter once STORY_STATE_
- * MIRROR_REPAIRED is set (see src/game_support.c for the full comment);
- * a no-op otherwise. Called both at the moment of repair and from room
- * 04's own enter_room hook, since the patch does not survive a
- * save/load round trip on its own.
- */
-void game_mirror_repair_apply(void);
-
-/*
  * Re-derive the player's own light radius (platform_hero_light_set(),
- * src/platform.h) from whether the current inventory holds a Lit Taper
- * (object type 53). Needed anywhere game_state.inventory can change out
- * from under the resident Hero type record without the ignite path
- * itself having run in this session - currently just the save/load
- * restore (src/saveload_runtime.c). Ordinary room transitions need no
- * call: object_types_a[1].light is resident RAM that only ever changes
- * via this function or the ignite path, so it already carries forward
- * correctly on its own.
+ * src/platform.h) from the brightest light-emitting item in the current
+ * inventory - a carried item lights the player (src/hero_light.c).
+ * Returns 1 if the radius changed. game_inventory_add()/_remove() call it
+ * on every change; save/load calls it after overwriting the inventory
+ * wholesale.
  */
-void game_player_light_sync(void);
+uint8_t game_player_light_sync(void);
 
 /* Write word-wrapped, paged text in the two bottom lines. */
 void game_text_write(uint8_t line, const char* text, uint8_t color);
@@ -159,7 +131,7 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y);
 /* Show all inventory slots on a temporary full-screen text display. */
 void game_inventory_show(void);
 
-/* In-place save/load services (src/saveload_runtime.c, modules/saveload.c).
+/* In-place save/load services (modules/saveload.c, modules/saveload_save.c).
  * Opens a temporary full-screen slot-select display; see SAVE_GAME.md. */
 #define SAVELOAD_MODE_SAVE 0u
 #define SAVELOAD_MODE_LOAD 1u
@@ -188,7 +160,8 @@ void game_load_show(void);
  * source picked (e.g. tile index for tile-entry hooks). */
 uint8_t game_room_script_entry(uint8_t key);
 
-/* Implemented independently by every rooms/XX.c. Read coordinates from state. */
+/* Implemented by every room's generated build/rooms/roomXX.c
+ * (tools/compile_room.py from rooms/XX.rc). Read coordinates from state. */
 void enter_room(void);
 void enter_tile(void);
 uint8_t look_at(uint8_t tile_x, uint8_t tile_y);

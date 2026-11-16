@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "saveload_abi.h"
+#include "saveload_format.h"
 #include "world.h"
 #include "banks.h"
 #include "memmap.h"
@@ -10,10 +11,9 @@
 /* Resident, not bank-local: game_load_show()/game_save_show() below run
  * before this bank (or BANK_SAVELOAD_SAVE) is paged in, and saveload_save.c
  * needs saveload_selected_slot across the bank switch between the two
- * services - see memmap.h's header comment. This used to be
- * src/saveload_runtime.c's job when game_load_show()/game_save_show() were
- * themselves resident; now they live in this same bank (see below), so
- * only the shared state still needs a home outside any bank pragma.
+ * services - see memmap.h's header comment. game_load_show()/
+ * game_save_show() themselves live in this bank (see below), so only the
+ * shared state needs a home outside any bank pragma.
  * saveload_workspace/saveload_record_buffer are macros aliasing
  * tile_properties/tile_data (src/assets_data.c), not real storage of their
  * own - see src/saveload_abi.h. */
@@ -42,26 +42,8 @@ __noinline void saveload_save_show(void) {
  * save/load architecture section, and modules/saveload_save.c for the Save
  * flow (name entry + encode + write), a second service in its own bank. */
 
-#define SAVE_SLOT_COUNT      8u
-#define SAVE_NAME_BYTES      16u
-#define SAVE_HEADER_BYTES    16u
-#define SAVE_PREFIX_BYTES    130u
-#define SAVE_DELTA_BYTES     5u
-#define SAVE_MAX_DELTAS      200u
-#define SAVE_MAX_BYTES       (SAVE_HEADER_BYTES + SAVE_PREFIX_BYTES + \
-                              SAVE_MAX_DELTAS * SAVE_DELTA_BYTES)
-#define SAVE_PEEK_BYTES      (SAVE_HEADER_BYTES + SAVE_NAME_BYTES)
-#define SAVE_FORMAT_VERSION  1u
-#define SAVE_INDEX_HEADER_BYTES 10u
-#define SAVE_INDEX_ENTRY_BYTES  17u
-#define SAVE_INDEX_BYTES \
-    (SAVE_INDEX_HEADER_BYTES + SAVE_SLOT_COUNT * SAVE_INDEX_ENTRY_BYTES)
 #define SAVE_INDEX_RAM       saveload_record_buffer
 #define SAVE_RECORD_RAM      saveload_record_buffer
-
-#define FILE_C 0x43u
-#define FILE_I 0x49u
-#define FILE_S 0x53u
 
 #define SCREEN        ((uint8_t*)0xf800)
 #define COLOR         ((uint8_t*)0xd800)
@@ -102,12 +84,8 @@ static void put16(uint8_t* p, uint16_t v) {
     p[1] = (uint8_t)(v >> 8);
 }
 
-/* No 32-bit helpers here: the banked link does not include the cc65
- * runtime library, and any `uint32_t` shift/OR pulls in unresolved eax-*
- * helpers from it. game_state.turn is the only 32-bit field this format
- * carries; copy_bytes() below moves it as raw bytes instead -- valid only
- * because cc65's in-memory layout for multi-byte integers is already
- * little-endian, matching this file format. */
+/* Byte copy with an explicit count - see AGENTS.md on why `*q++ = *src++`
+ * loops are avoided for persisted data. */
 static void copy_bytes(uint8_t* dst, const uint8_t* src, uint8_t count) {
     while (count-- != 0u) *dst++ = *src++;
 }
@@ -160,7 +138,7 @@ static void put_string(uint8_t x, uint8_t y, const char* text, uint8_t color) {
     }
 }
 
-/* ---- disk I/O (device fixed at 8 in modules/disk_io.s) */
+/* ---- disk I/O (device fixed at 8 in src/disk_io.c) */
 
 static uint16_t disk_read_bytes(uint8_t slot, uint16_t want) {
     platform_disk_slot = slot;
@@ -216,7 +194,7 @@ static uint8_t index_valid(uint16_t got) {
     if (SAVE_INDEX_RAM[4] != SAVE_FORMAT_VERSION ||
         SAVE_INDEX_RAM[5] != SAVE_INDEX_ENTRY_BYTES ||
         SAVE_INDEX_RAM[6] != SAVE_SLOT_COUNT) return 0u;
-    if (get16(SAVE_INDEX_RAM + 8) != index_checksum()) return 0u;
+    if (get16(SAVE_INDEX_RAM + SAVE_INDEX_CHECKSUM) != index_checksum()) return 0u;
     return 1u;
 }
 
@@ -280,7 +258,7 @@ static void build_slot_list(void) {
         }
         entry += SAVE_INDEX_ENTRY_BYTES;
     }
-    put16(SAVE_INDEX_RAM + 8, index_checksum());
+    put16(SAVE_INDEX_RAM + SAVE_INDEX_CHECKSUM, index_checksum());
     decode_index();
     platform_disk_buffer = SAVE_INDEX_RAM;
     platform_disk_want = SAVE_INDEX_BYTES;
@@ -302,9 +280,9 @@ static uint8_t load_full(uint8_t slot) {
     platform_disk_read();
     got = platform_disk_got;
     if (!header_valid(got)) return 0u;
-    payload_len = get16(SAVE_RECORD_RAM + 10);
+    payload_len = get16(SAVE_RECORD_RAM + SAVE_HEADER_PAYLOAD_LEN);
     if ((uint16_t)(SAVE_HEADER_BYTES + payload_len) != got) return 0u;
-    checksum = get16(SAVE_RECORD_RAM + 12);
+    checksum = get16(SAVE_RECORD_RAM + SAVE_HEADER_CHECKSUM);
     computed = 0u;
     for (i = SAVE_HEADER_BYTES; i < got; ++i) computed += SAVE_RECORD_RAM[i];
     if (computed != checksum) return 0u;
@@ -428,10 +406,9 @@ __noinline void saveload_entry(void) {
     VIC_CTRL1 &= 0xefu;
 }
 
-/* Resident orchestration for both save/load services, moved here from
- * src/saveload_runtime.c for the same "main" region budget reason as
- * game_inventory_show() moving into modules/inventory.c - see that file's
- * own comment. Reached directly with far_call_bank(BANK_SAVELOAD, ...)
+/* Orchestration for both save/load services, kept in this bank for the
+ * same "main" region budget reason as game_inventory_show() in
+ * modules/inventory.c - see that file's own comment. Reached directly with far_call_bank(BANK_SAVELOAD, ...)
  * from src/main.c; saveload_entry() above is an ordinary intra-bank call
  * from here (no bank switch needed, already in BANK_SAVELOAD). Reaching
  * another bank goes through a resident trampoline (saveload_save_show()
@@ -445,7 +422,22 @@ static uint16_t saveload_get16(const uint8_t* p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
-/* Apply only after the browser above has returned. */
+uint8_t platform_room_exists(uint8_t room_id);
+
+/* Apply only after the browser above has returned.
+ *
+ * Everything that can be checked against the record alone is checked
+ * before any resident state is overwritten: the delta count against the
+ * payload length, health/mana against their maxima, the saved room
+ * against the room table, the arrival position against the map. After
+ * that the only remaining failure in platform_room_enter() is a world
+ * that no longer matches the save (an asset edited since it was written -
+ * the arrival tile no longer walkable, or no free actor slot). The record
+ * buffer is the borrowed tile table, which the enter needs restored, so
+ * the loaded state cannot be held back until then; on that failure the
+ * player's room and position are re-synchronized from the room still on
+ * screen so the engine stays consistent, and the caller reports the
+ * error. */
 static uint8_t saveload_apply_pending(void) {
     const uint8_t* p;
     uint16_t delta_count;
@@ -459,26 +451,29 @@ static uint8_t saveload_apply_pending(void) {
     if (!saveload_load_pending) return PLATFORM_ERR_FORMAT;
     saveload_load_pending = 0u;
     p = saveload_record_buffer + SAVE_HEADER_BYTES;
-    delta_count = saveload_get16(p + 128u);
+    delta_count = saveload_get16(p + SAVE_PAYLOAD_DELTA_COUNT);
     delta_bytes = (uint16_t)(delta_count << 2) + delta_count;
+    room = p[SAVE_PAYLOAD_ROOM];
+    type = p[SAVE_PAYLOAD_PLAYER_TYPE];
+    x = p[SAVE_PAYLOAD_PLAYER_X];
+    y = p[SAVE_PAYLOAD_PLAYER_Y];
     if (delta_count > SAVE_MAX_DELTAS ||
         SAVE_PREFIX_BYTES + delta_bytes !=
-            saveload_get16(saveload_record_buffer + 10u) ||
-        p[28] > p[29] || p[30] > p[31]) {
+            saveload_get16(saveload_record_buffer + SAVE_HEADER_PAYLOAD_LEN) ||
+        p[SAVE_PAYLOAD_HEALTH] > p[SAVE_PAYLOAD_HEALTH + 1u] ||
+        p[SAVE_PAYLOAD_HEALTH + 2u] > p[SAVE_PAYLOAD_HEALTH + 3u] ||
+        type == 0u || x >= PLATFORM_MAP_CHAR_WIDTH || y >= PLATFORM_MAP_CHAR_HEIGHT ||
+        !platform_room_exists(room)) {
         return PLATFORM_ERR_FORMAT;
     }
 
-    room = p[24];
-    type = p[25];
-    x = p[26];
-    y = p[27];
-    /* turn through maximum_mana are the first 16 bytes of GameState and
-     * immediately follow the 16-byte save name. */
-    memcpy(&game_state, p + 16u, 16u);
+    /* turn through maximum_mana: the 16 bytes right after the save name,
+     * in GameState's own field order (SAVE_GAME.md's prefix table). */
+    copy_bytes((uint8_t*)&game_state.turn, p + SAVE_PAYLOAD_STATE, 16u);
     game_state.pending_transition = 0u;
-    memcpy(game_state.inventory, p + 32u, sizeof(game_state.inventory));
-    memcpy(game_state.flags, p + 96u, sizeof(game_state.flags));
-    game_player_light_sync();
+    memcpy(game_state.inventory, p + SAVE_PAYLOAD_INVENTORY, sizeof(game_state.inventory));
+    memcpy(game_state.flags, p + SAVE_PAYLOAD_FLAGS, sizeof(game_state.flags));
+    (void)game_player_light_sync();
 
     game_world_delta_count = 0u;
     memcpy(game_world_deltas, p + SAVE_PREFIX_BYTES, delta_bytes);
@@ -493,17 +488,13 @@ static uint8_t saveload_apply_pending(void) {
 
     /* One screen-blanked, interrupt-suspended bracket for the whole switch,
      * same as game_process_pending_transition() - see platform_room_enter()'s
-     * own comment for why the gap between two separate brackets is unsafe.
-     * game_transition_message is always empty on this path in practice
-     * (nothing sets it for a save/load restore) - wired through the same
-     * two helpers as game_process_pending_transition() purely for
-     * consistency, not because this path needs the loading-message feature. */
+     * own comment for why the gap between two separate brackets is unsafe. */
     game_transition_message_show();
     raster_irq_suspend();
     result = platform_room_enter(room, type, x, y);
     game_world_enable_store_hook();
+    game_player_sync_from_platform();
     if (result == PLATFORM_OK) {
-        game_player_sync_from_platform();
         game_entry_reason = GAME_ENTRY_LOAD;
         game_enter_room();
         platform_sprites_hide_all();

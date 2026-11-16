@@ -1,4 +1,6 @@
-enter_room: asm "rooms/c/01_enter_room.c"
+# The one-time arrival narration gates itself on
+# STORY_STATE_ROOM_01_ARRIVAL_SHOWN inside the script.
+enter_room: script STORY_ROOM01_ARRIVAL
 enter_tile: asm "rooms/c/01_enter_tile.c"
 
 look_at:
@@ -7,4 +9,5 @@ look_at:
 
 use_at:
     at 10,1 -> script STORY_ROOM01_ENTER_INN
+    at 5,8 -> script STORY_ROOM01_USE_BARREL
     default -> asm "rooms/c/01_use_at.c"

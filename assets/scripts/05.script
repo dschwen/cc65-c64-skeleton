@@ -1,55 +1,26 @@
-/* Room 05 - Guest Corridor (MOONFEN_STORY_DESIGN.md's "Room 03 - Guest
- * Corridor"; puzzle chain per PELL_THIMBLE_PUZZLE.md). See rooms/05.rc for
- * the door/NPC dispatch and STORY_ROOM05_* in src/story.h for these keys.
+/* Room 05 - Guest Corridor (MOONFEN_STORY_DESIGN.md's "Guest Corridor";
+ * puzzle chain per PELL_THIMBLE_PUZZLE.md). See rooms/05.rc for the
+ * dispatch and STORY_ROOM05_* in src/story.h for these keys.
  *
  * The door back to the tavern (south wall, tile 2,10) transitions the
- * instant the player steps onto it (see rooms/asm/05_enter_tile.s),
- * matching room 02's own top doors - landing back at (15,1), just south of
+ * instant the player steps onto it, landing back at (15,1) just south of
  * the corridor doorway there.
  *
  * Of the three guest-room doors, (4,3) is Pell's blue-seal door, (9,10)
  * is Sir Caldus's silver-tower door, and (17,10) is Lady Orra's
- * pale-rose door. Look on all three gives special evidence text
- * (STORY_ROOM05_LOOK_BLUE_DOOR/_SILVER_DOOR/_ROSE_DOOR), setting
+ * pale-rose door. Look on all three gives evidence text and sets
  * BLUE_DOOR_SEEN/SILVER_DOOR_SEEN/ROSE_DOOR_SEEN - independent
- * corroboration for each NPC's identity, not a mechanical gate on
- * anything (see MOONFEN_STORY_DESIGN.md's Branches B and C). Use stays
- * "Locked." on all three.
+ * corroboration for each NPC's identity. Use stays "Locked." on all three.
  *
- * Pell Thimble (object type 44, tile 4,7) is the user's own addition.
- * Using the Blue Seal at him directly no longer resolves anything -
- * rooms/c/05_use_at.c just gives a redirect hint
- * (STORY_ROOM05_PELL_SEAL_HINT) when the player carries it and isn't yet
- * helped, which itself leads straight into `converse 5` (same as
- * TALK_PELL) so the player can act on it immediately; STORY_ROOM05_
- * TALK_PELL otherwise (no seal, or already helped - the "thanks again"
- * repeat handles itself via check_flag). The Blue Seal check that used to
- * live in that asm fallback (has the seal? has he seen both pieces of
- * evidence?) is now entirely in story_topic_resolve()
- * (modules/script.c - not story/story.c, despite being story-specific
- * content; see that function's own comment for why): mentioning "seal"
- * while talking to him resolves it in C if both evidence flags are set
- * (consumes the seal, gives the Brass Key - object type 10 - and sets
- * PELL_HELPED), or gives the existing "not proof enough" refusal (seal
- * kept) if a clue is still missing. Same trigger-word pattern is used for
- * Caldus/oil and Orra/
- * letter in room 02 - see assets/scripts/02.script's header.
+ * Pell Thimble (OBJ_PELL_THIMBLE, tile 4,7): the Blue Seal is handed over
+ * by mentioning "seal" in his conversation (conversations/05.script),
+ * which also checks that both pieces of evidence - the torn invitation
+ * and the blue door - have been examined. Using the seal at him directly
+ * only gives a redirect hint (the check_item branch below).
  *
- * TALK_PELL ends with `converse 5` (assets/scripts/conversations/05.script):
- * after Pell's scripted line for the visit, the player can ask him about
- * "name", "job", "seal", and whatever else his answers mention.
- *
- * The torn invitation (object type 3, tile 5,7, the user's own addition -
- * currently takeable, same as any other pickup) is the first piece of
- * evidence; the blue-seal door is the second. Either can be examined in
- * any order, before or after meeting Pell. Reading it (Look) is what sets
- * PELL_INVITE_SEEN, regardless of whether it's later picked up - it isn't
- * consumed or handed to Pell (unlike the Blue Seal), just a clue you learn.
- *
- * Tile 65 is the same storm window as room 03's (currently at 2,0 and
- * 19,8) - looking at it always shows STORY_ROOM05_LOOK_WINDOW, dispatched
- * generically by rooms/asm/05_look_at.s rather than a per-tile `at X,Y`
- * entry. */
+ * The torn invitation (tile 5,7, currently takeable like any pickup) is
+ * the first piece of evidence; the blue-seal door is the second. Reading
+ * it (Look) sets PELL_INVITE_SEEN whether or not it's later picked up. */
 room 05 {
     entry STORY_ROOM05_LEAVE_CORRIDOR {
         room_transition 2 30 2
@@ -104,7 +75,11 @@ room 05 {
                 text "\"My invitation was damaged in the storm. Without it, Vey claims he cannot prove which room was mine. Half the writing is gone - and the seal came off somewhere outside.\""
                 set_flag STORY_STATE_ROOM_05_MET_PELL 1
             } else {
-                text "\"Still no proof, if that's what you're asking,\" Pell says, glancing at his mailbag."
+                check_item OBJ_BLUE_SEAL {
+                    text "Pell eyes the seal in your palm, but doesn't reach for it. \"You'll have to actually tell me about it.\""
+                } else {
+                    text "\"Still no proof, if that's what you're asking,\" Pell says, glancing at his mailbag."
+                }
             }
         } else {
             text "\"Thanks again, for what it's worth,\" Pell says, patting his mailbag."
@@ -112,16 +87,7 @@ room 05 {
         /* No wait_key here: converse defers to script_banked_run()
          * (modules/script.c), which already waits for a fresh key before
          * handing over whenever this entry's own text left something on
-         * screen - an explicit wait_key here would demand a second,
-         * redundant keypress before the "Ask about" prompt appears. */
-        converse 5
-    }
-    entry STORY_ROOM05_PELL_SEAL_HINT {
-        portrait_show 4 left
-        text "Pell eyes the seal in your palm, but doesn't reach for it. \"You'll have to actually tell me about it.\""
-        /* No wait_key/portrait_hide here - straight into conversation, same
-         * as STORY_ROOM05_TALK_PELL, so the player can immediately mention
-         * "seal" right where they were just told to. */
+         * screen. */
         converse 5
     }
 }

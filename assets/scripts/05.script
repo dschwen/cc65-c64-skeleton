@@ -29,6 +29,7 @@ room 05 {
         text "Through the window you see the rain pouring down outside."
     }
     entry STORY_ROOM05_USE_GUEST_DOOR {
+        sound SOUND_THUD
         text "Locked."
     }
     entry STORY_ROOM05_LOOK_PELL {

@@ -49,6 +49,19 @@ static void set_map(uint8_t value) {
     __asm { plp }
 }
 
+/* Restart the game from the title: select the startup bank again (a
+ * software reset does not touch the EasyFlash register) and go through the
+ * KERNAL reset, which finds the cartridge signature in bank 0 and cold
+ * starts it. Never returns. Resident, so it may switch banks. */
+void platform_restart(void) {
+    __asm { sei }
+    platform_cart_bank = 0u;
+    eflash.bank = 0u;
+    __asm {
+        jmp ($fffc)
+    }
+}
+
 void platform_memory_game(void) {
     set_map(CPU_MAP_GAME);
 }

@@ -36,6 +36,7 @@ room 01 {
         check_item OBJ_EMPTY_CUP {
             take_item OBJ_EMPTY_CUP
             give_object OBJ_RAINWATER 1
+            sound SOUND_SPLASH
             text "You dip the empty cup into the rain barrel and it comes up full."
         } else {
             check_item OBJ_RAINWATER {

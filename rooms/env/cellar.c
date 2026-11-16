@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "banks.h"
+#include "platform_native.h"
 
 /*
  * Environment module: an ominous cellar ambience instead of music - a
@@ -67,6 +68,7 @@ __noinline void env_cellar_init(void) {
     uint16_t delay;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    for (i = 0u; i < 7u; ++i) platform_sid_v3[i] = 0u;
 
     for (delay = 0u; delay < 0x2000u; ++delay) {
     }
@@ -80,11 +82,11 @@ __noinline void env_cellar_init(void) {
     V2_SR = 0x06u; /* sustain 0 (self-silences), release 6 */
     V2_CTRL = 0x10u; /* triangle, gate off until the first pluck */
 
-    V3_AD = 0x00u;
-    V3_SR = 0x0au; /* sustain 0, release 10 - short creak */
-    V3_FREQ_LO = 0xffu; /* high, hiss-like - also the free noise source */
-    V3_FREQ_HI = 0xffu;
-    V3_CTRL = 0x80u; /* noise, gate off - keeps the oscillator running */
+    SID_V3_WRITE(19u, 0x00u);
+    SID_V3_WRITE(20u, 0x0au); /* sustain 0, release 10 - short creak */
+    SID_V3_WRITE(14u, 0xffu); /* high, hiss-like - also the free noise source */
+    SID_V3_WRITE(15u, 0xffu);
+    SID_V3_WRITE(18u, 0x80u); /* noise, gate off - keeps the oscillator running */
 
     MODE_VOL = 0x07u; /* quiet, but present */
 
@@ -120,8 +122,8 @@ __noinline void env_cellar_tick(void) {
     if (--creak_timer == 0u) {
         /* Stays under 256 so this 8-bit add can't wrap. */
         creak_timer = (uint8_t)((randbyte & 0x7fu) + 0x64u); /* ~2-4.5s */
-        V3_CTRL = 0x80u; /* gate low first, same 0-to-1 edge requirement */
-        V3_CTRL = 0x81u; /* noise + gate: brief burst, sustain 0 self-decays */
+        SID_V3_WRITE(18u, 0x80u); /* gate low first, same 0-to-1 edge requirement */
+        SID_V3_WRITE(18u, 0x81u); /* noise + gate: brief burst, sustain 0 self-decays */
     }
 }
 

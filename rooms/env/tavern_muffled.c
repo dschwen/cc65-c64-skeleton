@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "banks.h"
+#include "platform_native.h"
 
 /*
  * Environment module: the tavern's melody (rooms/env/tavern.c) as heard
@@ -51,6 +52,7 @@ __noinline void env_tavern_muffled_init(void) {
     uint8_t i;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    for (i = 0u; i < 7u; ++i) platform_sid_v3[i] = 0u;
 
     /* Hold gates low for a couple of frames before re-gating - see
      * rooms/env/rain.c's sound_init() for why (a SID voice left gated on

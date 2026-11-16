@@ -149,6 +149,28 @@ extern uint8_t saveload_load_pending;
 void game_save_show(void);
 void game_load_show(void);
 
+/* Reserved room-script entry keys: an exit description, shown when the
+ * Look cursor is pushed off an edge whose cardinal exit is enabled. A room
+ * script may define `entry GAME_SCRIPT_EXIT_NORTH { text "..." }` etc.;
+ * without one the engine says "An exit.". Keys 252-255 are engine-owned
+ * for this reason - rooms pick their own keys below that. */
+#define GAME_SCRIPT_EXIT_NORTH 252u
+#define GAME_SCRIPT_EXIT_EAST  253u
+#define GAME_SCRIPT_EXIT_WEST  254u
+#define GAME_SCRIPT_EXIT_SOUTH 255u
+
+/* Look at the exit beyond edge tile edge_x/edge_y in `direction` (a
+ * PLATFORM_DIRECTION_*): checks visibility/light and that the exit is
+ * enabled, then runs the room's exit-description entry or prints the
+ * generic line. Returns 1 if a script entry ran (the caller leaves Look
+ * mode, since the script owns the cursor and text from then on). */
+uint8_t game_look_exit(uint8_t edge_x, uint8_t edge_y, uint8_t direction);
+
+/* Set by a script's end_game statement (modules/script.c); the main loop
+ * runs the ending screen (modules/title.c's ending_banked_run()), which
+ * restarts the game into the title. Transient, never saved. */
+extern uint8_t game_ending_pending;
+
 /* Runs the current room's own script entry keyed `key`, if it has one - see
  * tools/compile_script.py's `room` declaration. Returns 1 if an entry was
  * found and run, 0 otherwise (the common case: no matching entry). Always

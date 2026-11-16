@@ -75,7 +75,15 @@ def check(root, monitor, artifacts):
         r"al ([0-9a-f]+) \.(\S+)", (root / "build/game.lbl").read_text()))
     listing = (root / "build/game.asm").read_text()
     poll = listing.split("\nplatform_input_poll:", 1)[1].split("\n----", 1)[0]
-    poll_return = int(re.search(r"^([0-9a-f]+) : .* RTS", poll, re.M)[1], 16)
+    # Every RTS of platform_input_poll(): the compiler may give a branch its
+    # own return (the joystick fire path does), and a poll that returns
+    # through one the harness isn't watching is a keypress it never sees.
+    poll_returns = [int(m, 16) for m in re.findall(r"^([0-9a-f]+) : .* RTS", poll, re.M)]
+    assert poll_returns, "platform_input_poll has no RTS in the listing"
+
+    def break_polls():
+        for address in poll_returns:
+            monitor.command(f"break exec {address:04x}")
 
     screen = display.Display()
     window = find_window(screen.screen().root)
@@ -130,7 +138,7 @@ def check(root, monitor, artifacts):
     monitor.command(f'screenshot "{artifacts / "boot.png"}" 2')
     print("PASS: cold-boot assets, water, CIA configuration and KERNAL vectors", flush=True)
 
-    monitor.command(f"break exec {poll_return:04x}")
+    break_polls()
 
     def polls(count):
         keys = []
@@ -226,10 +234,33 @@ def check(root, monitor, artifacts):
     monitor.command(f'screenshot "{artifacts / "moved.png"}" 2')
     print("PASS: Xvfb Look/cancel, text encoding, inventory, movement, rain and raster split", flush=True)
 
+    # Joystick in port 2 (src/input.c): VICE's numpad emulation drives it,
+    # so KP_8 (up) must come back as the cursor-up code and move the player,
+    # and KP_0 (fire) as RETURN, which in free movement opens the Use cursor
+    # - the same cursor-mode state the keyboard's U sets. Then fire again on
+    # the player's own tile ("Nothing happens.") leaves that mode.
+    monitor.command("delete")
+    break_polls()
+    # VICE's numpad emulation matches the KP_8/KP_0 keysyms, which an X
+    # keypad key only produces with NumLock on (otherwise KP_Up/KP_Insert).
+    numlock = screen.keysym_to_keycode(XK.string_to_keysym("Num_Lock"))
+    xtest.fake_input(screen, X.KeyPress, numlock)
+    screen.sync()
+    xtest.fake_input(screen, X.KeyRelease, numlock)
+    screen.sync()
+    before = monitor.memory(player, 3)
+    press("KP_8", 145)
+    assert monitor.memory(player, 3) != before, "joystick up did not move the player"
+    press("KP_0", 13)
+    assert monitor.memory(labels["command"], 1) == b"U", "joystick fire did not open the Use cursor"
+    press("KP_0", 13)
+    assert monitor.memory(labels["command"], 1) == b"\0", "joystick fire did not leave the Use cursor"
+    print("PASS: joystick port 2 moves the player and fire opens/confirms Use", flush=True)
+
     # Queue normal game transitions (scenario setup, not keyboard injection).
     # This exercises the real room/env loading path and its relocated entries.
     monitor.command("delete")
-    monitor.command(f"break exec {poll_return:04x}")
+    break_polls()
     spawn = (root / "assets/00").read_bytes()[234:236]
     for room, x, y in ((2, 17, 19), (3, 12, 18), (4, 32, 4), (5, 4, 18), (0, *spawn)):
         pending = labels["game_state"] + 16
@@ -376,7 +407,7 @@ def check(root, monitor, artifacts):
     # A real audio capture (per that memory's recipe) would be the rigorous
     # check; not done here.
     monitor.command("delete")
-    monitor.command(f"break exec {poll_return:04x}")
+    break_polls()
     pending = labels["game_state"] + 16
     monitor.command(f"> {pending:04x} 01 03 0c 12")
     polls(5)
@@ -407,7 +438,7 @@ def check(root, monitor, artifacts):
     # here because the conversation's own busy-wait loops (modules/script.c)
     # call that same resident function, banked or not.
     monitor.command("delete")
-    monitor.command(f"break exec {poll_return:04x}")
+    break_polls()
     pending = labels["game_state"] + 16
     # Room 5, half-tile (8,16) = tile (4,8): one tile south of Pell (4,7),
     # so the Use cursor (born on the player's own tile) reaches him with a
@@ -480,7 +511,7 @@ def check(root, monitor, artifacts):
     # code expanded far_call_bank() inside the $8000-$BFFF window.
     monitor.connection.settimeout(240)
     monitor.command("delete")
-    monitor.command(f"break exec {poll_return:04x}")
+    break_polls()
 
     def player_bytes():
         pointer = int.from_bytes(monitor.memory(labels["platform_player"], 2), "little")
@@ -540,6 +571,47 @@ def check(root, monitor, artifacts):
     monitor.command(f'screenshot "{artifacts / "loaded.png"}" 2')
     print("PASS: Xvfb F3 load restores the saved state", flush=True)
 
+    # The finale and the ending screen: with HOST_REVEALED and BROTH_SERVED
+    # set, ringing the service bell (room 02, tile 2,3 - a script entry with
+    # a `sound` and, at the end, `end_game`) plays the whole closing scene,
+    # then the main loop runs modules/title.c's ending screen, and a key
+    # there restarts the cartridge into the title.
+    monitor.connection.settimeout(60)
+    flags = labels["game_state"] + 84
+    monitor.command(f"> {flags + 21:04x} 01")  # STORY_STATE_HOST_REVEALED
+    monitor.command(f"> {flags + 20:04x} 01")  # STORY_STATE_BROTH_SERVED
+    monitor.command(f"> {pending:04x} 01 02 04 08")  # room 02, tile (2,4), below the bell
+    polls(5)
+    assert monitor.memory(labels["platform_current_room"], 1) == bytes([2])
+    press("u", 85)
+    press("Up", 145)
+    press("Return", 13)
+    the_end = bytes(ord(c) - 96 if "a" <= c <= "z" else ord(c) for c in "The End")
+    for _ in range(40):
+        if monitor.memory(0xf800 + 8 * 40 + 16, len(the_end), "ram") == the_end:
+            break
+        press("space", 32)
+    else:
+        raise AssertionError("ending screen never appeared after ringing the bell")
+    assert monitor.memory(flags + 22, 1) == b"\1", "STORY_STATE_FINALE_DONE not set by the finale"
+    monitor.command(f'screenshot "{artifacts / "ending.png"}" 2')
+    # Any key restarts: the title's start_pressed() poll is the first banked
+    # code to run again after the KERNAL reset selects bank 0.
+    monitor.command("delete")
+    monitor.command(f"break exec {labels['start_pressed']:04x}")
+    monitor.connection.sendall(b"x\n")
+    time.sleep(.5)
+    xtest.fake_input(screen, X.KeyPress, space)
+    screen.sync()
+    time.sleep(.3)
+    xtest.fake_input(screen, X.KeyRelease, space)
+    screen.sync()
+    monitor.receive()
+    monitor.command("delete")
+    assert monitor.memory(0xdd00, 1)[0] & 3 == 1, "restart did not return to the title screen"
+    monitor.command(f'screenshot "{artifacts / "restarted-title.png"}" 2')
+    print("PASS: finale rings through to the ending screen and restarts into the title", flush=True)
+
 
 def check_save_disk(disk, c1541, artifacts):
     """After VICE exits: the disposable image holds a valid slot 1 and index."""
@@ -585,6 +657,7 @@ def main():
     with (artifacts / "vice.log").open("w") as log, (artifacts / "monitor.log").open("w") as transcript:
         process = subprocess.Popen([
             args.vice, "-default", "+sound", "-pal", "-jamaction", "1", "-remotemonitor",
+            "-joydev2", "1",  # numpad acts as the port-2 joystick (src/input.c)
             "-remotemonitoraddress", f"ip4://127.0.0.1:{port}",
             "-cartcrt", str(root / "build/game.crt"), "-8", str(disk)],
             stdout=log, stderr=log)

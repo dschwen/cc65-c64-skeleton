@@ -1115,31 +1115,6 @@ uint8_t platform_object_intersects_tile(const PlatformObject* object,
     return 0u;
 }
 
-static void look_exit_write(const char* text, uint8_t color) {
-    platform_text_output_line = PLATFORM_TEXT_LINE_TOP;
-    platform_text_output_color = color & 0x0fu;
-    platform_text_output_native(text);
-}
-
-uint8_t platform_look_exit(const PlatformRoom* room,
-                           const PlatformObject* viewer,
-                           uint8_t edge_x, uint8_t edge_y,
-                           uint8_t direction, uint8_t color) {
-    uint8_t neighbor;
-    uint8_t result;
-
-    if (direction > PLATFORM_DIRECTION_SOUTH) return PLATFORM_ERR_ARGUMENT;
-    result = platform_look_tile_check(room, viewer, edge_x, edge_y, color);
-    if (result != PLATFORM_OK) return result;
-    if (platform_room_neighbor(room, direction, &neighbor) != PLATFORM_OK) {
-        look_exit_write("There is no exit that way.", color);
-        return PLATFORM_ERR_NOT_FOUND;
-    }
-
-    look_exit_write("An exit.", color);
-    return PLATFORM_OK;
-}
-
 static void look_cursor_position(uint8_t tile_x, uint8_t tile_y) {
     volatile uint8_t* vic = (volatile uint8_t*)0xd000u;
     uint16_t sprite_x;

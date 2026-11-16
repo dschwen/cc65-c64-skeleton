@@ -13,6 +13,17 @@
 #include <stdint.h>
 #include "platform.h"
 
+/* Shadow of SID voice 3's registers ($D40E-$D414, write-only hardware) as
+ * last written by the room's environment module. Environment modules write
+ * voice 3 through SID_V3_WRITE() so a script sound effect (modules/
+ * script.c) can borrow the voice and then restore exactly what the module
+ * had there. Indexed by register offset minus 14. */
+extern uint8_t platform_sid_v3[7];
+#define SID_V3_WRITE(reg_, value_) do { \
+    platform_sid_v3[(reg_) - 14u] = (value_); \
+    ((volatile uint8_t*)0xd400u)[reg_] = (value_); \
+} while (0)
+
 #define OBJECT_TYPE_ZONE_A_COUNT     106u
 #define OBJECT_TYPE_ZONE_B_COUNT     117u
 #define OBJECT_TYPE_ZONE_AB_COUNT    (OBJECT_TYPE_ZONE_A_COUNT + OBJECT_TYPE_ZONE_B_COUNT)

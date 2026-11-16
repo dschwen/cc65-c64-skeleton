@@ -116,6 +116,7 @@ room 02 {
         check_item OBJ_LONG_TAPER {
             take_item OBJ_LONG_TAPER
             give_object OBJ_LIT_TAPER 1
+            sound SOUND_SIZZLE
             text "You touch the taper to the hearth's embers, and it catches, flame steady."
         } else {
             check_item OBJ_LIT_TAPER {
@@ -156,11 +157,13 @@ room 02 {
     entry STORY_ROOM02_RING_BELL {
         check_flag STORY_STATE_FINALE_DONE == 0 {
             check_flag STORY_STATE_HOST_REVEALED == 0 {
+                sound SOUND_BELL
                 text "A small brass bell. Ringing it summons no one in particular."
             } else {
                 check_flag STORY_STATE_BROTH_SERVED == 0 {
                     text "You reach for the bell, then stop. Something isn't finished yet - the broth, perhaps."
                 } else {
+                    sound SOUND_BELL
                     text "You ring the bell. It doesn't sound like brass - it sounds like something much older."
                     wait_key
                     text "Mara steps out from the kitchen doorway, as though she'd been standing just out of sight the whole time."
@@ -183,6 +186,7 @@ room 02 {
                     wait_key
                     text "Moonfen Inn, whatever it truly is, has finally kept its own law - and let its guests go, you among them, accused of nothing at all."
                     set_flag STORY_STATE_FINALE_DONE 1
+                    end_game
                 }
             }
         } else {

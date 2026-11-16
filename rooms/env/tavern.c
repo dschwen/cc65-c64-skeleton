@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "banks.h"
+#include "platform_native.h"
 
 /*
  * Environment module: a looping 3-voice medieval-tavern melody (D Dorian,
@@ -63,6 +64,7 @@ static const uint8_t pad_hi[4] = {0x0E,0x0D,0x0E,0x0A};
 __noinline void env_tavern_init(void) {
     uint8_t i;
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    for (i = 0u; i < 7u; ++i) platform_sid_v3[i] = 0u;
 
     /* A SID voice left gated on and held at sustain (as this room's own
      * V1/V2 do, and as rooms 03/05's muffled melody - reached from here,
@@ -108,9 +110,9 @@ __noinline void env_tavern_init(void) {
     V2_FREQ_LO = bass_lo[0]; V2_FREQ_HI = bass_hi[0];
     V2_CTRL = 0x21u; /* sawtooth + gate */
 
-    V3_AD = 0x38u; V3_SR = 0xa0u;
-    V3_FREQ_LO = pad_lo[0]; V3_FREQ_HI = pad_hi[0];
-    V3_CTRL = 0x11u; /* triangle + gate */
+    SID_V3_WRITE(19u, 0x38u); SID_V3_WRITE(20u, 0xa0u);
+    SID_V3_WRITE(14u, pad_lo[0]); SID_V3_WRITE(15u, pad_hi[0]);
+    SID_V3_WRITE(18u, 0x11u); /* triangle + gate */
 
     MODE_VOL = 0x0fu;
 
@@ -134,8 +136,8 @@ __noinline void env_tavern_tick(void) {
         bar_index = (uint8_t)(bar_index + 1u == BAR_COUNT ? 0u : bar_index + 1u);
         V2_FREQ_LO = bass_lo[bar_index];
         V2_FREQ_HI = bass_hi[bar_index];
-        V3_FREQ_LO = pad_lo[bar_index];
-        V3_FREQ_HI = pad_hi[bar_index];
+        SID_V3_WRITE(14u, pad_lo[bar_index]);
+        SID_V3_WRITE(15u, pad_hi[bar_index]);
     }
 }
 

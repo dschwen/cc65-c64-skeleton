@@ -139,15 +139,12 @@ typedef struct PlatformObjectTypeInfo {
  * which of the four neighbor bytes are valid, since every byte value is a
  * usable room ID.
  *
- * west/south_text are currently unread/reserved: rooms used to carry a
- * separate text-pool resource these fields indexed into by byte offset
- * (assets/resources/<room id>), but that resource is now a compiled room
- * script instead (see game_room_script_entry() below and
- * modules/script.c's KIND_ROOM handling) - a room-script entry is looked up
- * by its own numeric key, not one of these fields. Exit descriptions
- * haven't been migrated onto that mechanism yet (platform_look_exit()
- * always falls back to a generic message for now); these two bytes are
- * where that migration would read from once it happens.
+ * west/south_text are unread/reserved: rooms used to carry a separate
+ * text-pool resource these fields indexed into, but room text is a
+ * compiled room script now, looked up by entry key (game_room_script_
+ * entry(), modules/script.c). Exit descriptions use that mechanism too,
+ * through the reserved keys GAME_SCRIPT_EXIT_* (game.h, game_look_exit()),
+ * so these two bytes have no remaining purpose.
  *
  * north_text/east_text were the same kind of reserved byte but are now
  * repurposed (room_commit() in platform.c) as two per-room performance
@@ -394,12 +391,6 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
                                  uint8_t color);
-
-/* Describe an enabled exit after checking visibility/light at its edge tile. */
-uint8_t platform_look_exit(const PlatformRoom* room,
-                           const PlatformObject* viewer,
-                           uint8_t edge_x, uint8_t edge_y,
-                           uint8_t direction, uint8_t color);
 
 /* List every object with a nonzero rendered character intersecting a tile. */
 uint8_t platform_look_tile(const PlatformRoom* room,

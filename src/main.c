@@ -19,6 +19,7 @@ static uint8_t cursor_min_y;
 static uint8_t cursor_max_y;
 
 void title_banked_run(void);
+void ending_banked_run(void);
 void platform_nmi_install(void);
 
 int main(void) {
@@ -57,40 +58,32 @@ int main(void) {
                     if (look_y > 0u) {
                         --look_y;
                         (void)platform_look_cursor_move(look_x, look_y);
-                    } else {
-                        (void)platform_look_exit(&platform_room, platform_player,
-                                                 look_x, look_y,
-                                                 PLATFORM_DIRECTION_NORTH, 1u);
+                    } else if (game_look_exit(look_x, look_y, PLATFORM_DIRECTION_NORTH)) {
+                        command = 0u;
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_RIGHT:
                     if (look_x + 1u < PLATFORM_MAP_WIDTH) {
                         ++look_x;
                         (void)platform_look_cursor_move(look_x, look_y);
-                    } else {
-                        (void)platform_look_exit(&platform_room, platform_player,
-                                                 look_x, look_y,
-                                                 PLATFORM_DIRECTION_EAST, 1u);
+                    } else if (game_look_exit(look_x, look_y, PLATFORM_DIRECTION_EAST)) {
+                        command = 0u;
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_LEFT:
                     if (look_x > 0u) {
                         --look_x;
                         (void)platform_look_cursor_move(look_x, look_y);
-                    } else {
-                        (void)platform_look_exit(&platform_room, platform_player,
-                                                 look_x, look_y,
-                                                 PLATFORM_DIRECTION_WEST, 1u);
+                    } else if (game_look_exit(look_x, look_y, PLATFORM_DIRECTION_WEST)) {
+                        command = 0u;
                     }
                     break;
                 case PLATFORM_KEY_CURSOR_DOWN:
                     if (look_y + 1u < PLATFORM_MAP_HEIGHT) {
                         ++look_y;
                         (void)platform_look_cursor_move(look_x, look_y);
-                    } else {
-                        (void)platform_look_exit(&platform_room, platform_player,
-                                                 look_x, look_y,
-                                                 PLATFORM_DIRECTION_SOUTH, 1u);
+                    } else if (game_look_exit(look_x, look_y, PLATFORM_DIRECTION_SOUTH)) {
+                        command = 0u;
                     }
                     break;
                 case PLATFORM_KEY_ENTER:
@@ -191,6 +184,11 @@ int main(void) {
                 (void)platform_look_cursor_show(look_x, look_y);
                 command = PLATFORM_KEY_LOOK;
                 break;
+            case PLATFORM_KEY_ENTER:
+                /* Joystick fire (src/input.c) in free movement: the Use
+                 * cursor, the verb nearly every interaction starts with. */
+                key = PLATFORM_KEY_USE;
+                /* fall through */
             case PLATFORM_KEY_TAKE:
             case PLATFORM_KEY_USE:
                 look_x = platform_player->x >> 1;
@@ -216,6 +214,11 @@ int main(void) {
             case PLATFORM_KEY_LOAD:
                 far_call_bank(BANK_SAVELOAD, game_load_show);
                 break;
+        }
+        if (game_ending_pending) {
+            /* A script's end_game: the closing screen, then a restart into
+             * the title. Never returns. */
+            far_call_bank(BANK_TITLE, ending_banked_run);
         }
     }
 

@@ -19,6 +19,13 @@ Override `SAVE_DISK` or `SAVE_DISK_NAME` to use another save disk.
 back it up or use an external `SAVE_DISK` first.
 Set `XVFB_RUN=` to run VICE on an existing desktop display.
 
+## Controls
+
+Cursor keys move; `L` looks, `T` takes, `U` uses (a 3x3 cursor around the
+player), `I` opens the inventory, `F1`/`F3` save and load. A joystick in
+port 2 moves, and fire opens or confirms Use. Typed keywords drive
+conversations; `bye` or RUN/STOP leaves one.
+
 ## Regression test
 
 Install `python3-xlib`, then run:
@@ -28,9 +35,13 @@ make OSCAR64=/home/daniel/Programs/oscar64/build/oscar64 test
 ```
 
 The test cold-boots the cartridge, compares high-RAM assets, checks
-KERNAL/CIA setup, sends real Xvfb key events, exercises Look/inventory/
-movement, verifies the visible raster split and tests room environments.
-It prints an artifact directory containing logs and screenshots.
+KERNAL/CIA setup, sends real Xvfb key and joystick events, exercises
+Look/Take/Use/inventory/movement, script-driven puzzles, a conversation, a
+save/load round trip, the finale and the ending screen's restart, and
+verifies the visible raster split and room environments. It prints an
+artifact directory containing logs and screenshots.
+`.github/workflows/ci.yml` runs the same build and test on every push,
+building Oscar64 and VICE from source (cached).
 
 ## Development references
 

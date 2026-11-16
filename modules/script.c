@@ -4,8 +4,10 @@
 #include "world.h"
 #include "script_format.h"
 #include "script_abi.h"
+#include "sounds.h"
 #include "banks.h"
 #include "memmap.h"
+#include "platform_native.h"
 
 /* Banked script/conversation/room interpreter service ("SC") - EasyFlash
  * bank BANK_SCRIPT (src/banks.h). All mutable state is explicitly resident
@@ -280,6 +282,70 @@ static void tile_color(uint8_t tile, uint8_t color) {
     }
 }
 
+/* ---- sound effects (the `sound ID` statement) ---------------------------
+ *
+ * Played on SID voice 3, borrowed from the room's environment module for
+ * the effect's duration and then restored from platform_sid_v3[] (the
+ * module's own last writes, see platform_native.h). Each effect is one
+ * gate-on with an optional per-frame pitch slide; the voice is gated off
+ * at the end and left to its release before the module's registers go
+ * back. Blocking, like text - a few frames to half a second. */
+#define SID ((volatile uint8_t*)0xd400u)
+
+typedef struct SoundEffect {
+    uint8_t control;   /* waveform bits; gate is added here */
+    uint8_t attack_decay;
+    uint8_t sustain_release;
+    uint8_t freq_hi;
+    int8_t slide;      /* added to freq_hi every frame */
+    uint8_t frames;    /* gate-on duration */
+    uint8_t tail;      /* frames to wait after gate-off before handing back */
+} SoundEffect;
+
+static const SoundEffect sound_table[] = {
+    /* 0: none */        { 0x00u, 0x00u, 0x00u, 0x00u,  0,  0u, 0u },
+    /* SOUND_CHIME */    { 0x10u, 0x09u, 0x59u, 0x40u,  3, 10u, 12u },
+    /* SOUND_THUD */     { 0x80u, 0x08u, 0x00u, 0x08u, -1,  4u,  6u },
+    /* SOUND_CREAK */    { 0x20u, 0x2au, 0x60u, 0x05u,  0, 14u,  8u },
+    /* SOUND_SPLASH */   { 0x80u, 0x09u, 0x09u, 0x30u, -3,  8u,  8u },
+    /* SOUND_BELL */     { 0x10u, 0x0cu, 0x0cu, 0x50u,  0, 24u, 36u },
+    /* SOUND_SIZZLE */   { 0x80u, 0x1au, 0x08u, 0x70u,  2, 12u,  8u },
+    /* SOUND_BUBBLE */   { 0x40u, 0x08u, 0x38u, 0x10u,  2,  8u,  6u },
+    /* SOUND_CLICK */    { 0x40u, 0x00u, 0x00u, 0x60u,  0,  1u,  3u },
+};
+
+static void play_sound(uint8_t id) {
+    const SoundEffect* fx;
+    uint8_t freq_hi;
+    uint8_t i;
+
+    if (id == 0u || id >= sizeof(sound_table) / sizeof(sound_table[0])) return;
+    fx = &sound_table[id];
+    freq_hi = fx->freq_hi;
+    SID[18] = fx->control;            /* gate off first: a clean 0-to-1 edge */
+    SID[19] = fx->attack_decay;
+    SID[20] = fx->sustain_release;
+    SID[14] = 0x00u;
+    SID[15] = freq_hi;
+    if (fx->control == 0x40u) { SID[16] = 0x00u; SID[17] = 0x08u; } /* pulse width */
+    SID[18] = (uint8_t)(fx->control | 0x01u);
+    for (i = 0u; i < fx->frames; ++i) {
+        platform_wait_frame();
+        freq_hi = (uint8_t)(freq_hi + fx->slide);
+        SID[15] = freq_hi;
+    }
+    SID[18] = fx->control;            /* gate off: release */
+    for (i = 0u; i < fx->tail; ++i) platform_wait_frame();
+    /* Hand the voice back exactly as the environment module left it. */
+    SID[19] = platform_sid_v3[5];
+    SID[20] = platform_sid_v3[6];
+    SID[14] = platform_sid_v3[0];
+    SID[15] = platform_sid_v3[1];
+    SID[16] = platform_sid_v3[2];
+    SID[17] = platform_sid_v3[3];
+    SID[18] = platform_sid_v3[4];
+}
+
 /* Runs [pos, end) - or until an END opcode, whichever comes first, so a
  * loose `end` (e.g. script_len) is a safe upper bound. CHECK_FLAG's and
  * CHECK_ITEM's/CHECK_OBJECT's branches recurse into this with their own
@@ -342,7 +408,7 @@ static void exec_block(uint16_t pos, uint16_t end) {
                 pos += 6u;
                 break;
             case SCRIPT_OP_SOUND:
-                /* No sound-effect table yet; reserved for one. */
+                play_sound(read_byte(pos + 1u));
                 pos += 2u;
                 break;
             case SCRIPT_OP_GIVE_OBJECT:
@@ -421,6 +487,11 @@ static void exec_block(uint16_t pos, uint16_t end) {
             case SCRIPT_OP_TILE_COLOR:
                 tile_color(read_byte(pos + 1u), read_byte(pos + 2u));
                 pos += 3u;
+                break;
+            case SCRIPT_OP_END_GAME:
+                /* Picked up by the main loop once this service returns. */
+                game_ending_pending = 1u;
+                pos += 1u;
                 break;
             default:
                 return; /* malformed bytecode - stop rather than run off */

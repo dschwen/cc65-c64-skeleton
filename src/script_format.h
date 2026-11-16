@@ -43,6 +43,8 @@
 #define SCRIPT_OP_ADD_OBJECT           0x13u
 #define SCRIPT_OP_SET_TILE             0x14u
 #define SCRIPT_OP_TILE_COLOR           0x15u
+/* The story is over: run the ending screen once this script returns. */
+#define SCRIPT_OP_END_GAME             0x16u
 
 /* CHECK_FLAG comparison operands. */
 #define SCRIPT_CMP_EQ   0u

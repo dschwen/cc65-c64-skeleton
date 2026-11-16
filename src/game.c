@@ -17,6 +17,7 @@ void raster_irq_resume(void);
 GameState game_state;
 uint8_t game_entry_reason;
 uint8_t game_transition_pending_message;
+uint8_t game_ending_pending;
 
 void game_player_sync_from_platform(void) {
     game_state.current_room = platform_current_room;
@@ -74,6 +75,21 @@ uint8_t game_look_at(uint8_t tile_x, uint8_t tile_y) {
 
 uint8_t game_use_at(uint8_t tile_x, uint8_t tile_y) {
     return game_room_use_at_native(tile_x, tile_y);
+}
+
+uint8_t game_look_exit(uint8_t edge_x, uint8_t edge_y, uint8_t direction) {
+    uint8_t neighbor;
+    if (platform_look_tile_check(&platform_room, platform_player,
+                                 edge_x, edge_y, 1u) != PLATFORM_OK) {
+        return 0u;
+    }
+    if (platform_room_neighbor(&platform_room, direction, &neighbor) != PLATFORM_OK) {
+        game_text_write(PLATFORM_TEXT_LINE_TOP, "There is no exit that way.", 1u);
+        return 0u;
+    }
+    if (game_room_script_entry(GAME_SCRIPT_EXIT_NORTH + direction)) return 1u;
+    game_text_write(PLATFORM_TEXT_LINE_TOP, "An exit.", 1u);
+    return 0u;
 }
 
 uint8_t game_player_step(int8_t delta_x, int8_t delta_y) {

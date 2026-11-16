@@ -173,7 +173,8 @@ compiler and the interpreter read):
 | `room_transition ROOM X Y ["message"]`, `room_transition_here ROOM ["message"]` | Queue a transition |
 | `lightning` | Two-frame white flash |
 | `converse ID` | Start a conversation once this entry finishes |
-| `sound ID` | Reserved; no effect table yet |
+| `sound ID` | Play a `SOUND_*` effect (`src/sounds.h`) on SID voice 3, blocking, then hand the voice back |
+| `end_game` | After this entry's text is read, show the ending screen and restart into the title |
 
 `TYPE` is an `OBJ_*` symbol from the generated `build/object_types.h`
 (one per named type in `assets/objects.cobj`) or a number.
@@ -195,9 +196,12 @@ script run from `enter_room`/`enter_tile` during a transition leaves the
 display blanked until its first statement that needs it (text, a portrait,
 a keypress wait), so a silent re-apply entry causes no flicker.
 
-The four exit-description bytes in the room file header (see
-`PLATFORM_API.md`) are still unread, so `platform_look_exit()` shows a
-generic message when the Look cursor is pushed off an edge.
+**Exit descriptions.** When the Look cursor is pushed off an edge whose
+cardinal exit is enabled, the engine runs the room's reserved entry for
+that direction - `GAME_SCRIPT_EXIT_NORTH`/`_EAST`/`_WEST`/`_SOUTH` (keys
+252-255, `game.h`) - and falls back to `An exit.` if the room has none. A
+room's own keys stay below 252. The four exit-description bytes in the
+room file header remain unused.
 
 ## Global game state
 

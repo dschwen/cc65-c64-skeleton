@@ -5,6 +5,16 @@
 #include "banks.h"
 #include "../music/waltz_state.h"
 
+/* Deliberately not platform.h: its #pragma charmap would re-encode every
+ * string literal in this file, and the title and ending screens write
+ * plain ASCII through screen_code() below. */
+void platform_screen_blank(void);
+void platform_screen_unblank(void);
+void platform_text_screen_enter(void);
+void platform_look_cursor_hide(void);
+void platform_wait_fresh_key(void);
+void env_disable(void);
+
 /*
  * Title screen (BANK_TITLE): a hires picture over the top 20 character
  * rows, credit lines fading in and out below it, and the Moonfen Waltz
@@ -167,6 +177,60 @@ static void credits_tick(void) {
             break;
     }
     title_timer = FADE_STEP_FRAMES;
+}
+
+/* ---- ending screen ------------------------------------------------------
+ *
+ * Reached from the main loop once a script's end_game has run (src/main.c,
+ * game_ending_pending): a full text screen on the game's own VIC bank 3 and
+ * text charset (the same path the inventory and save menus use), the
+ * credits, and a key to restart into the title. Never returns:
+ * platform_restart() (src/banking.c) goes through the KERNAL reset with
+ * bank 0 selected, which cold-starts the cartridge again. */
+#define GAME_SCREEN ((uint8_t*)0xf800u)
+#define GAME_COLOR  ((uint8_t*)0xd800u)
+
+void platform_restart(void);
+void raster_irq_suspend(void);
+
+/* The game's text charset uses the same glyph codes as the mixed-case ROM
+ * set the title draws with (a-z at 1-26, A-Z at 65-90), so screen_code()
+ * serves both screens. */
+static void ending_centered(uint8_t row, const char* text, uint8_t color) {
+    uint8_t* line = GAME_SCREEN + (uint16_t)row * 40u;
+    uint8_t* colors = GAME_COLOR + (uint16_t)row * 40u;
+    uint8_t length = (uint8_t)strlen(text);
+    uint8_t left = (uint8_t)((40u - length) >> 1);
+    uint8_t i;
+    for (i = 0u; i < length; ++i) {
+        line[left + i] = screen_code(text[i]);
+        colors[left + i] = color;
+    }
+}
+
+__noinline void ending_banked_run(void) {
+    uint16_t i;
+
+    platform_look_cursor_hide();
+    env_disable();
+    platform_screen_blank();
+    platform_text_screen_enter();
+    for (i = 0u; i < 1000u; ++i) {
+        GAME_SCREEN[i] = 32u;
+        GAME_COLOR[i] = 0u;
+    }
+    ending_centered(5u, "The Last Guest at Moonfen Inn", 1u);
+    ending_centered(8u, "The End", 7u);
+    ending_centered(12u, "a game by", 12u);
+    ending_centered(13u, "Daniel Schwen", 1u);
+    ending_centered(15u, "music and programming by", 12u);
+    ending_centered(16u, "Daniel Schwen and Claude Code", 1u);
+    ending_centered(21u, "press any key to return to the title", 11u);
+    platform_screen_unblank();
+    platform_wait_fresh_key();
+    platform_screen_blank();
+    raster_irq_suspend();
+    platform_restart();
 }
 
 /* Any keyboard key, or fire on joystick port 2. */

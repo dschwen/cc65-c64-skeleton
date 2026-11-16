@@ -50,6 +50,7 @@ room 03 {
         check_item OBJ_BLANK_LETTER {
             take_item OBJ_BLANK_LETTER
             give_object OBJ_ORRA_INVITE 1
+            sound SOUND_SIZZLE
             text "You hold the blank letter in the rising steam. Slowly, faint lines darken into legible script."
             wait_key
             text "It's an invitation - addressed, you now notice, to Lady Orra."
@@ -69,6 +70,7 @@ room 03 {
                     take_item OBJ_RAINWATER
                     take_item OBJ_HEARTH_ASH
                     give_object OBJ_GUESTS_BROTH 1
+                    sound SOUND_BUBBLE
                     text "Moonmint, rainwater, and a pinch of hearth ash, simmered together - the Guest's Broth is ready."
                 } else {
                     text "The recipe calls for moonmint, rainwater, and hearth ash. You don't have all three yet."

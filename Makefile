@@ -72,7 +72,7 @@ OBJECTS_COLD := $(OUTDIR)/assets/objects-cold.bin
 # types.py) - included by generated room code and read as a symbol file by
 # the script and room compilers, so sources name items instead of IDs.
 OBJECT_TYPES_H := $(OUTDIR)/object_types.h
-SYMBOL_FLAGS := --flags src/story.h --flags $(OBJECT_TYPES_H)
+SYMBOL_FLAGS := --flags src/story.h --flags src/sounds.h --flags src/game.h --flags $(OBJECT_TYPES_H)
 
 # All rooms' compiled script bytecode shares one EasyFlash bank (see
 # src/banks.h's BANK_SCRIPT_ROOM_FIRST and src/resources.c's header

@@ -65,6 +65,12 @@ class InventoryStatements(unittest.TestCase):
         self.assertEqual(body[17:20], bytes([cs.OP_TILE_COLOR, 83, 14]))
         self.assertEqual(body[20], cs.OP_END)
 
+    def test_end_game_and_sound(self):
+        body = self.body('script s { sound SOUND_BELL end_game }', {"SOUND_BELL": 5})
+        self.assertEqual(body[0:2], bytes([cs.OP_SOUND, 5]))
+        self.assertEqual(body[2], cs.OP_END_GAME)
+        self.assertEqual(body[3], cs.OP_END)
+
     def test_room_transition_without_message_uses_no_message_marker(self):
         body = self.body('script s { room_transition 2 17 19 }')
         self.assertEqual(body[0:4], bytes([cs.OP_ROOM_TRANSITION, 2, 17, 19]))

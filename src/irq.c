@@ -38,6 +38,7 @@
  * paged in - matches the original's LOWBSS placement intent. Ordinary
  * globals here already satisfy that: they compile into `main`
  * ($0901-$8000), never a banked region. */
+uint8_t platform_sid_v3[7];
 static uint8_t text_screen_active;
 volatile uint8_t platform_raster_irq_active;
 volatile uint8_t platform_frame_counter;

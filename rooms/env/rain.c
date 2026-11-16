@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "memmap.h"
 #include "banks.h"
+#include "platform_native.h"
 
 /*
  * Environment module: rain (visual sprites, existing mechanism) unified
@@ -73,6 +74,7 @@ static void sound_init(void) {
     uint8_t i;
 
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    for (i = 0u; i < 7u; ++i) platform_sid_v3[i] = 0u;
 
     /* A SID voice left gated on and held at sustain (as room 02's tavern
      * melody leaves this voice) does not restart from a gate low/high
@@ -104,9 +106,9 @@ static void sound_init(void) {
         bne gatelow
     }
 
-    V3_CTRL = 0x80u;
-    V3_FREQ_LO = 0xffu;
-    V3_FREQ_HI = 0xffu;
+    SID_V3_WRITE(18u, 0x80u); /* V3 noise, gate off: a free random source */
+    SID_V3_WRITE(14u, 0xffu);
+    SID_V3_WRITE(15u, 0xffu);
 
     V1_FREQ_LO = 0x00u;
     V1_FREQ_HI = 0xc0u;

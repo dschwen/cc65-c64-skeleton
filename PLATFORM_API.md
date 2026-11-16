@@ -99,7 +99,6 @@ compiled into `BANK_SCRIPT_ROOM_FIRST` from DSL source
 (`assets/scripts/<hex room id>.script`, `tools/compile_script.py`) and run via
 `game_room_script_entry()` (see "Room-code helper API" below and
 `ROOM_CODE_API.md`). Offsets 9 and 10 now carry lighting/line-of-sight settings (see Lighting).
-Custom exit descriptions are not wired up; `platform_look_exit()` shows a
 generic message.
 
 The exit mask is separate from the four neighbor bytes because every byte
@@ -453,13 +452,14 @@ object-type flags byte. `out_slot` may be `NULL`.
 - `1`: actors only;
 - `2`: non-actors only.
 
-## Game loop, keyboard, and player movement
+## Game loop, keyboard, joystick, and player movement
 
 ```c
 extern volatile uint8_t platform_frame_counter;
 
 void platform_wait_frame(void);
 uint8_t platform_input_poll(void);
+void platform_wait_fresh_key(void);
 uint8_t platform_player_step(int8_t delta_x, int8_t delta_y);
 ```
 
@@ -530,6 +530,13 @@ for (;;) {
 }
 ```
 
+`platform_input_poll()` also reads the port-2 joystick when no key was
+typed that frame (`src/input.c`): directions map to the cursor-key codes
+with key-style auto-repeat, fire to `PLATFORM_KEY_ENTER` on each press.
+`src/main.c` opens the Use cursor on RETURN in free movement so a joystick
+alone can play through interactions. `platform_wait_fresh_key()` is the
+shared release-press-release wait used by the pager, scripts and menus.
+
 ## Screen transitions
 
 Format 3 stores four edge destinations; header bytes 9/10 are lighting settings.
@@ -545,7 +552,6 @@ leaving-room capture is harmless and idempotent if a later preflight fails.
 
 The tile-cursor Look command keeps its frame inside the map; pushing outward
 at an edge displays a generic exit message without loading the neighboring
-room (`platform_look_exit()` - custom per-exit descriptions aren't wired up
 yet; see the room file format section above).
 
 Every caller of `platform_room_enter()` must bracket it - together with the
@@ -582,7 +588,6 @@ uint8_t platform_look_tile_check(const PlatformRoom* room,
                                  const PlatformObject* viewer,
                                  uint8_t tile_x, uint8_t tile_y,
                                  uint8_t color);
-uint8_t platform_look_exit(const PlatformRoom* room,
                            const PlatformObject* viewer,
                            uint8_t edge_x, uint8_t edge_y,
                            uint8_t direction, uint8_t color);
@@ -635,7 +640,6 @@ through the word-wrapping pager. An object matches when at least one nonzero
 character in its hotspot-relative graphic intersects either character cell of
 the selected 2x2-character tile. Its hotspot may be on another tile.
 
-`platform_look_exit()` applies the same visibility and light-range check to the
 current edge tile. An enabled exit always displays the generic `An exit.` -
 custom per-exit descriptions (`room->west_text`/`south_text`) aren't wired up yet;
 that's a planned extension on top of the room-script mechanism
@@ -806,6 +810,25 @@ the destination. No runtime resource-body checksum is performed.
 
 `modules/script.c` uses the range API for its sliding resident bytecode window.
 Do not retain a pointer to bank-local bytecode after restoring the caller bank.
+
+## Sound effects and SID voice 3
+
+Environment modules (`rooms/env/*.c`) own all three SID voices. Voice 3's
+registers are also mirrored in `platform_sid_v3[]` (`src/platform_native.h`):
+modules write that voice through `SID_V3_WRITE(reg, value)`, and the script
+interpreter's `sound` statement (`modules/script.c`, table indexed by
+`src/sounds.h`'s `SOUND_*`) borrows the voice for an effect, then restores
+the mirrored registers so the module's pad, noise source or drone resumes.
+Effects block for their duration through `platform_wait_frame()`; the
+module's tick keeps running meanwhile.
+
+## Restart
+
+`platform_restart()` (`src/banking.c`) selects EasyFlash bank 0 and jumps
+through the KERNAL reset vector; the KERNAL finds the cartridge signature
+and cold-starts the game. Used by the ending screen (`modules/title.c`).
+A plain reset vector jump without reselecting bank 0 would land in
+whatever bank was mapped.
 
 ## Raster IRQ and water animation
 

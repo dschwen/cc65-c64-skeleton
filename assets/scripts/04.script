@@ -46,6 +46,7 @@ room 04 {
         check_object OBJ_BRAZIER {
             check_item OBJ_LIT_TAPER {
                 replace_object OBJ_BRAZIER OBJ_LIT_BRAZIER
+                sound SOUND_SIZZLE
                 text "You touch the taper's flame to the brazier, and it catches."
             } else {
                 text "The brazier is cold. You have nothing to light it with."
@@ -74,6 +75,7 @@ room 04 {
                     tile_color STORY_TILE_MIRROR_FRAME STORY_COLOR_MIRROR_LIT
                     tile_color STORY_TILE_MIRROR_GLASS STORY_COLOR_MIRROR_LIT
                     add_object OBJ_MARA_MOONFEN 26 2
+                    sound SOUND_CHIME
                     text "You fit the silver shard into the crack. It seats with a faint chime, and the whole mirror flares silver-white."
                     wait_key
                     text "When your eyes adjust, the glass is whole - and someone is standing beside it who was not there a moment ago."
@@ -97,8 +99,11 @@ room 04 {
             check_item OBJ_BRASS_KEY {
                 set_tile 18 4 STORY_TILE_DOOR_OPEN
                 set_flag STORY_STATE_BASEMENT_DOOR_OPEN 1
+                sound SOUND_CLICK
+                sound SOUND_CREAK
                 text "The brass key turns easily, as though it were always meant for this lock. The door swings open onto the cellar beyond."
             } else {
+                sound SOUND_THUD
                 text "The door is locked. It wants a key."
             }
         }

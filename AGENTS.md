@@ -43,7 +43,12 @@ Example: `make SAVE_DISK=/path/to/saves.d64 run-cartridge`.
   `build/object_types.h` (`OBJ_*` symbols from `assets/objects.cobj`, used
   by scripts, `.rc` files and fragments); edit their sources.
 - `src/script_format.h` is the single source of the script opcode numbering
-  (the Python compiler parses it); `src/saveload_format.h` the save format.
+  (the Python compiler parses it); `src/saveload_format.h` the save format;
+  `src/sounds.h` the `SOUND_*` effect IDs the `sound` statement takes.
+- Environment modules write SID voice 3 only through `SID_V3_WRITE()` so a
+  script sound effect can borrow and restore the voice.
+- `modules/title.c` must not include `platform.h`: the charmap pragma would
+  re-encode its ASCII credit/ending strings.
 
 ## Change guidance
 

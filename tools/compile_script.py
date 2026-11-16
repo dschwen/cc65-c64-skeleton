@@ -88,6 +88,9 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          room; when not set, the reveal is immediate, same
                          as before this operand existed.
     0x08 SOUND            id:1
+                         plays sound effect `id` (SOUND_* in src/sounds.h) on
+                         SID voice 3, blocking for its duration, then hands
+                         the voice back to the room's environment module.
     0x09 GIVE_OBJECT       type:1  quantity:1
     0x0A ROOM_TRANSITION_HERE  room:1  msg:2
                          like ROOM_TRANSITION, but the destination is
@@ -150,6 +153,10 @@ Bytecode (one opcode byte, then its operands, repeated until END):
                          - the grid is reloaded from ROM on every room
                          entry, so the room's enter_room entry must re-apply
                          it (gated on whatever flag records the change).
+    0x16 END_GAME                                        no operands
+                         the story is over: once this script finishes (after
+                         its last text has been read), the main loop shows
+                         the ending screen and restarts into the title.
     0x15 TILE_COLOR        tile:1  color:1
                          recolors all four cells of tile definition `tile`
                          in the shared runtime tile table - a palette patch
@@ -374,6 +381,7 @@ OP_REPLACE_OBJECT = _fmt("SCRIPT_OP_REPLACE_OBJECT")
 OP_ADD_OBJECT = _fmt("SCRIPT_OP_ADD_OBJECT")
 OP_SET_TILE = _fmt("SCRIPT_OP_SET_TILE")
 OP_TILE_COLOR = _fmt("SCRIPT_OP_TILE_COLOR")
+OP_END_GAME = _fmt("SCRIPT_OP_END_GAME")
 NO_MESSAGE = _fmt("SCRIPT_NO_MESSAGE")
 
 CMP_OPS = {"==": _fmt("SCRIPT_CMP_EQ"), "!=": _fmt("SCRIPT_CMP_NE"),
@@ -541,6 +549,10 @@ class WaitKeyStmt(Stmt):
 
 
 class LightningStmt(Stmt):
+    pass
+
+
+class EndGameStmt(Stmt):
     pass
 
 
@@ -834,6 +846,9 @@ class Parser:
         if tok.value == "lightning":
             self.advance()
             return LightningStmt()
+        if tok.value == "end_game":
+            self.advance()
+            return EndGameStmt()
         if tok.value == "room_transition":
             self.advance()
             room = self.resolve_number()
@@ -992,6 +1007,8 @@ def compile_stmts(stmts: list[Stmt]) -> tuple[bytearray, list[Patch]]:
             buf += bytes([OP_WAIT_KEY])
         elif isinstance(stmt, LightningStmt):
             buf += bytes([OP_LIGHTNING])
+        elif isinstance(stmt, EndGameStmt):
+            buf += bytes([OP_END_GAME])
         elif isinstance(stmt, RoomTransitionStmt):
             buf += bytes([OP_ROOM_TRANSITION, check_u8(stmt.room),
                           check_u8(stmt.x), check_u8(stmt.y)])

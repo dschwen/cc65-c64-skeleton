@@ -60,9 +60,11 @@ automatically enable the west exit back. This supports drops, collapsing
 passages, prison chutes, and other deliberate one-way travel, but accidental
 one-way links are easy to create.
 
-Each edge can have a short exit description. In Look mode, moving the cursor
-outward from an edge displays that description without revealing or loading
-the neighboring room. Examples include:
+Each edge can have a short exit description, authored as a room-script
+entry with the reserved key for that direction (`GAME_SCRIPT_EXIT_NORTH`,
+`_EAST`, `_WEST`, `_SOUTH`). In Look mode, moving the cursor outward from an
+edge runs that entry without revealing or loading the neighboring room.
+Examples include:
 
 - `A narrow path descends toward the coast.`
 - `Cold air drifts through an iron archway.`
@@ -339,6 +341,11 @@ storms, magic, alarms, or traps, timed however the triggering script chooses.
 
 ## Player commands
 
+A joystick in port 2 works everywhere the keyboard does: the stick is the
+cursor keys (with auto-repeat), fire is RETURN. In free movement fire opens
+the Use cursor, so the common verb needs no keyboard; Look, Take,
+Inventory, Save and Load remain keyboard commands.
+
 ### Movement
 
 The cursor keys move the player one half-tile at a time. Only the hotspot's
@@ -443,6 +450,15 @@ print as rune glyphs; spaces, digits and punctuation are unchanged) and
 `<text>` switches back, e.g. `text "It reads: <runes>fenwick<text>."`. A
 string always starts in Latin text and the mode ends with the string; write
 `\<` for a literal `<`. See `tools/compile_script.py`'s module docstring.
+
+A script can play a short sound effect with `sound NAME` - chime, thud,
+creak, splash, bell, sizzle, bubble, click (`src/sounds.h`). It plays over
+the room's background audio and blocks for its duration (a few frames to
+half a second), so place it right before the text it accompanies.
+
+The story's close is a script statement too: `end_game` after the final
+text shows the ending screen (title, credits, "press any key") and restarts
+the game at the title screen.
 
 Speaker portraits (`portrait_show`/`portrait_hide` inside a script, or
 `platform_portrait_show()`/`platform_portrait_hide()` directly from room
@@ -575,6 +591,8 @@ the current light range.
 - There is no Drop, Equip, item-combination, or inventory-target-map command.
 - There is no generic conversation choice UI, and no automatic link between
   dialogue text and the portrait API.
+- Sound effects come from a fixed engine table of eight; new ones need a
+  programmer.
 - NPC schedules, AI, combat, game time, and quests are not generic systems yet.
 - A room script may compile to at most 8 KiB.
 - The automatic Look list is limited to two lines.

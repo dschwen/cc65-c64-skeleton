@@ -1,6 +1,7 @@
 #include "game.h"
 #include "world.h"
 #include "platform_native.h"
+#include "script_abi.h"
 
 void platform_text_output_native(const char* text);
 uint8_t platform_text_output_color;
@@ -94,6 +95,9 @@ uint8_t game_take_tile(uint8_t tile_x, uint8_t tile_y) {
     taken_type = platform_room.objects[slot].type;
     result = game_take_object(slot);
     if (result == PLATFORM_OK) {
+        script_context_x = tile_x;
+        script_context_y = tile_y;
+        (void)game_room_script_entry(GAME_SCRIPT_TAKEN);
         platform_object_taken_message(taken_type, 1u);
     } else {
         game_text_write(PLATFORM_TEXT_LINE_TOP, "You cannot take that.", 1u);

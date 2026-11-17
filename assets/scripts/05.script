@@ -18,9 +18,11 @@
  * and the blue door - have been examined. Using the seal at him directly
  * only gives a redirect hint (the check_item branch below).
  *
- * The torn invitation (tile 5,7, currently takeable like any pickup) is
- * the first piece of evidence; the blue-seal door is the second. Reading
- * it (Look) sets PELL_INVITE_SEEN whether or not it's later picked up. */
+ * The torn invitation (tile 5,7) is the first piece of evidence; the
+ * blue-seal door is the second. Reading it (Look) sets PELL_INVITE_SEEN
+ * whether or not it's later picked up. Picking it up sets
+ * ROOM_05_INVITATION_TAKEN through the engine's GAME_SCRIPT_TAKEN hook, so
+ * looking at the spot afterwards no longer describes it lying there. */
 room 05 {
     entry STORY_ROOM05_LEAVE_CORRIDOR {
         room_transition 2 30 2
@@ -35,17 +37,26 @@ room 05 {
     entry STORY_ROOM05_LOOK_PELL {
         text "A courier in a travel-worn coat, keeping close to his mailbag."
     }
-    entry STORY_ROOM05_LOOK_INVITATION {
-        check_flag STORY_STATE_ROOM_05_MET_PELL == 0 {
-            text "A torn invitation. Most of the writing has run into blue-grey smears."
-            wait_key
-            text "Only one line survives: \"The bearer of the blue...\""
-        } else {
-            text "Pell's damaged invitation. The lower corner has been torn away where a wax seal might once have been attached."
-            wait_key
-            text "Only one line remains legible: \"The bearer of the blue...\""
+    entry GAME_SCRIPT_TAKEN {
+        check_item OBJ_INVITATION {
+            set_flag STORY_STATE_ROOM_05_INVITATION_TAKEN 1
         }
-        set_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN 1
+    }
+    entry STORY_ROOM05_LOOK_INVITATION {
+        check_flag STORY_STATE_ROOM_05_INVITATION_TAKEN == 1 {
+            text "Worn floorboards. The torn invitation that lay here is in your pack now."
+        } else {
+            check_flag STORY_STATE_ROOM_05_MET_PELL == 0 {
+                text "A torn invitation. Most of the writing has run into blue-grey smears."
+                wait_key
+                text "Only one line survives: \"The bearer of the blue...\""
+            } else {
+                text "Pell's damaged invitation. The lower corner has been torn away where a wax seal might once have been attached."
+                wait_key
+                text "Only one line remains legible: \"The bearer of the blue...\""
+            }
+            set_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN 1
+        }
     }
     entry STORY_ROOM05_LOOK_BLUE_DOOR {
         text "A guest-room door. A small brass plaque bears an unfamiliar symbol."

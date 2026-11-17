@@ -158,6 +158,11 @@ void game_load_show(void);
 #define GAME_SCRIPT_EXIT_EAST  253u
 #define GAME_SCRIPT_EXIT_WEST  254u
 #define GAME_SCRIPT_EXIT_SOUTH 255u
+/* Run after the Take command has removed an object from the room, with the
+ * taken tile as the context tile and the item already in the inventory -
+ * so a room script can record the pickup (`check_item X { set_flag ... }`)
+ * or add a line of narration, before the engine's "<name> taken." line. */
+#define GAME_SCRIPT_TAKEN      251u
 
 /* Look at the exit beyond edge tile edge_x/edge_y in `direction` (a
  * PLATFORM_DIRECTION_*): checks visibility/light and that the exit is

@@ -41,6 +41,7 @@
 #define STORY_STATE_HOST_REVEALED              21u
 #define STORY_STATE_FINALE_DONE                22u
 #define STORY_STATE_MOON_BROOCH_WORN           23u
+#define STORY_STATE_ROOM_05_INVITATION_TAKEN   24u
 
 /* ---- Tile IDs story logic reads (assets/tiles.ctil) ------------------- */
 #define STORY_TILE_WATER         2u   /* room 01's puddle, hiding the Blue Seal */

@@ -466,6 +466,19 @@ def check(root, monitor, artifacts):
                 return
         raise AssertionError("conversation prompt never appeared")
 
+    # Take the torn invitation at tile (5,7), diagonally up-right of the
+    # player: the engine's GAME_SCRIPT_TAKEN hook lets 05.script set
+    # STORY_STATE_ROOM_05_INVITATION_TAKEN (flags[24]).
+    invitation_taken = labels["game_state"] + 84 + 24
+    assert monitor.memory(invitation_taken, 1) == b"\0"
+    press("t", 84)
+    press("Up", 145)
+    press("Right", 29)
+    press("Return", 13)
+    polls(5)
+    assert monitor.memory(invitation_taken, 1) == b"\1", \
+        "taking the invitation did not set the flag through GAME_SCRIPT_TAKEN"
+    print("PASS: Take runs the room's GAME_SCRIPT_TAKEN entry", flush=True)
     press("u", 85)
     press("Up", 145)
     press("Return", 13)

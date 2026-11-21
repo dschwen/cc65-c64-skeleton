@@ -219,7 +219,7 @@ __noinline void ending_banked_run(void) {
         GAME_SCREEN[i] = 32u;
         GAME_COLOR[i] = 0u;
     }
-    ending_centered(5u, "The Mystery of Moonfen Inn", 1u);
+    ending_centered(5u, "The Last Guest at Moonfen Inn", 1u);
     ending_centered(8u, "The End", 7u);
     ending_centered(12u, "a game by", 12u);
     ending_centered(13u, "Daniel Schwen", 1u);

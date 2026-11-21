@@ -223,7 +223,7 @@ def small_text_mask(text: str, y: int) -> np.ndarray:
     """Mixed-case C64 ROM glyphs (the lower/upper set at offset $800)."""
     rom = CHARGEN.read_bytes()
     mask = np.zeros((H, W), bool)
-    x0 = (W - 8 * len(text)) // 2
+    x0 = (W - 8 * len(text)) // 16 * 8  # centred, snapped to the cell grid
     for i, ch in enumerate(text):
         if "a" <= ch <= "z":
             code = ord(ch) - 96
@@ -432,7 +432,7 @@ def paint() -> np.ndarray:
 
     # driving rain across everything but the lettering
     letters = title_mask()
-    keep_clear = dilate(letters, 6) | dilate(small_text_mask("The Mystery of", 4), 4) \
+    keep_clear = dilate(letters, 6) | dilate(small_text_mask("The Last Guest at", 4), 4) \
         | dilate(roof | wall, 2) | (yy >= wall_b)
     for _ in range(110):
         x = int(rng.integers(-20, W))
@@ -453,8 +453,8 @@ def paint() -> np.ndarray:
         row = letters[y]
         if row.any():
             img[y, row] = col(ramp.get(y // 8, ORANGE))
-    small = small_text_mask("The Mystery of", 4)
-    img[dilate(small, 1) & ~small] = 0
+    small = small_text_mask("The Last Guest at", 4)
+    img[dilate(small, 4) & ~small] = 0
     img[small] = col(LGREY)
     return np.clip(img, 0, 255)
 

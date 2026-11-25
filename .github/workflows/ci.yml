@@ -37,13 +37,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/oscar64
-          key: oscar64-${{ runner.os }}-${{ env.OSCAR64_REF }}-v1
+          key: oscar64-${{ runner.os }}-${{ env.OSCAR64_REF }}-v2
 
       - name: Build Oscar64
         if: steps.cache-oscar64.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "$OSCAR64_REF" https://github.com/drmortalwombat/oscar64.git ~/oscar64
-          make -C ~/oscar64 -j"$(nproc)"
+          # oscar64.md "Building": the makefile lives in make/ and the
+          # `compiler` target skips the samples; it links to bin/oscar64.
+          cd ~/oscar64
+          make -C make compiler -j"$(nproc)"
+          test -x bin/oscar64
 
       - name: Cache VICE
         id: cache-vice
@@ -64,12 +68,12 @@ jobs:
           make install
 
       - name: Build cartridge
-        run: make OSCAR64="$HOME/oscar64/build/oscar64"
+        run: make OSCAR64="$HOME/oscar64/bin/oscar64"
 
       - name: Regression test under Xvfb
         run: |
           export PATH="$HOME/vice-install/bin:$PATH"
-          make OSCAR64="$HOME/oscar64/build/oscar64" test 2>&1 | tee test.log
+          make OSCAR64="$HOME/oscar64/bin/oscar64" test 2>&1 | tee test.log
 
       - name: Upload build and test artifacts
         if: always()

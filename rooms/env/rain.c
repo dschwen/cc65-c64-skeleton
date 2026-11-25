@@ -65,7 +65,7 @@ static void sprite_setup(void) {
         VIC[0x27 + i] = 6u; /* dark blue */
     }
     VIC[0x17] &= (uint8_t)~RAIN_SPRITE_MASK; /* no Y-expand */
-    VIC[0x1b] |= RAIN_SPRITE_MASK;           /* priority: in front */
+    VIC[0x1b] &= (uint8_t)~RAIN_SPRITE_MASK; /* priority: in front of tiles */
     VIC[0x1d] &= (uint8_t)~RAIN_SPRITE_MASK; /* no X-expand */
     VIC[0x15] |= RAIN_SPRITE_MASK;           /* enable */
 }

@@ -241,6 +241,7 @@ def check(root, monitor, artifacts):
     monitor.run()
     assert monitor.memory(0xd018, 1)[0] & 0xfe == 0xea, "map uses wrong charset"
     assert monitor.memory(0xd015, 1)[0] & 0xfe == 0xfe, "rain sprites hidden over map"
+    assert monitor.memory(0xd01b, 1)[0] & 0xfe == 0, "rain drawn behind the map tiles"
     monitor.command("delete")
     monitor.command("break exec 0000 ffff if RL == $00f0")
     monitor.run()

@@ -113,7 +113,8 @@ def check(root, monitor, artifacts):
     seen = []
     for _ in range(8):
         vic = bytes(monitor.memory(0xd000, 17))
-        assert all(y + 20 <= 210 for y in vic[1:14:2]), f"title: rain below the picture {list(vic[1:14:2])}"
+        # A sprite's first line is Y + 1, so a streak covers Y+1..Y+21.
+        assert all(y + 21 <= 210 for y in vic[1:14:2]), f"title: rain below the picture {list(vic[1:14:2])}"
         seen.append(vic)
         monitor.command(f"break exec {labels['start_pressed']:04x}")
         monitor.run()

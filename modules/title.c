@@ -35,9 +35,13 @@ void env_disable(void);
  *
  * No raster IRQ: the frame loop polls $D012, switching to text mode at
  * line 211 (the bad line of row 20) and back to bitmap mode at line 251.
- * Pixel row 0 of row 20 may still be fetched in bitmap mode; its bitmap
- * bytes are zero and its paper color (low nibble of a space, $20) is
- * black, so that line stays black either way.
+ * The switch lands somewhere inside line 211, and between its two
+ * register writes the VIC is briefly in bitmap mode with the text
+ * pointer - fetching garbage "bitmap" from the character ROM at $9900.
+ * Row 20's screen bytes are therefore $00 rather than spaces ($20, red
+ * ink): black ink on black paper in bitmap mode, and in text mode '@'
+ * glyphs in black color RAM. Nothing on that row can show, whatever the
+ * VIC fetches mid-switch. The credits use rows 21 and 23 only.
  */
 
 /* Resident state (see memmap.h: banked code may not keep mutable data). */
@@ -95,16 +99,16 @@ static uint8_t title_rain_seed;
 /* Rain: the game's seven streak sprites (src/irq.c, rooms/env/rain.c) on
  * sprites 0-6, in front of the picture and kept inside it. The streak
  * shape lives at $8400 (VIC bank 2 RAM, pointer 16). A sprite's top line
- * is its Y register; the picture spans raster lines 51-210 and a streak is
- * 21 lines tall, so Y stays below RAIN_Y_MAX and never reaches the
- * credits. Streaks above line 51 or left/right of the picture sit under
+ * is one below its Y register; the picture spans raster lines 51-210 and
+ * a streak is 21 lines tall, so Y stays below RAIN_Y_MAX and never
+ * reaches line 211 or the credits. Streaks above line 51 or left/right of the picture sit under
  * the border, which covers sprites. */
 #define RAIN_SPRITE     ((uint8_t*)0x8400u)
 #define RAIN_POINTERS   ((uint8_t*)0x83f8u)
 #define RAIN_POINTER    16u
 #define RAIN_COUNT      7u
 #define RAIN_STEP       20u
-#define RAIN_Y_MAX      (SPLIT_LINE - 21u + 1u)
+#define RAIN_Y_MAX      (SPLIT_LINE - 21u)
 #define RAIN_X_OFFSET   23u
 #define RAIN_X_MAX_LO   87u
 #define RAIN_COLOR      6u /* dark blue, as in the game */
@@ -374,6 +378,9 @@ __noinline void title_banked_run(void) {
     memset(TITLE_BITMAP + BITMAP_BYTES, 0, 8000u - BITMAP_BYTES);
     memcpy(TITLE_SCREEN, title_image + BITMAP_BYTES, COLOR_BYTES);
     memset(TITLE_SCREEN + COLOR_BYTES, 32, 1000u - COLOR_BYTES);
+    /* Row 20, just below the picture, is black on black in both modes:
+     * see the header comment on the split. */
+    memset(TITLE_SCREEN + COLOR_BYTES, 0, 40u);
     memset(TITLE_COLOR + COLOR_BYTES, 0, 1000u - COLOR_BYTES);
 
     title_pair = CREDIT_PAIRS - 1u; /* the first tick advances to pair 0 */

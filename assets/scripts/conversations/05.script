@@ -32,9 +32,26 @@ conversation pell {
         text "\"My invitation was damaged in the storm. Without it, Vey claims he cannot prove which room was mine.\""
     }
     topic "invitation" {
-        text "\"Half the writing is gone. And the seal came off somewhere outside.\""
+        /* A player who picked the invitation up without ever Looking at it
+         * can no longer read it in the corridor (05.script's LOOK_INVITATION
+         * only describes the empty spot then), so carrying it here lets
+         * Pell read it with them - the only other way to set
+         * PELL_INVITE_SEEN. */
+        check_item OBJ_INVITATION {
+            text "Pell takes the invitation. \"Mine. See - the seal's torn clean off.\""
+            wait_key
+            text "He reads the last line aloud, \"The bearer of the blue...\", and hands it back."
+            set_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN 1
+        } else {
+            text "\"Half the writing is gone. And the seal came off somewhere outside.\""
+        }
     }
     topic "seal" {
+        /* Holding the invitation counts as having examined it: Pell
+         * compares the two side by side below. */
+        check_item OBJ_INVITATION {
+            set_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN 1
+        }
         check_flag STORY_STATE_ROOM_05_PELL_HELPED == 0 {
             check_item OBJ_BLUE_SEAL {
                 check_flag STORY_STATE_ROOM_05_PELL_INVITE_SEEN == 0 {

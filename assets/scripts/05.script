@@ -20,7 +20,9 @@
  *
  * The torn invitation (tile 5,7) is the first piece of evidence; the
  * blue-seal door is the second. Reading it (Look) sets PELL_INVITE_SEEN
- * whether or not it's later picked up. Picking it up sets
+ * whether or not it's later picked up; carrying it to Pell and asking about
+ * "invitation" or "seal" sets it too (conversations/05.script), so taking
+ * it unread can't strand the puzzle. Picking it up sets
  * ROOM_05_INVITATION_TAKEN through the engine's GAME_SCRIPT_TAKEN hook, so
  * looking at the spot afterwards no longer describes it lying there. */
 room 05 {

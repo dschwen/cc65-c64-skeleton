@@ -535,6 +535,18 @@ def check(root, monitor, artifacts):
     advance_to_prompt(5)  # read the NAME answer, back to the prompt
     monitor.command(f'screenshot "{artifacts / "conversation-name.png"}" 2')
 
+    # The invitation was taken above without ever being Looked at, which
+    # once stranded the puzzle (nothing else set PELL_INVITE_SEEN): asking
+    # Pell about it while carrying it must set the flag now.
+    invite_seen = labels["game_state"] + 84 + 11  # flags[11] = PELL_INVITE_SEEN
+    assert monitor.memory(invite_seen, 1) == b"\0", "PELL_INVITE_SEEN set without reading"
+    for letter, code in (("i", 73), ("n", 78), ("v", 86), ("i", 73)):
+        press(letter, code)
+    press("Return", 13)
+    advance_to_prompt(6)
+    assert monitor.memory(invite_seen, 1) == b"\1", \
+        "asking Pell about a carried invitation did not set PELL_INVITE_SEEN"
+
     for letter, code in (("z", 90), ("z", 90), ("z", 90), ("z", 90)):
         press(letter, code)
     press("Return", 13)  # no topic starts with ZZZZ -> the "*" fallback

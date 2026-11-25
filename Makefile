@@ -102,8 +102,11 @@ SCRIPT_SOURCES   := $(SCRIPT_BANK_SRC) $(if $(CONVERSATION_IDS),$(CONVERSATION_B
                     $(if $(PORTRAIT_IDS),$(PORTRAIT_BANK_SRC))
 
 OUT_CRT := $(OUTDIR)/game.crt
+# make debug: the same cartridge built with -dGAME_DEBUG, which enables
+# developer-only keys (+/- step the global light level, src/main.c).
+DEBUG_CRT := $(OUTDIR)/game-debug.crt
 
-.PHONY: all cartridge run run-cartridge test clean title-music run-title-music
+.PHONY: all cartridge debug run run-cartridge test clean title-music run-title-music
 .DEFAULT_GOAL := all
 # Script .bin files are an intermediate step whose generated .c wrapper
 # (below) embeds a path to them - without .PRECIOUS, Make deletes the .bin
@@ -180,6 +183,12 @@ HEADERS := $(wildcard src/*.h modules/*.h rooms/*.h rooms/env/*.h music/*.h)
 $(OUT_CRT): Makefile $(SRC_C) $(HEADERS) $(ROOM_ASSETS) $(ROOM_SOURCES) $(ROOM_TABLE_H) $(ENV_BANKS_H) $(OBJECT_TYPES_H) $(SCRIPT_SOURCES) $(OBJECTS_HOT) $(OBJECTS_COLD) assets/charset.cchr assets/tiles.ctil assets/title.hires | $(OUTDIR)
 	$(OSCAR64) $(OFLAGS) $(INCLUDES) -i=$(OUTDIR)/scripts $(SRC_C) $(ROOM_SOURCES) $(SCRIPT_SOURCES) -o=$@
 	python3 tools/check_bank_switches.py $(OUTDIR)/game.asm || { rm -f $@; exit 1; }
+
+debug: $(DEBUG_CRT)
+
+$(DEBUG_CRT): $(OUT_CRT)
+	$(OSCAR64) $(OFLAGS) -dGAME_DEBUG $(INCLUDES) -i=$(OUTDIR)/scripts $(SRC_C) $(ROOM_SOURCES) $(SCRIPT_SOURCES) -o=$@
+	python3 tools/check_bank_switches.py $(OUTDIR)/game-debug.asm || { rm -f $@; exit 1; }
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)

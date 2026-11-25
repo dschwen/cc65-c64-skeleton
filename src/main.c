@@ -167,6 +167,8 @@ int main(void) {
             case PLATFORM_KEY_CURSOR_RIGHT:
                 game_player_step(1, 0);
                 break;
+#ifdef GAME_DEBUG
+            /* Debug build only (make debug): step the global light level. */
             case PLATFORM_KEY_LIGHT_DOWN:
                 if (platform_global_light > PLATFORM_LIGHT_NONE) {
                     platform_lighting_set_global(platform_global_light - 1u);
@@ -177,6 +179,7 @@ int main(void) {
                     platform_lighting_set_global(platform_global_light + 1u);
                 }
                 break;
+#endif
             case PLATFORM_KEY_LOOK:
                 look_x = platform_player->x >> 1;
                 look_y = platform_player->y >> 1;

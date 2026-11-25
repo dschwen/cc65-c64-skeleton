@@ -120,6 +120,7 @@ room 04 {
             /* Mara only stands here once the mirror is repaired. */
             text "Nothing happens."
         } else {
+            portrait_show 3 left
             check_flag STORY_STATE_MARA_REVEALED == 0 {
                 text "\"You've done well to reach me,\" she says. \"I am Mara. This inn has been mine far longer than it has been Vey's.\""
                 wait_key
@@ -136,6 +137,7 @@ room 04 {
                 text "\"The broth, when you're ready,\" Mara says. \"I'll be here. I'm always here.\""
             }
             wait_key
+            portrait_hide
         }
     }
     entry STORY_ROOM04_LOOK_RECIPE_STONE {

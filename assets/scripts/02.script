@@ -9,8 +9,9 @@
  * meeting (gated on their STORY_STATE_ROOM_02_MET_* flag) followed by
  * `converse` into their "Ask about" conversation - conversations/20
  * (Orra), 21 (Vey), 22 (Caldus); those IDs are only a readability
- * convention, conversation IDs are their own space. Portrait 0 is Sir
- * Caldus (visor closed); portraits 1 (Orra) and 2 (Vey) have no art yet.
+ * convention, conversation IDs are their own space. Portraits: 0 Sir
+ * Caldus (visor closed), 1 Orra, 2 Vey, 3 Mara, 4 Pell (assets/portraits;
+ * 03 and 04 are drawn by tools/draw_portraits.py).
  *
  * Caldus's Lamp Oil payoff and Orra's Invite payoff are resolved by
  * mentioning the trigger word ("oil" / "letter") in conversation - see
@@ -178,9 +179,11 @@ room 02 {
                     text "\"No one was robbed. A traveler dropped a seal in the mud, and you built a trial out of your own fear of my cellar door.\""
                     portrait_hide
                     wait_key
+                    portrait_show 3 left
                     text "She turns to you. \"You found what was actually lost, returned it to those who'd lost it, and asked nothing back. That is the law of this house - not Vey's. Mine.\""
                     wait_key
                     text "\"The broth is the guesting-rite, older than the inn itself. You've kept it. Every guest here is free to go - Vey included, free of pretending to an authority that was never really his.\""
+                    portrait_hide
                     wait_key
                     text "Vey sags against the counter, more relieved than ashamed. Upstairs and down, you hear doors opening that have stayed shut all night."
                     wait_key

@@ -501,6 +501,8 @@ def check(root, monitor, artifacts):
     # By the time the prompt is up, TALK_PELL's set_flag has certainly run:
     # it precedes CONVERSE unconditionally in bytecode order.
     assert monitor.memory(met_pell, 1) == b"\1", "MET_PELL not set by the greeting"
+    assert monitor.memory(0xfc40, 256, "ram") == (root / "assets/portraits/04").read_bytes(), \
+        "Pell's portrait sprites do not match assets/portraits/04"
     monitor.command(f'screenshot "{artifacts / "conversation-prompt.png"}" 2')
 
     for letter, code in (("n", 78), ("a", 65), ("m", 77), ("e", 69)):
@@ -615,12 +617,18 @@ def check(root, monitor, artifacts):
     press("Up", 145)
     press("Return", 13)
     the_end = bytes(ord(c) - 96 if "a" <= c <= "z" else ord(c) for c in "The End")
+    mara = (root / "assets/portraits/03").read_bytes()
+    mara_seen = False
     for _ in range(40):
         if monitor.memory(0xf800 + 8 * 40 + 16, len(the_end), "ram") == the_end:
             break
+        if not mara_seen and monitor.memory(0xfc40, 256, "ram") == mara:
+            mara_seen = True
+            monitor.command(f'screenshot "{artifacts / "mara-portrait.png"}" 2')
         press("space", 32)
     else:
         raise AssertionError("ending screen never appeared after ringing the bell")
+    assert mara_seen, "Mara's portrait (assets/portraits/03) never shown in the finale"
     assert monitor.memory(flags + 22, 1) == b"\1", "STORY_STATE_FINALE_DONE not set by the finale"
     monitor.command(f'screenshot "{artifacts / "ending.png"}" 2')
     # Any key restarts: the title's start_pressed() poll is the first banked

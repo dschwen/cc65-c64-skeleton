@@ -10,8 +10,9 @@
  * `converse` into their "Ask about" conversation - conversations/20
  * (Orra), 21 (Vey), 22 (Caldus); those IDs are only a readability
  * convention, conversation IDs are their own space. Portraits: 0 Sir
- * Caldus (visor closed), 1 Orra, 2 Vey, 3 Mara, 4 Pell (assets/portraits;
- * 03 and 04 are drawn by tools/draw_portraits.py).
+ * Caldus (visor closed), 1 Orra, 2 Vey, 3 Mara, 4 Pell, 5 Caldus with
+ * his visor freed (assets/portraits; 03-05 are drawn by
+ * tools/draw_portraits.py).
  *
  * Caldus's Lamp Oil payoff and Orra's Invite payoff are resolved by
  * mentioning the trigger word ("oil" / "letter") in conversation - see
@@ -83,13 +84,22 @@ room 02 {
         converse 21
     }
     entry STORY_ROOM02_LOOK_CALDUS {
-        portrait_show 0 right
-        text "A knight in dented plate sits stiffly by the hearth, his visor jammed half-shut."
+        check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
+            portrait_show 0 right
+            text "A knight in dented plate sits stiffly by the hearth, his visor jammed half-shut."
+        } else {
+            portrait_show 5 right
+            text "Sir Caldus, visor up at last: a weathered face and a drooping moustache."
+        }
         wait_key
         portrait_hide
     }
     entry STORY_ROOM02_TALK_CALDUS {
-        portrait_show 0 right
+        check_flag STORY_STATE_ROOM_02_CALDUS_FREED == 0 {
+            portrait_show 0 right
+        } else {
+            portrait_show 5 right
+        }
         check_flag STORY_STATE_ROOM_02_MET_CALDUS == 0 {
             text "The knight straightens as best he can, one hand still braced against his helm."
             wait_key
@@ -105,7 +115,7 @@ room 02 {
                     text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
                 }
             } else {
-                text "\"Still rusted shut, I'm afraid,\" Caldus says, giving his visor a hopeful tap."
+                text "\"It swings like a gate now,\" Caldus says, lifting the visor and letting it fall again, just for the pleasure of it."
             }
         }
         converse 22

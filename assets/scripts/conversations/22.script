@@ -27,6 +27,7 @@ conversation caldus {
                 take_item OBJ_LAMP_OIL
                 text "With a screech of metal the seized visor finally gives, and Sir Caldus draws a first unmuffled breath."
                 wait_key
+                portrait_show 5 right
                 give_object OBJ_SILVER_SHARD 1
                 text "\"You have my thanks - truly,\" he says, pressing something small and cold into your hand - a shard of silver, etched with a tower's sigil."
                 wait_key
@@ -36,7 +37,7 @@ conversation caldus {
                 text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
             }
         } else {
-            text "\"Lamp oil, axle grease, holy water - I'm not particular. Anything that isn't rust.\""
+            text "\"No more oil needed, thanks to you. I can hear myself think again.\""
         }
     }
     topic "visor" {

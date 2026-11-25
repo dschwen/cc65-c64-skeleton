@@ -343,7 +343,25 @@ def check(root, monitor, artifacts):
             press("l", 76)
             press("l", 76)
             polls(15)
-            print("PASS: Sir Caldus's portrait renders the authored asset", flush=True)
+            # Once the oil has freed him (flags[9] = STORY_STATE_ROOM_02_
+            # CALDUS_FREED), Look shows the open-visor portrait (05).
+            freed = labels["game_state"] + 84 + 9
+            monitor.command(f"> {freed:04x} 01")
+            press("l", 76)
+            for _ in range(6):
+                press("Right", 29)
+            for _ in range(8):
+                press("Up", 145)
+            press("Return", 13)
+            polls(20)
+            monitor.command(f'screenshot "{artifacts / "caldus-open-portrait.png"}" 2')
+            assert monitor.memory(0xfc40, 256, "ram") == (root / "assets/portraits/05").read_bytes(), \
+                "freed Caldus does not show assets/portraits/05"
+            press("l", 76)
+            press("l", 76)
+            polls(15)
+            monitor.command(f"> {freed:04x} 00")
+            print("PASS: Sir Caldus's portraits (visor shut, then freed) render the authored assets", flush=True)
 
             # Script-driven inventory (modules/script.c's check_item/
             # give_object, dispatched from rooms/02.rc's `at 12,1 -> script

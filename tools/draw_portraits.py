@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Draw the Mara (03) and Pell Thimble (04) portraits.
+"""Draw the Mara (03), Pell Thimble (04) and open-visor Caldus (05)
+portraits.
 
 Portraits are 48x42 one-bit pictures stored as four 24x21 hires sprites
 (top-left, top-right, bottom-left, bottom-right; 63 bytes plus one pad
@@ -269,6 +270,67 @@ def pell():
     return g
 
 
+def decode(data: bytes):
+    g = blank()
+    for y in range(H):
+        for x in range(W):
+            sprite = (1 if x >= 24 else 0) + (2 if y >= 21 else 0)
+            byte = data[sprite * 64 + (y % 21) * 3 + (x % 24) // 8]
+            g[y][x] = (byte >> (7 - x % 8)) & 1
+    return g
+
+
+def caldus_open():
+    """Sir Caldus with his visor freed: portrait 00's helmet and shoulders
+    unchanged, the visor raised into a riveted band across the brow, and
+    a weathered face with a drooping moustache in the opening."""
+    g = decode((ROOT / "assets/portraits/00").read_bytes())
+
+    # Clear the closed visor (eye slit and breathing grille) inside the
+    # helmet's cheek guards.
+    for y in range(14, 27):
+        for x in range(13, 33):
+            g[y][x] = 0
+
+    # The raised visor: a solid band with rivets, its lower lip below.
+    line(g, 12, 14, 34, 14)
+    line(g, 12, 15, 34, 15)
+    for x in (15, 20, 26, 31):
+        plot(g, x, 14, 0)
+    line(g, 13, 16, 33, 16)
+    for x in range(14, 33, 2):
+        plot(g, x, 16, 0)
+
+    # Close the helmet's right edge where the old visor met it.
+    line(g, 33, 18, 35, 18)
+
+    # Weary brows sloping down at the outer ends; small deep-set eyes.
+    line(g, 16, 19, 17, 18)
+    line(g, 18, 18, 20, 18)
+    line(g, 25, 18, 27, 18)
+    line(g, 28, 18, 29, 19)
+    for cx in (18, 27):
+        plot(g, cx, 20)
+        plot(g, cx + 1, 20)
+        line(g, cx - 1, 21, cx + 2, 21)
+    # A long, slightly crooked nose.
+    line(g, 23, 19, 23, 21)
+    plot(g, 24, 22)
+    plot(g, 22, 23)
+    plot(g, 25, 23)
+    # Lines of age beside the nose.
+    plot(g, 20, 23)
+    plot(g, 19, 24)
+    plot(g, 27, 23)
+    plot(g, 28, 24)
+    # A drooping moustache over a short hatched beard.
+    poly(g, [(18, 26), (20, 25), (22, 25), (23, 24), (24, 25),
+             (26, 25), (28, 26)])
+    for x in range(20, 27, 2):
+        plot(g, x, 26)
+    return g
+
+
 def encode(g) -> bytes:
     out = bytearray()
     for ox, oy in ((0, 0), (24, 0), (0, 21), (24, 21)):
@@ -286,7 +348,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preview", type=Path)
     args = ap.parse_args()
-    portraits = {"03": mara(), "04": pell()}
+    portraits = {"03": mara(), "04": pell(), "05": caldus_open()}
     for pid, g in portraits.items():
         path = ROOT / "assets/portraits" / pid
         path.write_bytes(encode(g))

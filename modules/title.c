@@ -45,6 +45,10 @@ static uint8_t title_pair;
 static uint8_t title_phase;
 static uint8_t title_level;
 static uint8_t title_timer;
+static uint8_t title_rain_x_lo[7];
+static uint8_t title_rain_x_hi[7];
+static uint8_t title_rain_y[7];
+static uint8_t title_rain_seed;
 
 #pragma section( title_code, 0 )
 #pragma section( title_data, 0 )
@@ -70,6 +74,7 @@ static uint8_t title_timer;
 #define CIA1_DDRB   (*(volatile uint8_t*)0xdc03u)
 #define CIA2_PRA    (*(volatile uint8_t*)0xdd00u)
 #define CIA2_DDRA   (*(volatile uint8_t*)0xdd02u)
+#define VIC         ((volatile uint8_t*)0xd000u)
 
 #define TITLE_SCREEN   ((uint8_t*)0x8000u)
 #define TITLE_BITMAP   ((uint8_t*)0xa000u)
@@ -86,6 +91,23 @@ static uint8_t title_timer;
 #define CTRL1_TEXT     0x1bu
 #define SPLIT_LINE     211u
 #define BOTTOM_LINE    251u
+
+/* Rain: the game's seven streak sprites (src/irq.c, rooms/env/rain.c) on
+ * sprites 0-6, in front of the picture and kept inside it. The streak
+ * shape lives at $8400 (VIC bank 2 RAM, pointer 16). A sprite's top line
+ * is its Y register; the picture spans raster lines 51-210 and a streak is
+ * 21 lines tall, so Y stays below RAIN_Y_MAX and never reaches the
+ * credits. Streaks above line 51 or left/right of the picture sit under
+ * the border, which covers sprites. */
+#define RAIN_SPRITE     ((uint8_t*)0x8400u)
+#define RAIN_POINTERS   ((uint8_t*)0x83f8u)
+#define RAIN_POINTER    16u
+#define RAIN_COUNT      7u
+#define RAIN_STEP       20u
+#define RAIN_Y_MAX      (SPLIT_LINE - 21u + 1u)
+#define RAIN_X_OFFSET   23u
+#define RAIN_X_MAX_LO   87u
+#define RAIN_COLOR      6u /* dark blue, as in the game */
 
 /* Fade: frames per color step, then hold and gap lengths in frames. */
 #define FADE_STEP_FRAMES 5u
@@ -233,6 +255,94 @@ __noinline void ending_banked_run(void) {
     platform_restart();
 }
 
+/* 8-bit Galois LFSR, as in src/irq.c. */
+static uint8_t rain_prng(void) {
+    uint8_t carry = (title_rain_seed & 0x80u) != 0u;
+    title_rain_seed = (uint8_t)(title_rain_seed << 1);
+    if (carry) title_rain_seed ^= 0x1du;
+    return title_rain_seed;
+}
+
+static void rain_init(void) {
+    uint8_t i, x, mask;
+    for (i = 0u; i < 64u; ++i) RAIN_SPRITE[i] = 0u;
+    /* A one-pixel diagonal, 21 rows down and to the right. */
+    x = 0u;
+    mask = 0x80u;
+    for (i = 0u; i < 21u; ++i) {
+        RAIN_SPRITE[x] = mask;
+        x = (uint8_t)(x + 3u);
+        mask = (uint8_t)(mask >> 1);
+        if (mask == 0u) {
+            mask = 0x80u;
+            ++x;
+        }
+    }
+    for (i = 0u; i < RAIN_COUNT; ++i) {
+        RAIN_POINTERS[i] = RAIN_POINTER;
+        VIC[0x27u + i] = RAIN_COLOR;
+        title_rain_y[i] = 255u; /* past RAIN_Y_MAX: the first step respawns */
+    }
+    title_rain_seed = 0xacu;
+    VIC[0x17] = 0u; /* no Y-expand */
+    VIC[0x1b] = 0u; /* sprites in front of the picture */
+    VIC[0x1c] = 0u; /* hires sprites */
+    VIC[0x1d] = 0u; /* no X-expand */
+}
+
+/* Same motion as src/irq.c's rain_advance(): every streak moves
+ * (RAIN_STEP, RAIN_STEP) a frame and respawns on the top or left edge
+ * once it leaves the picture. */
+static void rain_tick(void) {
+    uint8_t i, bit, msb;
+
+    msb = 0u;
+    bit = 1u;
+    for (i = 0u; i < RAIN_COUNT; ++i) {
+        uint8_t y = title_rain_y[i];
+        uint8_t lo = title_rain_x_lo[i];
+        uint8_t hi = title_rain_x_hi[i];
+        uint8_t respawn = 0u;
+
+        if (y >= RAIN_Y_MAX - RAIN_STEP) {
+            respawn = 1u;
+        } else {
+            y = (uint8_t)(y + RAIN_STEP);
+            if ((uint8_t)(lo + RAIN_STEP) < lo) hi = 1u;
+            lo = (uint8_t)(lo + RAIN_STEP);
+            if (hi != 0u && lo >= RAIN_X_MAX_LO) respawn = 1u;
+        }
+        if (respawn) {
+            uint8_t roll = rain_prng();
+            if (roll & 0x80u) {
+                /* Left edge, somewhere in the upper part of the picture. */
+                y = (uint8_t)(30u + (roll & 0x7fu));
+                lo = 0u;
+                hi = 0u;
+            } else {
+                /* Top edge, under the border: any X in 0-319+offset. */
+                uint8_t r = rain_prng();
+                y = 30u;
+                if (roll & 0x40u) {
+                    hi = 1u;
+                    lo = (uint8_t)(r & 0x3fu);
+                } else {
+                    hi = 0u;
+                    lo = r;
+                }
+            }
+        }
+        title_rain_y[i] = y;
+        title_rain_x_lo[i] = lo;
+        title_rain_x_hi[i] = hi;
+        VIC[i * 2u] = lo;
+        VIC[i * 2u + 1u] = y;
+        if (hi) msb |= bit;
+        bit = (uint8_t)(bit << 1);
+    }
+    VIC[0x10] = msb;
+}
+
 /* Any keyboard key, or fire on joystick port 2. */
 static uint8_t start_pressed(void) {
     uint8_t pressed;
@@ -275,6 +385,9 @@ __noinline void title_banked_run(void) {
     VIC_CTRL2 = 0x08u;
     VIC_MEMPTR = MEMPTR_BITMAP;
     waltz_init();
+    rain_init();
+    rain_tick();
+    VIC_SPR_EN = (1u << RAIN_COUNT) - 1u;
 
     /* Ignore a key still held from power-on. */
     while (start_pressed()) { }
@@ -287,6 +400,7 @@ __noinline void title_banked_run(void) {
         VIC_MEMPTR = MEMPTR_BITMAP;
         VIC_CTRL1 = CTRL1_BITMAP;
         waltz_tick();
+        rain_tick();
         credits_tick();
         if (start_pressed()) break;
     }
@@ -294,6 +408,7 @@ __noinline void title_banked_run(void) {
     /* Silence, blank, and wait for release so the key does not leak into
      * the game's first input poll. platform_init() restores the VIC. */
     for (i = 0u; i <= 0x18u; ++i) SID[i] = 0u;
+    VIC_SPR_EN = 0u;
     VIC_CTRL1 = 0x0bu;
     while (start_pressed()) { }
 }

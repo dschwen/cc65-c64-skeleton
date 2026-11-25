@@ -105,6 +105,20 @@ def check(root, monitor, artifacts):
     title_art = (root / "assets/title.hires").read_bytes()
     assert monitor.memory(0xa000, 64, "ram") == title_art[:64], "title: bitmap not loaded"
     monitor.command(f'screenshot "{artifacts / "title.png"}" 2')
+    # Rain: sprites 0-6 in front of the picture, moving every frame, and
+    # never reaching below its last raster line (210) into the credits.
+    assert monitor.memory(0xd015, 1)[0] == 0x7f, "title: rain sprites not enabled"
+    assert monitor.memory(0xd01b, 1)[0] == 0, "title: rain not in front of the picture"
+    assert monitor.memory(0x83f8, 7, "ram") == bytes([16] * 7), "title: rain sprite pointers"
+    seen = []
+    for _ in range(8):
+        vic = bytes(monitor.memory(0xd000, 17))
+        assert all(y + 20 <= 210 for y in vic[1:14:2]), f"title: rain below the picture {list(vic[1:14:2])}"
+        seen.append(vic)
+        monitor.command(f"break exec {labels['start_pressed']:04x}")
+        monitor.run()
+        monitor.command("delete")
+    assert len(set(seen)) == len(seen), "title: rain sprites not moving"
     # Any key starts the game; the title waits for the release itself.
     monitor.command(f"break exec {labels['platform_input_poll']:04x}")
     space = screen.keysym_to_keycode(XK.string_to_keysym("space"))
